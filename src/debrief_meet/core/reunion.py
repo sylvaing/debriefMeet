@@ -143,60 +143,98 @@ class OrchestrateurReunion(QObject):
         self._actif = True
         self._transcription_live = bool(self._config.get("transcription_live"))
         self._debut = datetime.now()
-        fichier = chemin_reunion(Path(self._config.get("dossier_reunions")), self._debut)
-        self._ecrivain = EcrivainReunion(fichier, self._debut)
-        self._avec_systeme = self._systeme.disponible()
-
-        micro_index = self._config.get("micro_index")
+        self._avec_micro = False
+        self._avec_systeme = False
         try:
-            self._micro.demarrer(micro_index)
-            self._avec_micro = True
-        except Exception as exc:
-            logger.warning("Micro indisponible au démarrage (%s) — réunion sans micro", exc)
-            self._avec_micro = False
-            self.micro_perdu.emit(
-                "Réunion démarrée sans micro — seule l'autre partie sera enregistrée"
-            )
+            fichier = chemin_reunion(Path(self._config.get("dossier_reunions")), self._debut)
+            self._ecrivain = EcrivainReunion(fichier, self._debut)
+            self._avec_systeme = self._systeme.disponible()
 
-        if self._avec_systeme:
-            self._systeme.demarrer()
-
-        # AEC : active seulement si micro + système présents et activée en config.
-        # Conservée aussi en mode audio-seul (nettoie le micro retenu → bénéficie à la
-        # transcription différée et à la diarization). Repli sans écho si indisponible.
-        self._aec = None
-        if (self._processeur_aec is not None and self._avec_micro and self._avec_systeme
-                and self._config.get("aec_actif")):
+            micro_index = self._config.get("micro_index")
             try:
-                self._processeur_aec.demarrer()
-                self._aec = self._processeur_aec
+                self._micro.demarrer(micro_index)
+                self._avec_micro = True
             except Exception as exc:
-                logger.warning("AEC indisponible (%s) — réunion sans annulation d'écho", exc)
-                self._aec = None
+                logger.warning("Micro indisponible au démarrage (%s) — réunion sans micro", exc)
+                self._avec_micro = False
+                self.micro_perdu.emit(
+                    "Réunion démarrée sans micro — seule l'autre partie sera enregistrée"
+                )
 
-        # Rétention audio : 2 pistes 16k mono streamées à côté du .md.
-        # Forcée en mode audio-seul (sinon rien à transcrire après — docs/10).
-        self._enregistreur = None
-        self._base_moi = None
-        retention = self._config.get("retention_audio") or not self._transcription_live
-        if retention and (self._avec_micro or self._avec_systeme):
-            base_moi, base_sys = chemins_audio_reunion(fichier)
-            # Conservé même si `_avec_micro` est False : permet à `activer_moi` de
-            # brancher la piste Moi si le micro est récupéré en cours de réunion.
-            self._base_moi = base_moi
-            self._enregistreur = EnregistreurAudioReunion(
-                base_moi=base_moi if self._avec_micro else None,
-                base_systeme=base_sys if self._avec_systeme else None,
-            )
+            if self._avec_systeme:
+                self._systeme.demarrer()
 
-        if self._transcription_live:
-            self._ecrivain.creer(avec_systeme=self._avec_systeme, avec_micro=self._avec_micro)
-        else:
-            # Mode enregistrement seul : placeholder, transcription lancée plus tard.
-            self._ecrivain.creer_placeholder()
+            # AEC : active seulement si micro + système présents et activée en config.
+            # Conservée aussi en mode audio-seul (nettoie le micro retenu → bénéficie à la
+            # transcription différée et à la diarization). Repli sans écho si indisponible.
+            self._aec = None
+            if (self._processeur_aec is not None and self._avec_micro and self._avec_systeme
+                    and self._config.get("aec_actif")):
+                try:
+                    self._processeur_aec.demarrer()
+                    self._aec = self._processeur_aec
+                except Exception as exc:
+                    logger.warning("AEC indisponible (%s) — réunion sans annulation d'écho", exc)
+                    self._aec = None
 
-        self._timer.start(self._config.get("intervalle_reunion") * 1000)
-        self.etat_visuel_change.emit(EtatVisuel.ENREGISTREMENT)
+            # Rétention audio : 2 pistes 16k mono streamées à côté du .md.
+            # Forcée en mode audio-seul (sinon rien à transcrire après — docs/10).
+            self._enregistreur = None
+            self._base_moi = None
+            retention = self._config.get("retention_audio") or not self._transcription_live
+            if retention and (self._avec_micro or self._avec_systeme):
+                base_moi, base_sys = chemins_audio_reunion(fichier)
+                # Conservé même si `_avec_micro` est False : permet à `activer_moi` de
+                # brancher la piste Moi si le micro est récupéré en cours de réunion.
+                self._base_moi = base_moi
+                self._enregistreur = EnregistreurAudioReunion(
+                    base_moi=base_moi if self._avec_micro else None,
+                    base_systeme=base_sys if self._avec_systeme else None,
+                )
+
+            if self._transcription_live:
+                self._ecrivain.creer(avec_systeme=self._avec_systeme, avec_micro=self._avec_micro)
+            else:
+                # Mode enregistrement seul : placeholder, transcription lancée plus tard.
+                self._ecrivain.creer_placeholder()
+
+            self._timer.start(self._config.get("intervalle_reunion") * 1000)
+            self.etat_visuel_change.emit(EtatVisuel.ENREGISTREMENT)
+        except Exception as exc:
+            logger.error("Démarrage de la réunion impossible (%s) — annulation", exc, exc_info=True)
+            self._annuler_demarrage(str(exc))
+
+    def _annuler_demarrage(self, motif: str) -> None:
+        """Rollback : une étape de `_demarrer()` a levé après que des captures ont déjà
+        démarré — on les arrête pour ne rien laisser tourner (micro/système/AEC ouverts
+        sans timer pour les drainer), puis on ramène la machine à états sur IDLE."""
+        self._timer.stop()
+        if self._avec_micro:
+            try:
+                self._micro.arreter()
+            except Exception:
+                logger.warning("Arrêt micro après échec de démarrage", exc_info=True)
+        if self._avec_systeme:
+            try:
+                self._systeme.arreter()
+            except Exception:
+                logger.warning("Arrêt capture système après échec de démarrage", exc_info=True)
+        if self._aec is not None:
+            try:
+                self._aec.terminer()
+            except Exception:
+                pass
+            self._aec = None
+        if self._enregistreur is not None:
+            try:
+                self._enregistreur.terminer()
+            except Exception:
+                pass
+            self._enregistreur = None
+        self._actif = False
+        self.etat_visuel_change.emit(EtatVisuel.REPOS)
+        self._machine.erreur.emit(f"Impossible de démarrer la réunion : {motif}")
+        self._machine.toggle_reunion()
 
     @Slot()
     def _sur_tick(self) -> None:

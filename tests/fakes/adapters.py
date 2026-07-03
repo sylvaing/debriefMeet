@@ -107,19 +107,27 @@ class MicroFake(CaptureMicro):
 
 
 class SystemeFake(CaptureAudioSysteme):
-    def __init__(self, disponible: bool = True, echantillons: np.ndarray | None = None) -> None:
+    def __init__(
+        self,
+        disponible: bool = True,
+        echantillons: np.ndarray | None = None,
+        lever_au_demarrage: Exception | None = None,
+    ) -> None:
         self._disponible = disponible
         self.en_cours = False
         self.appels_demarrer = 0
         self.appels_arreter = 0
+        self.lever_au_demarrage = lever_au_demarrage
         self._echantillons = echantillons if echantillons is not None else np.zeros(1600, dtype=np.float32)
 
     def disponible(self) -> bool:
         return self._disponible
 
     def demarrer(self) -> None:
-        self.en_cours = True
         self.appels_demarrer += 1
+        if self.lever_au_demarrage is not None:
+            raise self.lever_au_demarrage
+        self.en_cours = True
 
     def arreter(self) -> None:
         self.en_cours = False

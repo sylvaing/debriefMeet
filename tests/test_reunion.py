@@ -163,6 +163,29 @@ def test_micro_indisponible_reunion_continue_sans_micro(qapp, tmp_path):
     assert "Microphone non disponible" in fichiers[0].read_text(encoding="utf-8")
 
 
+def test_echec_demarrage_systeme_annule_et_arrete_le_micro(qapp, tmp_path):
+    """Si une étape après le micro échoue (ici la capture système), on ne laisse pas
+    le micro tourner sans timer pour le drainer : rollback complet + retour à IDLE."""
+    machine = MachineEtats()
+    micro = MicroFake(echantillons=np.ones(1600, dtype=np.float32))
+    systeme = SystemeFake(disponible=True, lever_au_demarrage=RuntimeError("WASAPI HRESULT 0x8..."))
+    erreurs = []
+    machine.erreur.connect(erreurs.append)
+    orch, micro, systeme, _ = _creer(machine, tmp_path, micro=micro, systeme=systeme)
+
+    machine.toggle_reunion()
+
+    assert micro.appels_demarrer == 1
+    assert micro.appels_arreter == 1
+    assert not micro.en_cours
+    assert systeme.appels_demarrer == 1
+    assert not orch._actif
+    assert machine.mode.name == "IDLE"
+    assert len(erreurs) == 1
+    assert "WASAPI" in erreurs[0]
+    assert not orch._timer.isActive()
+
+
 def test_arreter_sans_micro_ne_lit_pas_le_micro(qapp, qtbot, tmp_path):
     """Après un démarrage sans micro, l'arrêt ne sollicite pas micro.arreter()."""
     machine = MachineEtats()
