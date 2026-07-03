@@ -58,6 +58,23 @@ class CaptureMicroSounddevice(CaptureMicro):
         sr = getattr(stream, "samplerate", None)
         return int(round(sr)) if sr else TAUX_CANONIQUE
 
+    @staticmethod
+    def _logger_infos_flux(sd, stream, taux_natif: int) -> None:
+        """E-8 (docs/33 §2.1) : périphérique/host API/taux à chaque (re)démarrage —
+        un host API `MME` au lieu de `WASAPI` sur Windows est un indice de latence/
+        qualité dégradée, détectable à distance dans un zip diagnostic."""
+        import logging
+        try:
+            infos = sd.query_devices(stream.device)
+            nom = infos["name"]
+            host_api = sd.query_hostapis(infos["hostapi"])["name"]
+        except Exception:
+            nom, host_api = "inconnu", "inconnu"
+        logging.getLogger(__name__).info(
+            "Micro (re)démarré : périphérique=%r host_api=%s taux_natif=%dHz taux_sortie=%dHz",
+            nom, host_api, taux_natif, TAUX_CANONIQUE,
+        )
+
     def _ouvrir_flux(self, sd, index_peripherique: int | None):
         """Ouvre un InputStream au taux natif du périphérique, avec repli sur le
         périphérique par défaut.
@@ -141,6 +158,7 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._stream = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(self._stream)
         self._stream.start()
+        self._logger_infos_flux(sd, self._stream, self._sr_flux)
 
         # Warm-up : on laisse Core Audio se reconfigurer, puis on
         # vide le buffer pour ne pas capturer le glitch de démarrage.
@@ -177,6 +195,7 @@ class CaptureMicroSounddevice(CaptureMicro):
         nouveau = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(nouveau)
         nouveau.start()
+        self._logger_infos_flux(sd, nouveau, self._sr_flux)
 
         # Warm-up : ce que le nouveau flux capte ici est du glitch → on le jette
         # en restaurant le buffer à son snapshot d'avant ouverture.

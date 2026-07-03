@@ -16,6 +16,7 @@ class TestDefauts:
         assert config_tmp.get("logs_actifs") is False
         assert config_tmp.get("logs_debug") is False
         assert config_tmp.get("demarrage_auto") is False
+        assert config_tmp.get("backend") == "auto"
 
     def test_version_defaut(self, config_tmp):
         assert config_tmp.get("version") == VERSION_COURANTE

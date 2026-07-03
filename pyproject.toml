@@ -24,6 +24,7 @@ macos = [
 windows = [
     "faster-whisper",
     "livekit>=1.1",      # AEC3 — wheel py3-none-win_amd64 confirmé sur PyPI (docs/30 §5.2, docs/34 §7)
+    "soundcard",         # loopback WASAPI — sounddevice/PortAudio ne sait pas le faire (docs/34 §2)
 ]
 linux = [
     "faster-whisper",

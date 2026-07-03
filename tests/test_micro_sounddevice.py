@@ -8,6 +8,7 @@ tillonnage vers 16 kHz canonique, et la résolution d'identité de périphériqu
 """
 from __future__ import annotations
 
+import logging
 import sys
 
 import numpy as np
@@ -79,8 +80,11 @@ class _FauxSounddevice:
 
     def query_devices(self, device=None, kind=None):
         if device is not None:
-            return {"index": device, "name": f"peripherique-{device}"}
-        return {"index": self._index_valide, "name": "défaut"}
+            return {"index": device, "name": f"peripherique-{device}", "hostapi": 0}
+        return {"index": self._index_valide, "name": "défaut", "hostapi": 0}
+
+    def query_hostapis(self, index=None):
+        return {"name": "Windows WASAPI"}
 
 
 @pytest.fixture()
@@ -364,3 +368,31 @@ def test_demarrer_sans_terminate_initialize_fonctionne_quand_meme(
     micro_sans_warmup.demarrer(1)
 
     assert faux.streams_ouverts[0].started
+
+
+# ── E-8 (docs/33 §2.1) : périphérique/host API/taux loggés à chaque (re)démarrage ──
+
+def test_demarrer_logge_peripherique_host_api_et_taux(micro_sans_warmup, monkeypatch, caplog):
+    faux = _FauxSounddevice(index_valide=2, taux_par_index={2: 48_000})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+
+    with caplog.at_level(logging.INFO, logger="debrief_meet"):
+        micro_sans_warmup.demarrer(2)
+
+    messages = [r.message for r in caplog.records]
+    assert any(
+        "peripherique-2" in m and "Windows WASAPI" in m and "48000" in m and "16000" in m
+        for m in messages
+    )
+
+
+def test_redemarrer_logge_aussi_les_infos_du_nouveau_flux(micro_sans_warmup, monkeypatch, caplog):
+    faux = _FauxSounddevice(index_valide=2, taux_par_index={2: 48_000, 3: 44_100})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro_sans_warmup.demarrer(2)
+
+    with caplog.at_level(logging.INFO, logger="debrief_meet"):
+        micro_sans_warmup.redemarrer(3)
+
+    messages = [r.message for r in caplog.records]
+    assert any("peripherique-3" in m and "44100" in m for m in messages)

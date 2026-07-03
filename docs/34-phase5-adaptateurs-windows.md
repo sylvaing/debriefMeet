@@ -1,11 +1,11 @@
 # Phase 5 — Adaptateurs Windows (specs d'implémentation)
 
-> **Statut : 📝 SPEC à implémenter** (2026-07-03). Dépend de : docs/31 (règles de
-> logging) et docs/33 (exigences E-1 à E-8, reprises ici section par section).
-> Tout se développe et se teste **sur Mac** : chaque adaptateur a des tests sans
-> matériel où les modules Windows (`winreg`, `soundcard`, `ctypes.windll`,
-> `faster_whisper`) sont mockés. La validation réelle se fait sur la VM puis chez
-> les utilisateurs (docs/35).
+> **Statut : ✅ TERMINÉ** (implémenté 2026-07-03, 667 passed). Dépend de : docs/31
+> (règles de logging) et docs/33 (exigences E-1 à E-8, reprises ici section par
+> section). Tout se développe et se teste **sur Mac** : chaque adaptateur a des
+> tests sans matériel où les modules Windows (`winreg`, `soundcard`,
+> `ctypes.windll`, `faster_whisper`) sont mockés. La validation réelle reste à
+> faire sur la VM puis chez les utilisateurs (docs/35).
 >
 > Rappel architecture (docs/30 §4) : nouveaux modules sous
 > `src/debrief_meet/platform/windows/`, la règle d'or `core/` reste intacte.

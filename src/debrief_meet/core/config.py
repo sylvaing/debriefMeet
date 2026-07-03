@@ -44,6 +44,10 @@ _DEFAUTS: dict[str, Any] = {
     "raccourci_dictee": "Ctrl+Alt+D" if _WINDOWS else "Meta+Alt+Ctrl+D",
     "raccourci_reunion": "Ctrl+Alt+R" if _WINDOWS else "Meta+Alt+Ctrl+R",
     "raccourci_journal": "Ctrl+Alt+J" if _WINDOWS else "Meta+Alt+Ctrl+J",
+    # Sélection du backend de transcription Windows (docs/34 §1.4) — "auto" en v1
+    # retombe toujours sur faster-whisper CPU ; valeurs futures : "openvino"/"directml"/
+    # "vulkan" une fois le rapport spike docs/18 disponible.
+    "backend": "auto",
 }
 
 

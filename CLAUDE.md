@@ -60,7 +60,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
-| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, **docs/31 (observabilité) ✅ TERMINÉ** (2026-07-03, 607 passed) : logs DEBUG Windows par défaut, `VERSION_COMPLETE`, en-tête de session, crash handler, export diagnostic (tray) ; suite : docs/34 (adaptateurs) |
+| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, docs/31 (observabilité) ✅, **docs/34 (adaptateurs) ✅ TERMINÉ** (2026-07-03, 667 passed) : factory Windows sans repli stub, moteur `MoteurFasterWhisper` (CPU int8, pool 1 worker, registre+kill docs/26), capture système WASAPI (`soundcard`), raccourcis `RegisterHotKey` (Ctrl+Alt+D/R/J), autostart (`winreg`), presse-papiers Qt, mutex instance unique ; revue croisée E-1→E-8 (docs/33) close ; reste à faire : docs/32 (packaging, nécessite la VM) puis docs/35 (livraison) |
 | **Correctifs fuites CoreAudio (docs/23)** | ✅ TERMINÉ (2026-07-02, 530 passed) |
 | **Robustesse micro hot-plug (docs/25)** | ✅ TERMINÉ (2026-07-02, 542 passed) |
 | **Fix dictée/journal muets (docs/27)** | ✅ TERMINÉ (2026-07-02, 556 passed) |

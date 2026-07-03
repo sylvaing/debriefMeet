@@ -38,6 +38,12 @@ def main() -> None:
         _worker_main()
         return
 
+    # Idem pour le worker faster-whisper Windows (docs/34 §1).
+    if "--fw-worker" in sys.argv:
+        from debrief_meet.platform.windows._fw_worker import main as _fw_worker_main
+        _fw_worker_main()
+        return
+
     from debrief_meet import __version__
 
     args = _parser().parse_args()
@@ -110,6 +116,15 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     )
     installer_traces_crash()
     logger = logging.getLogger("debrief_meet")
+
+    # Instance unique Windows (docs/34 §6) — mutex nommé, consommé aussi par
+    # l'installeur Inno Setup (AppMutex) pour proposer de fermer l'app avant une
+    # mise à jour. S'ajoute à l'IPC cross-platform (ci-dessous), pas un remplacement.
+    if sys.platform == "win32":
+        from debrief_meet.platform.windows.instance_unique import acquerir_instance_unique
+        if not acquerir_instance_unique():
+            logger.info("Instance debriefMeet déjà active — sortie")
+            return
 
     # En-tête de session (docs/31 §3.4) : la collecte (PowerShell côté Windows) peut
     # prendre ~1 s — thread non bloquant pour ne pas retarder l'affichage du tray.
