@@ -1,0 +1,79 @@
+# ============================================================
+#  debriefMeet — .gitignore
+#  Objectif : ne versionner que le code (~7 Mo).
+#  Tout le reste (venvs, modèles, bundles, AUDIO CONFIDENTIEL)
+#  reste sur le disque local mais n'entre jamais dans git.
+# ============================================================
+
+# --- Environnements Python ---
+.venv/
+.venv-build/
+.venv-spike-prebuild/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Caches / couverture / OS ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# --- Artefacts de build / packaging ---
+build/
+dist/
+*.dmg
+*.pkg
+bundles/
+
+# Archives : filet de sécurité. Les rapports de benchmark emballent des
+# WAV de sondes (audio confidentiel) que la règle *.wav ne voit pas dans un zip.
+*.zip
+benchmark/rapports/
+
+# --- Modèles ML (téléchargeables / reconstructibles, ~22 Go) ---
+spike/backends_windows/assets/models/
+*.bin
+*.onnx
+*.gguf
+*.pt
+*.safetensors
+*.mlmodelc/
+
+# --- Binaires compilés / prébuilds tiers (rebuild ou re-téléchargement) ---
+# ex. whisper.cpp Vulkan : whisper-cli.exe + ggml*.dll (~58 Mo).
+# Voir docs/18-spike-backends-windows.md pour les récupérer sur un clone.
+*.dll
+*.exe
+*.dylib
+*.so
+*.o
+*.obj
+
+# --- Sorties dérivées d'enregistrements RÉELS = CONFIDENTIEL ---
+# Transcriptions/diarisations verbatim de vraies réunions (noms, tarifs, stratégie).
+# Ce sont des artefacts de sortie, reproductibles depuis les audios locaux.
+resultats_benchmark/
+spike/diarization/sorties/
+spike/diarization/*.log
+
+# --- Binaires natifs compilés (rebuild : make build-helpers) ---
+helpers/macos/poc-audio-tap/AudioTapPOC
+helpers/macos/poc-audio-tap/SCKAudioPOC
+helpers/macos/sck-audio/SCKAudioCapture
+
+# --- AUDIO CONFIDENTIEL (jamais versionné) ---
+# Enregistrements de réunions réelles. Voir docs/08-benchmark.md
+# § « Audio de test » pour reconstruire audio_canonique.wav sur un clone.
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+*.aiff
+*.caf
+*.opus

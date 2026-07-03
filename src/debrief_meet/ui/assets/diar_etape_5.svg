@@ -1,0 +1,12 @@
+<svg width="360" height="196" viewBox="0 0 360 196" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Arial, sans-serif">
+  <title>Étape 5 — Téléchargement réussi, diarization activée</title>
+  <rect x="6" y="6" width="348" height="184" rx="12" fill="#ffffff" stroke="#D2D6DC" stroke-width="1.5"/>
+  <line x1="6" y1="40" x2="354" y2="40" stroke="#E9ECF1"/>
+  <rect x="16" y="14" width="22" height="22" rx="6" fill="#0A84FF"/>
+  <rect x="20" y="24" width="2.4" height="4" rx="1.2" fill="#fff"/><rect x="24" y="21" width="2.4" height="10" rx="1.2" fill="#fff"/><rect x="28" y="18" width="2.4" height="16" rx="1.2" fill="#fff"/><rect x="32" y="22" width="2.4" height="8" rx="1.2" fill="#fff"/>
+  <text x="46" y="29" font-size="12" fill="#1F2933" font-weight="500">debriefMeet</text>
+  <circle cx="180" cy="92" r="27" fill="#E4F7EA" stroke="#34C759" stroke-width="1.5"/>
+  <path d="M168 92 l8 9 l16 -19" fill="none" stroke="#34C759" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="180" y="140" font-size="13" fill="#1F8A3B" text-anchor="middle" font-weight="500">Diarization activée</text>
+  <text x="180" y="158" font-size="10.5" fill="#7B8794" text-anchor="middle">Modèle téléchargé — « qui a parlé » disponible</text>
+</svg>

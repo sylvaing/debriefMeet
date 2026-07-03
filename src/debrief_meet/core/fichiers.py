@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import re
+import wave
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+class EcrivainJournal:
+    """Écrit des entrées horodatées dans un fichier journal append-only (§12.2)."""
+
+    def __init__(self, dossier: Path) -> None:
+        self._dossier = dossier
+
+    def ajouter_entree(self, texte: str, horodatage: datetime | None = None) -> Path:
+        now = horodatage or datetime.now()
+        chemin = self._dossier / now.strftime("%Y-%m-%d.md")
+        self._dossier.mkdir(parents=True, exist_ok=True)
+
+        avec_entete = not chemin.exists()
+        with chemin.open("a", encoding="utf-8") as f:
+            if avec_entete:
+                f.write(f"# Activités — {now.strftime('%Y-%m-%d')}\n\n")
+            f.write(f"## {now.strftime('%H:%M')}\n\n{texte.strip()}\n\n---\n\n")
+        return chemin
+
+
+_SUFFIXE_LOCUTEURS = "_locuteurs"
+
+
+def lister_enregistrements(dossier: Path) -> list[Path]:
+    """Retourne les `.md` du dossier, triés du plus récent au plus ancien.
+
+    Exclut les débriefs de locuteurs (`*_locuteurs.md`) : ce sont des dérivés d'une
+    transcription, pas des entrées à part entière (cf. docs/09-refonte-historique.md §2)."""
+    if not dossier.exists():
+        return []
+    fichiers = (f for f in dossier.glob("*.md") if not f.stem.endswith(_SUFFIXE_LOCUTEURS))
+    return sorted(fichiers, reverse=True)
+
+
+def chemin_locuteurs(md: Path) -> Path:
+    """Chemin du débrief locuteurs `<stem>_locuteurs.md` associé à une transcription."""
+    return md.with_name(md.stem + _SUFFIXE_LOCUTEURS + ".md")
+
+
+# Marqueur d'une réunion enregistrée en « audio seul » dont la transcription
+# n'a pas encore été générée (mode transcription différée). Cf. docs/10.
+MARQUEUR_EN_ATTENTE = "⏳ Enregistrement audio seul — transcription non générée."
+
+
+def transcription_en_attente(md: Path) -> bool:
+    """Vrai si le `.md` est un placeholder « audio seul » non encore transcrit."""
+    try:
+        return MARQUEUR_EN_ATTENTE in md.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def chemins_audio_reunion(md: Path) -> tuple[Path, Path]:
+    """Chemins **sans extension** des 2 pistes retenues (Moi + Système) à côté du `.md`.
+
+    L'extension (.opus ou .wav) est choisie par `EnregistreurAudioReunion` selon la
+    présence de ffmpeg."""
+    base = md.with_suffix("")
+    return base.with_name(base.name + "_moi"), base.with_name(base.name + "_systeme")
+
+
+def pistes_audio_existantes(md: Path) -> list[Path]:
+    """Fichiers audio retenus (`.opus`/`.wav`) présents à côté du `.md` (Moi + Système)."""
+    out: list[Path] = []
+    for base in chemins_audio_reunion(md):
+        for ext in (".opus", ".wav"):
+            p = base.with_suffix(ext)
+            if p.exists():
+                out.append(p)
+    return out
+
+
+# ── Métadonnées d'une réunion (titre éditable + durée) ─────────────────────────
+#
+# Le nom de fichier (AAAA-MM-JJ_HH-MM[-N].md) reste l'identité stable de la réunion :
+# il porte la date/heure et sert de base aux pistes audio + au débrief locuteurs, donc
+# on n'y touche jamais. Le **titre** vit dans le H1 du .md (éditable sans renommer aucun
+# satellite) ; la **durée** dans un commentaire HTML invisible à la lecture. Cf. docs/14.
+
+_MOTIF_NOM_REUNION = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:-\d+)?$")
+_MOTIF_DATE_HEURE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+_MOTIF_DUREE = re.compile(r"<!-- duree_s: (\d+) -->")
+_MOTIF_TRANCHE = re.compile(r"^## \d{2}:\d{2} \((\d{2}):(\d{2})\)", re.MULTILINE)
+_PREFIXE_DEFAUT = "Réunion — "
+
+
+def date_heure_reunion(md: Path) -> datetime | None:
+    """Date+heure de début déduites du **nom de fichier** ; None si le nom ne suit pas
+    le schéma réunion (ex. une entrée de journal `AAAA-MM-JJ.md`)."""
+    m = _MOTIF_NOM_REUNION.match(md.stem)
+    if not m:
+        return None
+    a, mo, j, h, mi = (int(x) for x in m.groups())
+    try:
+        return datetime(a, mo, j, h, mi)
+    except ValueError:
+        return None
+
+
+def _h1(texte: str) -> tuple[int, str] | None:
+    """(index de ligne, contenu sans « # ») du premier titre H1, ou None."""
+    for i, ligne in enumerate(texte.splitlines()):
+        if ligne.startswith("# "):
+            return i, ligne[2:].strip()
+    return None
+
+
+def titre_reunion(md: Path) -> str | None:
+    """Titre **custom** de la réunion (H1 du .md), ou None si c'est le titre par défaut
+    « Réunion — <date> » (= aucun titre saisi par l'utilisateur)."""
+    try:
+        texte = md.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    h1 = _h1(texte)
+    if h1 is None:
+        return None
+    contenu = h1[1]
+    if contenu.startswith(_PREFIXE_DEFAUT):
+        reste = contenu[len(_PREFIXE_DEFAUT):]
+        if _MOTIF_DATE_HEURE.match(reste) or reste == md.stem:
+            return None
+    return contenu or None
+
+
+def definir_titre(md: Path, titre: str) -> None:
+    """Réécrit le H1 du .md avec `titre`. Un titre vide **restaure** le titre par défaut
+    « Réunion — <date> ». N'altère pas le reste du fichier (transcription, durée…)."""
+    try:
+        texte = md.read_text(encoding="utf-8")
+    except OSError:
+        return
+    titre = titre.strip()
+    if not titre:
+        dh = date_heure_reunion(md)
+        titre = _PREFIXE_DEFAUT + (dh.strftime("%Y-%m-%d %H:%M") if dh else md.stem)
+    lignes = texte.splitlines(keepends=True)
+    for i, ligne in enumerate(lignes):
+        if ligne.startswith("# "):
+            fin = "\n" if ligne.endswith("\n") else ""
+            lignes[i] = f"# {titre}{fin}"
+            md.write_text("".join(lignes), encoding="utf-8")
+            return
+    md.write_text(f"# {titre}\n\n{texte}", encoding="utf-8")
+
+
+def definir_duree(md: Path, secondes: int) -> None:
+    """Écrit (ou met à jour) la durée en secondes dans un commentaire HTML, juste après
+    le H1. Invisible au rendu Markdown ; lu ensuite par `duree_reunion`."""
+    try:
+        texte = md.read_text(encoding="utf-8")
+    except OSError:
+        return
+    marqueur = f"<!-- duree_s: {max(0, int(secondes))} -->"
+    if _MOTIF_DUREE.search(texte):
+        md.write_text(_MOTIF_DUREE.sub(marqueur, texte, count=1), encoding="utf-8")
+        return
+    lignes = texte.splitlines(keepends=True)
+    for i, ligne in enumerate(lignes):
+        if ligne.startswith("# "):
+            if not ligne.endswith("\n"):
+                lignes[i] = ligne + "\n"
+            lignes.insert(i + 1, marqueur + "\n")
+            md.write_text("".join(lignes), encoding="utf-8")
+            return
+    md.write_text(f"{marqueur}\n{texte}", encoding="utf-8")
+
+
+def duree_reunion(md: Path) -> int | None:
+    """Durée d'une réunion en secondes. Priorité : commentaire stocké → longueur de
+    l'audio retenu (WAV) → offset de la dernière tranche transcrite → None."""
+    try:
+        texte = md.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _MOTIF_DUREE.search(texte)
+    if m:
+        return int(m.group(1))
+    audio = _duree_audio_wav(md)
+    if audio is not None:
+        return audio
+    tranches = _MOTIF_TRANCHE.findall(texte)
+    if tranches:
+        mm, ss = tranches[-1]
+        return int(mm) * 60 + int(ss)
+    return None
+
+
+def _duree_audio_wav(md: Path) -> int | None:
+    """Durée (s) de la plus longue piste WAV retenue ; None si aucune (les .opus
+    sont ignorés ici : repli léger sans sous-processus, pour les réunions héritées)."""
+    durees: list[float] = []
+    for p in pistes_audio_existantes(md):
+        if p.suffix != ".wav":
+            continue
+        try:
+            with wave.open(str(p), "rb") as w:
+                if w.getframerate():
+                    durees.append(w.getnframes() / w.getframerate())
+        except (OSError, wave.Error):
+            continue
+    return int(max(durees)) if durees else None
+
+
+def formater_duree(secondes: int | None) -> str:
+    """Durée lisible : « 32 min » sous l'heure, « 1 h 05 » au-delà, « — » si inconnue."""
+    if secondes is None:
+        return "—"
+    minutes = int(secondes) // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60:02d}"
+
+
+_SR_AUDIO = 16_000
+
+
+def _ffmpeg_present() -> bool:
+    import shutil
+    return shutil.which("ffmpeg") is not None
+
+
+class _PisteWriter:
+    """Une piste : encode Opus en streaming via ffmpeg, ou WAV (repli sans ffmpeg)."""
+
+    def __init__(self, base: Path, mode: str, debit_kbps: int) -> None:
+        base.parent.mkdir(parents=True, exist_ok=True)
+        self._mode = mode
+        if mode == "opus":
+            self.chemin = base.with_name(base.name + ".opus")
+            import subprocess
+            self._proc = subprocess.Popen(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-f", "f32le", "-ar", str(_SR_AUDIO), "-ac", "1", "-i", "pipe:0",
+                 "-c:a", "libopus", "-b:a", f"{debit_kbps}k", str(self.chemin)],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._wav = None
+        else:
+            self.chemin = base.with_name(base.name + ".wav")
+            self._proc = None
+            self._wav = wave.open(str(self.chemin), "wb")
+            self._wav.setnchannels(1)
+            self._wav.setsampwidth(2)
+            self._wav.setframerate(_SR_AUDIO)
+
+    def ecrire(self, audio_16k: "np.ndarray | None") -> None:
+        if audio_16k is None or len(audio_16k) == 0:
+            return
+        import numpy as np
+        a = np.clip(audio_16k, -1.0, 1.0)
+        if self._mode == "opus":
+            try:
+                self._proc.stdin.write(a.astype(np.float32).tobytes())
+            except (BrokenPipeError, OSError):
+                pass
+        else:
+            self._wav.writeframes((a * 32767).astype(np.int16).tobytes())
+
+    def fermer(self) -> None:
+        if self._mode == "opus" and self._proc is not None:
+            try:
+                self._proc.stdin.close()
+                self._proc.wait(timeout=15)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+        elif self._wav is not None:
+            try:
+                self._wav.close()
+            except Exception:
+                pass
+
+
+class EnregistreurAudioReunion:
+    """Écrit en continu (streaming, faible mémoire) les pistes Moi + Système, en
+    **Opus 16 kHz mono** (via ffmpeg) ou **WAV** en repli si ffmpeg est absent.
+
+    Pour la passe finale de diarization (cf. docs/07). Chaque piste est optionnelle.
+    `format` : "auto" (Opus si ffmpeg, sinon WAV), "opus" ou "wav"."""
+
+    SR = _SR_AUDIO
+
+    def __init__(self, base_moi: Path | None, base_systeme: Path | None,
+                 format: str = "auto", debit_kbps: int = 24) -> None:
+        self.format = "opus" if (format == "opus" or (format == "auto" and _ffmpeg_present())) else "wav"
+        self._debit_kbps = debit_kbps
+        self._moi = _PisteWriter(base_moi, self.format, debit_kbps) if base_moi else None
+        self._systeme = _PisteWriter(base_systeme, self.format, debit_kbps) if base_systeme else None
+        # Chemins conservés même après terminer() (utiles à la passe finale).
+        self.chemin_moi: Path | None = self._moi.chemin if self._moi else None
+        self.chemin_systeme: Path | None = self._systeme.chemin if self._systeme else None
+
+    def activer_moi(self, base: Path) -> None:
+        """Attache la piste Moi en cours de session (récupération tardive du micro,
+        cf. docs/25). No-op si la piste existe déjà."""
+        if self._moi is None:
+            self._moi = _PisteWriter(base, self.format, self._debit_kbps)
+            self.chemin_moi = self._moi.chemin
+
+    def ajouter_moi(self, audio_16k: "np.ndarray") -> None:
+        if self._moi is not None:
+            self._moi.ecrire(audio_16k)
+
+    def ajouter_systeme(self, audio_16k: "np.ndarray") -> None:
+        if self._systeme is not None:
+            self._systeme.ecrire(audio_16k)
+
+    def terminer(self) -> None:
+        for p in (self._moi, self._systeme):
+            if p is not None:
+                p.fermer()
+        self._moi = self._systeme = None
+
+
+def chemin_reunion(dossier: Path, debut: datetime) -> Path:
+    """Chemin .md **unique** pour une réunion.
+
+    Le nom est horodaté à la minute (`AAAA-MM-JJ_HH-MM.md`). Si une réunion a déjà
+    démarré la même minute, le fichier existe déjà → on suffixe `-2`, `-3`, … pour ne
+    pas **écraser** la précédente (EcrivainReunion.creer ouvre en mode « w »)."""
+    base = debut.strftime("%Y-%m-%d_%H-%M")
+    candidat = dossier / f"{base}.md"
+    i = 2
+    while candidat.exists():
+        candidat = dossier / f"{base}-{i}.md"
+        i += 1
+    return candidat
+
+
+class EcrivainReunion:
+    def __init__(self, chemin: Path, debut: datetime) -> None:
+        self._chemin = chemin
+        self._debut = debut
+
+    def creer(self, avec_systeme: bool = True, avec_micro: bool = True) -> None:
+        self._chemin.parent.mkdir(parents=True, exist_ok=True)
+        with self._chemin.open("w", encoding="utf-8") as f:
+            f.write(f"# Réunion — {self._debut.strftime('%Y-%m-%d %H:%M')}\n\n")
+            if not avec_systeme:
+                f.write("> ⚠️ Audio système non disponible — transcription micro uniquement.\n")
+            if not avec_micro:
+                f.write("> ⚠️ Microphone non disponible — transcription audio système uniquement.\n")
+            f.write("\n")
+
+    def creer_placeholder(self) -> None:
+        """Crée un `.md` « audio seul » : en-tête + marqueur de transcription à générer.
+
+        Mode enregistrement seul (docs/10) : l'audio est retenu à côté, la transcription
+        sera lancée plus tard depuis l'Historique."""
+        self._chemin.parent.mkdir(parents=True, exist_ok=True)
+        with self._chemin.open("w", encoding="utf-8") as f:
+            f.write(f"# Réunion — {self._debut.strftime('%Y-%m-%d %H:%M')}\n\n")
+            f.write(f"> {MARQUEUR_EN_ATTENTE}\n\n")
+
+    def ajouter_tranche(
+        self,
+        texte_moi: str,
+        texte_participants: str,
+        offset_s: float,
+        segments_moi: "list[tuple[float, str]] | None" = None,
+        segments_participants: "list[tuple[float, str]] | None" = None,
+    ) -> None:
+        if not texte_moi.strip() and not texte_participants.strip():
+            return
+        heure_tranche = self._debut + timedelta(seconds=offset_s)
+        hh_mm = heure_tranche.strftime("%H:%M")
+        total_s = int(offset_s)
+        mm = total_s // 60
+        ss = total_s % 60
+        elapsed = f"{mm:02d}:{ss:02d}"
+        blocs = _entrelaces(
+            texte_moi.strip(), texte_participants.strip(),
+            segments_moi or [], segments_participants or [],
+        )
+        with self._chemin.open("a", encoding="utf-8") as f:
+            f.write(f"---\n\n## {hh_mm} ({elapsed})\n\n")
+            for locuteur, texte in blocs:
+                f.write(f"**{locuteur} :** {texte}\n\n")
+
+    @property
+    def chemin(self) -> Path:
+        return self._chemin
+
+
+def _entrelaces(
+    texte_moi: str,
+    texte_participants: str,
+    segments_moi: "list[tuple[float, str]]",
+    segments_participants: "list[tuple[float, str]]",
+) -> "list[tuple[str, str]]":
+    """Entrelace les segments micro et système par timestamp.
+
+    Si des segments sont disponibles (Whisper retourne des timestamps),
+    on trie par début et on groupe les prises de parole consécutives du
+    même locuteur. Sinon, on retombe sur les textes bruts.
+    """
+    if not segments_moi and not segments_participants:
+        blocs = []
+        if texte_moi:
+            blocs.append(("Moi", texte_moi))
+        if texte_participants:
+            blocs.append(("Participants", texte_participants))
+        return blocs
+
+    tous = [(debut, "Moi", texte.strip()) for debut, texte in segments_moi if texte.strip()]
+    tous += [(debut, "Participants", texte.strip()) for debut, texte in segments_participants if texte.strip()]
+    tous.sort(key=lambda x: x[0])
+
+    # Grouper les segments consécutifs du même locuteur
+    groupes: list[list[str]] = []
+    for _, locuteur, texte in tous:
+        if groupes and groupes[-1][0] == locuteur:
+            groupes[-1][1] += " " + texte
+        else:
+            groupes.append([locuteur, texte])
+    return [(g[0], g[1]) for g in groupes]

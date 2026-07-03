@@ -1,0 +1,5 @@
+[POC] macOS Version 26.5.1 (Build 25F80)
+[OK] Tap créé — AudioObjectID=169  UID=66CE4E48-AE88-4FF0-99B1-B76B46B2CBAE
+[OK] Aggregate device — AudioObjectID=170
+FORMAT:48000:1
+[OK] Capture démarrée — float32 48000Hz 1ch sur stdout

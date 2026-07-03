@@ -1,0 +1,15 @@
+# nom debut_s fin_s — bornes des phases (le clap initial sert d'ancre d'alignement)
+participants_seuls 5.36 16.76
+moi_parle 18.9 33.3
+participants_seuls 35.42 46.82
+moi_parle 48.95 63.35
+participants_seuls 65.52 76.92
+moi_parle 79.06 93.46
+participants_seuls 95.65 107.05
+moi_parle 109.21 123.61
+participants_seuls 125.73 137.13
+moi_parle 139.25 153.65
+participants_seuls 155.8 167.2
+moi_parle 169.34 183.74
+participants_seuls 185.9 197.3
+moi_parle 199.44 213.84
