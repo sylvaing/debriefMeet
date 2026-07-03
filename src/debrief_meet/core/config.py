@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,10 @@ from debrief_meet.core import prompts as _prompts
 logger = logging.getLogger(__name__)
 
 VERSION_COURANTE = 1
+
+# `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
+# *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
+_WINDOWS = sys.platform == "win32"
 
 _DEFAUTS: dict[str, Any] = {
     "version": VERSION_COURANTE,
@@ -29,12 +34,16 @@ _DEFAUTS: dict[str, Any] = {
     "prompts": _prompts.prompts_par_defaut(),
     "prompt_actif": _prompts.PROMPT_ACTIF_DEFAUT,
     "demarrage_auto": False,
-    "logs_actifs": False,
-    "logs_debug": False,
+    # Windows : logs DEBUG activés par défaut (décision D5) — seul canal de debug tant
+    # qu'aucune machine Windows de dev n'est disponible. macOS/Linux inchangés.
+    "logs_actifs": _WINDOWS,
+    "logs_debug": _WINDOWS,
     "notifications": True,
-    "raccourci_dictee": "Meta+Alt+Ctrl+D",
-    "raccourci_reunion": "Meta+Alt+Ctrl+R",
-    "raccourci_journal": "Meta+Alt+Ctrl+J",
+    # Défauts Windows Ctrl+Alt+D/R/J (décision D3) — Meta = touche Windows, réservée par
+    # l'OS pour beaucoup de combos, on ne la met pas dans les défauts Windows.
+    "raccourci_dictee": "Ctrl+Alt+D" if _WINDOWS else "Meta+Alt+Ctrl+D",
+    "raccourci_reunion": "Ctrl+Alt+R" if _WINDOWS else "Meta+Alt+Ctrl+R",
+    "raccourci_journal": "Ctrl+Alt+J" if _WINDOWS else "Meta+Alt+Ctrl+J",
 }
 
 
@@ -69,6 +78,10 @@ class Config:
 
     def get(self, cle: str) -> Any:
         return self._donnees.get(cle, _DEFAUTS.get(cle))
+
+    def donnees(self) -> dict[str, Any]:
+        """Copie intégrale de la config — utilisé par l'export diagnostic (docs/31 §3.6)."""
+        return copy.deepcopy(self._donnees)
 
     def set(self, cle: str, valeur: Any) -> None:
         if cle not in _DEFAUTS:

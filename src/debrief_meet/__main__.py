@@ -89,7 +89,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from PySide6.QtWidgets import QSystemTrayIcon
 
     from debrief_meet.core.config import Config
-    from debrief_meet.core.logs import configurer_logs
+    from debrief_meet.core.logs import configurer_logs, installer_traces_crash, journaliser_entete_session
     from debrief_meet.core.modes import MachineEtats
     from debrief_meet.ipc import ServeurIPC
     from debrief_meet.ui.icones import icone_application
@@ -108,7 +108,17 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         actifs=config.get("logs_actifs"),
         debug=config.get("logs_debug"),
     )
+    installer_traces_crash()
     logger = logging.getLogger("debrief_meet")
+
+    # En-tête de session (docs/31 §3.4) : la collecte (PowerShell côté Windows) peut
+    # prendre ~1 s — thread non bloquant pour ne pas retarder l'affichage du tray.
+    def _journaliser_entete() -> None:
+        from debrief_meet.platform.infos_systeme import collecter_infos_systeme
+        journaliser_entete_session(collecter_infos_systeme())
+
+    import threading
+    threading.Thread(target=_journaliser_entete, daemon=True, name="entete-session").start()
 
     # Vérifier que le tray est supporté
     if not QSystemTrayIcon.isSystemTrayAvailable():

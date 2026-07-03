@@ -4,10 +4,11 @@ import logging
 from typing import Callable
 
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from debrief_meet import __version__
 from debrief_meet.core.config import Config
+from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
 from debrief_meet.platform.interfaces import (
     DemarrageAuto,
@@ -88,6 +89,10 @@ class IconeTray(QSystemTrayIcon):
         action_prefs.triggered.connect(self._ouvrir_preferences)
         menu.addAction(action_prefs)
 
+        action_diagnostic = QAction("Exporter le diagnostic…", menu)
+        action_diagnostic.triggered.connect(self._exporter_diagnostic)
+        menu.addAction(action_diagnostic)
+
         menu.addSeparator()
 
         action_about = QAction(f"debriefMeet {__version__}", menu)
@@ -153,6 +158,22 @@ class IconeTray(QSystemTrayIcon):
         self._action_dictee.setShortcut(QKeySequence.fromString(self._config.get("raccourci_dictee")))
         self._action_reunion.setShortcut(QKeySequence.fromString(self._config.get("raccourci_reunion")))
         self._action_journal.setShortcut(QKeySequence.fromString(self._config.get("raccourci_journal")))
+
+    def _exporter_diagnostic(self) -> None:
+        """Doit marcher même quand tout le reste est cassé (docs/31 §3.6) : code
+        trivial, sans dépendance au moteur, erreurs affichées plutôt que loguées
+        silencieusement."""
+        try:
+            from debrief_meet.platform.infos_systeme import collecter_infos_systeme
+            chemin = exporter_diagnostic(dossier_diagnostic_par_defaut(), collecter_infos_systeme())
+            QMessageBox.information(
+                None, "Diagnostic exporté",
+                f"Diagnostic exporté sur le Bureau : {chemin.name}\n"
+                "Envoyez ce fichier à Sylvain.",
+            )
+        except Exception as exc:
+            logger.error("Export diagnostic impossible (%s)", exc, exc_info=True)
+            QMessageBox.critical(None, "Erreur", f"Impossible d'exporter le diagnostic :\n{exc}")
 
     def _ouvrir_historique(self) -> FenetreHistorique:
         if self._fenetre_hist is None:

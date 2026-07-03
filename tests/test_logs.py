@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import pytest
 
@@ -76,8 +77,63 @@ class TestLogsActives:
         root = logging.getLogger("debrief_meet")
         handlers = [h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
         assert handlers
-        assert handlers[0].maxBytes == 1_000_000
-        assert handlers[0].backupCount == 3
+        assert handlers[0].maxBytes == 5_000_000
+        assert handlers[0].backupCount == 5
+
+
+class TestEnteteSession:
+    def test_bloc_present_avec_version(self, tmp_path, monkeypatch):
+        import platformdirs
+        monkeypatch.setattr(platformdirs, "user_log_dir", lambda *a, **kw: str(tmp_path))
+
+        from debrief_meet import VERSION_COMPLETE
+        from debrief_meet.core.logs import chemin_log, configurer_logs, journaliser_entete_session
+        configurer_logs(actifs=True)
+        journaliser_entete_session({"os": "Test-OS-1.0", "cpu": "Test-CPU"})
+
+        root = logging.getLogger("debrief_meet")
+        for h in root.handlers:
+            h.flush()
+        contenu = chemin_log().read_text(encoding="utf-8")
+        assert "===== SESSION debriefMeet" in contenu
+        assert VERSION_COMPLETE in contenu
+        assert "os: Test-OS-1.0" in contenu
+        assert "cpu: Test-CPU" in contenu
+
+
+class TestTracesCrash:
+    def test_exception_non_rattrapee_logguee_en_critical_et_rappelle_le_hook_precedent(
+        self, tmp_path, monkeypatch
+    ):
+        import threading
+        import platformdirs
+        monkeypatch.setattr(platformdirs, "user_log_dir", lambda *a, **kw: str(tmp_path))
+
+        from debrief_meet.core.logs import chemin_log, configurer_logs, installer_traces_crash
+        configurer_logs(actifs=True, debug=True)
+
+        hook_original = sys.excepthook
+        thread_hook_original = threading.excepthook
+        appels_precedent = []
+        sys.excepthook = lambda *a: appels_precedent.append(a)
+        try:
+            installer_traces_crash()
+            try:
+                raise RuntimeError("boom-test-crash-hook")
+            except RuntimeError:
+                exc_info = sys.exc_info()
+            sys.excepthook(*exc_info)
+
+            root = logging.getLogger("debrief_meet")
+            for h in root.handlers:
+                h.flush()
+            contenu = chemin_log().read_text(encoding="utf-8")
+            assert "CRITICAL" in contenu
+            assert "boom-test-crash-hook" in contenu
+            assert len(appels_precedent) == 1
+        finally:
+            sys.excepthook = hook_original
+            threading.excepthook = thread_hook_original
 
     def test_reconfiguration_propre(self, tmp_path, monkeypatch):
         import platformdirs

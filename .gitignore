@@ -29,6 +29,9 @@ dist/
 *.pkg
 bundles/
 
+# Généré par le script de build (docs/31 §3.2) — jamais commité.
+src/debrief_meet/_version.py
+
 # Archives : filet de sécurité. Les rapports de benchmark emballent des
 # WAV de sondes (audio confidentiel) que la règle *.wav ne voit pas dans un zip.
 *.zip

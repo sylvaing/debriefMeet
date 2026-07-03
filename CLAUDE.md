@@ -60,7 +60,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
-| **5 — Portage Windows** | 📝 SPECS RÉDIGÉES (2026-07-03, docs/30→35) — v1 : faster-whisper CPU, installeur Inno Setup, logs DEBUG par défaut + export diagnostic ; implémentation dans l'ordre docs/30 §6 |
+| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, **docs/31 (observabilité) ✅ TERMINÉ** (2026-07-03, 607 passed) : logs DEBUG Windows par défaut, `VERSION_COMPLETE`, en-tête de session, crash handler, export diagnostic (tray) ; suite : docs/34 (adaptateurs) |
 | **Correctifs fuites CoreAudio (docs/23)** | ✅ TERMINÉ (2026-07-02, 530 passed) |
 | **Robustesse micro hot-plug (docs/25)** | ✅ TERMINÉ (2026-07-02, 542 passed) |
 | **Fix dictée/journal muets (docs/27)** | ✅ TERMINÉ (2026-07-02, 556 passed) |

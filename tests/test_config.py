@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -21,6 +22,40 @@ class TestDefauts:
 
     def test_cle_inconnue_retourne_none(self, config_tmp):
         assert config_tmp.get("cle_inexistante") is None
+
+
+class TestDefautsWindows:
+    """docs/31 §3.1 : logs DEBUG on + raccourcis Ctrl+Alt+D/R/J par défaut sur Windows
+    uniquement — les défauts dépendent de `sys.platform` au chargement du module."""
+
+    def _recharger_avec_platform(self, monkeypatch, plateforme: str):
+        import importlib
+        monkeypatch.setattr(sys, "platform", plateforme)
+        from debrief_meet.core import config as config_module
+        importlib.reload(config_module)
+        return config_module
+
+    def test_defauts_windows(self, monkeypatch):
+        original = sys.platform
+        try:
+            config_module = self._recharger_avec_platform(monkeypatch, "win32")
+            assert config_module._DEFAUTS["logs_actifs"] is True
+            assert config_module._DEFAUTS["logs_debug"] is True
+            assert config_module._DEFAUTS["raccourci_dictee"] == "Ctrl+Alt+D"
+            assert config_module._DEFAUTS["raccourci_reunion"] == "Ctrl+Alt+R"
+            assert config_module._DEFAUTS["raccourci_journal"] == "Ctrl+Alt+J"
+        finally:
+            self._recharger_avec_platform(monkeypatch, original)
+
+    def test_defauts_macos_inchanges(self, monkeypatch):
+        original = sys.platform
+        try:
+            config_module = self._recharger_avec_platform(monkeypatch, "darwin")
+            assert config_module._DEFAUTS["logs_actifs"] is False
+            assert config_module._DEFAUTS["logs_debug"] is False
+            assert config_module._DEFAUTS["raccourci_dictee"] == "Meta+Alt+Ctrl+D"
+        finally:
+            self._recharger_avec_platform(monkeypatch, original)
 
 
 class TestSauvegardeChargement:
