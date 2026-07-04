@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Génère src/debrief_meet/ui/assets/AppIcon.icns (icône d'app macOS, Dock/Finder).
-
-Rend le motif validé (carré bleu système + bulle blanche + ondes) à toutes les
-tailles d'un .iconset, puis appelle `iconutil` pour produire le .icns.
+"""Génère les icônes d'app à partir du même motif SVG (carré bleu système + bulle
+blanche + ondes) :
+  - src/debrief_meet/ui/assets/AppIcon.icns (macOS, Dock/Finder) via `iconutil` ;
+  - packaging/windows/debriefMeet.ico (Windows, installeur Inno Setup + .exe,
+    docs/32 §3.2), multi-résolution (16/32/48/256) via Pillow.
 
 Usage :  python scripts/generer_icone.py
 """
@@ -21,7 +22,7 @@ def main() -> int:
     from PySide6.QtGui import QGuiApplication
 
     QGuiApplication.instance() or QGuiApplication(sys.argv)
-    from debrief_meet.ui.icones import ecrire_iconset
+    from debrief_meet.ui.icones import ecrire_ico, ecrire_iconset
 
     assets = racine / "src" / "debrief_meet" / "ui" / "assets"
     iconset = assets / "AppIcon.iconset"
@@ -36,7 +37,11 @@ def main() -> int:
 
     subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(icns)], check=True)
     shutil.rmtree(iconset)
-    print(f"✓ Icône générée : {icns}")
+    print(f"✓ Icône macOS générée : {icns}")
+
+    ico = racine / "packaging" / "windows" / "debriefMeet.ico"
+    ecrire_ico(ico)
+    print(f"✓ Icône Windows générée : {ico}")
     return 0
 
 

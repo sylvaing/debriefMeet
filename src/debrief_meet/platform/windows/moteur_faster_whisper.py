@@ -47,8 +47,12 @@ _COMPUTE_TYPE = "int8"
 
 
 def dossier_modeles() -> Path:
-    """`download_root` forcé (docs/34 §1.3) — jamais le cache HF global."""
-    return Path(platformdirs.user_data_dir(APP_NAME)) / "modeles"
+    """`download_root` forcé (docs/34 §1.3) — jamais le cache HF global.
+
+    `appauthor=False` : sans lui, platformdirs double le dossier sur Windows
+    (`%LOCALAPPDATA%\\debriefMeet\\debriefMeet`) — il traite `appname` comme
+    « author » par défaut quand aucun n'est fourni (docs/32 §4)."""
+    return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False)) / "modeles"
 
 
 def _coeurs_physiques_bornes(maximum: int = 8) -> int:

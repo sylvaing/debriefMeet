@@ -60,7 +60,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
-| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, docs/31 (observabilité) ✅, **docs/34 (adaptateurs) ✅ TERMINÉ** (2026-07-03, 667 passed) : factory Windows sans repli stub, moteur `MoteurFasterWhisper` (CPU int8, pool 1 worker, registre+kill docs/26), capture système WASAPI (`soundcard`), raccourcis `RegisterHotKey` (Ctrl+Alt+D/R/J), autostart (`winreg`), presse-papiers Qt, mutex instance unique ; revue croisée E-1→E-8 (docs/33) close ; reste à faire : docs/32 (packaging, nécessite la VM) puis docs/35 (livraison) |
+| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, docs/31 (observabilité) ✅, docs/34 (adaptateurs) ✅ (2026-07-03, 667 passed), **docs/32 (packaging) ✅ scripts écrits** (2026-07-03, 677 passed) : `generer_version.py`, spec PyInstaller onedir, `debriefMeet.iss` (AppId figé, AppMutex, désinstallation complète), `build_app.cmd`/`build_app_windows_vm.sh` — **build réel sur la VM pas encore lancé** (piège trouvé et corrigé au passage : `platformdirs` sans `appauthor=False` double le dossier sur Windows, cf. § dédié) ; reste : lancer le build VM, puis docs/35 (livraison) |
 | **Correctifs fuites CoreAudio (docs/23)** | ✅ TERMINÉ (2026-07-02, 530 passed) |
 | **Robustesse micro hot-plug (docs/25)** | ✅ TERMINÉ (2026-07-02, 542 passed) |
 | **Fix dictée/journal muets (docs/27)** | ✅ TERMINÉ (2026-07-02, 556 passed) |
@@ -83,11 +83,30 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - VM : `192.168.1.29`, SSH `sylvaing` (mot de passe hors dépôt)
 - Script benchmark : `scripts/build_windows_vm.sh`
 - Script spike backends : `scripts/build_spike_backends_vm.sh` ← Phase 5
+- **Script app (setup installeur) : `scripts/build_app_windows_vm.sh`** ← Phase 5 (docs/32) — rsync
+  sources + `BUILD_INFO` (date+hash git), pytest bloquant sur la VM, PyInstaller onedir
+  (`packaging/windows/debriefMeet.spec`), Inno Setup (`packaging/windows/debriefMeet.iss`),
+  rapatrie `dist/debriefMeet-setup-<version>.exe`.
+  Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6 (`ISCC.exe`).
 - Garder la session SSH **ouverte** pendant le build — un process détaché est tué à la fermeture de session.
 - Build ~20-40 min (première fois). Rebuild plus rapide : modèles HF déjà en cache sur la VM.
 - HF_TOKEN optionnel : `HF_TOKEN=hf_xxx bash scripts/build_spike_backends_vm.sh`
 - Doc benchmark : `docs/08-benchmark.md` § « Build & distribution »
 - Doc spike : `docs/18-spike-backends-windows.md` §11 (journal de build, pièges résolus)
+- Doc packaging app : `docs/32-phase5-packaging-cycle-de-vie.md`
+
+## Piège `platformdirs` sur Windows — `appauthor=False` obligatoire
+
+`platformdirs.user_config_dir/user_data_dir/user_log_dir(APP_NAME)` **sans**
+`appauthor` explicite double le dossier sur Windows uniquement :
+`%LOCALAPPDATA%\debriefMeet\debriefMeet` au lieu de `%LOCALAPPDATA%\debriefMeet`
+(la lib traite `appname` comme « author » par défaut — `Windows._append_parts` :
+`author = self.appauthor or self.appname`). Absent sur macOS/Linux. Tous les appels
+de l'app passent donc `appauthor=False` (`core/config.py`, `core/logs.py`,
+`platform/windows/moteur_faster_whisper.py`) — conséquence pratique : config,
+logs et modèles téléchargés vivent tous sous la **même racine**
+`%LOCALAPPDATA%\debriefMeet`, ce qui simplifie `[UninstallDelete]` dans le `.iss`
+à une seule entrée (docs/32 §4).
 
 ## Capture loopback Windows
 

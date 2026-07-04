@@ -146,8 +146,13 @@ class GestionnaireDiarization(QObject):
         worker.erreur.connect(self._sur_erreur)
         worker.terminee.connect(thread.quit)
         worker.erreur.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._nettoyer_thread)
+        # PAS de `thread.finished.connect(worker.deleteLater)` ici : le deferred delete
+        # serait traité DANS le thread mourant (connexion directe — le worker y vit),
+        # et cette destruction native concurrente au thread principal provoque une
+        # access violation intermittente sur Windows (VM, 2026-07-03/04). On garde les
+        # références Python (`self._worker`/`self._thread`) : le worker, redevenu
+        # « threadless » après la fin du thread, est détruit sans danger depuis le
+        # thread principal quand la référence est remplacée au job suivant.
 
         self._thread = thread
         self._worker = worker
@@ -175,10 +180,6 @@ class GestionnaireDiarization(QObject):
         self._type_job = None
         logger.error("Job %s échoué (%s) : %s", type_job, md, message)
         self.echoue.emit(md, message)
-
-    def _nettoyer_thread(self) -> None:
-        self._thread = None
-        self._worker = None
 
     def terminer(self) -> None:
         """Attend la fin du job courant (appelé par aboutToQuit, avant l'arrêt moteur)."""

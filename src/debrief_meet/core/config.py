@@ -52,7 +52,10 @@ _DEFAUTS: dict[str, Any] = {
 
 
 def _chemin_config() -> Path:
-    return Path(platformdirs.user_config_dir(APP_NAME)) / "config.json"
+    # appauthor=False : sans lui, platformdirs double le dossier sur Windows
+    # (`%LOCALAPPDATA%\debriefMeet\debriefMeet`) — il traite `appname` comme
+    # « author » par défaut. Sans effet sur macOS/Linux (docs/32 §4).
+    return Path(platformdirs.user_config_dir(APP_NAME, appauthor=False)) / "config.json"
 
 
 class Config:

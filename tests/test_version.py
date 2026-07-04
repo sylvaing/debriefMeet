@@ -6,13 +6,17 @@ import types
 
 
 def test_version_complete_repli_dev(monkeypatch):
-    """Sans `_version.py` (exécution depuis les sources) : repli `<version>+dev`."""
-    monkeypatch.delitem(sys.modules, "debrief_meet._version", raising=False)
+    """Sans `_version.py` (exécution depuis les sources) : repli `<version>+dev`.
+
+    `sys.modules[...] = None` force l'ImportError même si le fichier existe — cas
+    de la VM de build, où `generer_version.py` produit `_version.py` AVANT pytest."""
+    monkeypatch.setitem(sys.modules, "debrief_meet._version", None)
     import debrief_meet
     importlib.reload(debrief_meet)
     try:
         assert debrief_meet.VERSION_COMPLETE == debrief_meet.__version__ + "+dev"
     finally:
+        monkeypatch.delitem(sys.modules, "debrief_meet._version", raising=False)
         importlib.reload(debrief_meet)
 
 

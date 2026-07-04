@@ -208,6 +208,20 @@ def test_dossier_modeles_sous_user_data_dir(monkeypatch, tmp_path):
     assert dossier_modeles() == tmp_path / "modeles"
 
 
+def test_dossier_modeles_appauthor_false_evite_le_doublon_windows(monkeypatch, tmp_path):
+    """Sans `appauthor=False`, platformdirs double le dossier sur Windows
+    (`%LOCALAPPDATA%\\debriefMeet\\debriefMeet`, docs/32 §4)."""
+    import platformdirs
+
+    appels = []
+    monkeypatch.setattr(
+        platformdirs, "user_data_dir",
+        lambda *a, **kw: appels.append((a, kw)) or str(tmp_path),
+    )
+    dossier_modeles()
+    assert appels[0][1].get("appauthor") is False
+
+
 def test_coeurs_physiques_bornes_ne_depasse_jamais_le_maximum(monkeypatch):
     import os
     monkeypatch.setattr(os, "cpu_count", lambda: 32)

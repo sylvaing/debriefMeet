@@ -10,11 +10,15 @@ from debrief_meet.core.config import Config, VERSION_COURANTE, _DEFAUTS
 
 class TestDefauts:
     def test_valeurs_defaut_presentes(self, config_tmp):
+        # Logs ON par défaut sur Windows uniquement (décision D5, docs/31 §3.1) —
+        # ce test tourne aussi sur la VM Windows (build gate docs/32), l'attendu
+        # dépend donc de la plateforme d'exécution.
+        logs_attendus = sys.platform == "win32"
         assert config_tmp.get("modele") == "large-v3-turbo"
         assert config_tmp.get("langue") is None
         assert config_tmp.get("intervalle_reunion") == 30
-        assert config_tmp.get("logs_actifs") is False
-        assert config_tmp.get("logs_debug") is False
+        assert config_tmp.get("logs_actifs") is logs_attendus
+        assert config_tmp.get("logs_debug") is logs_attendus
         assert config_tmp.get("demarrage_auto") is False
         assert config_tmp.get("backend") == "auto"
 
@@ -57,6 +61,23 @@ class TestDefautsWindows:
             assert config_module._DEFAUTS["raccourci_dictee"] == "Meta+Alt+Ctrl+D"
         finally:
             self._recharger_avec_platform(monkeypatch, original)
+
+
+class TestCheminConfig:
+    def test_appauthor_false_evite_le_doublon_windows(self, monkeypatch):
+        """Sans `appauthor=False`, platformdirs double le dossier sur Windows
+        (`%LOCALAPPDATA%\\debriefMeet\\debriefMeet`, docs/32 §4) : platformdirs traite
+        `appname` comme « author » par défaut faute de mieux."""
+        import platformdirs
+        from debrief_meet.core.config import _chemin_config
+
+        appels = []
+        monkeypatch.setattr(
+            platformdirs, "user_config_dir",
+            lambda *a, **kw: appels.append((a, kw)) or "/tmp/config",
+        )
+        _chemin_config()
+        assert appels[0][1].get("appauthor") is False
 
 
 class TestSauvegardeChargement:

@@ -33,6 +33,7 @@ dev = [
     "pytest>=7.0",
     "pytest-qt>=4.4",
     "pytest-cov>=5.0",
+    "Pillow",            # génération de l'icône .ico Windows (scripts/generer_icone.py)
 ]
 # Outil de benchmark (benchmark/) lancé en dev sur le Mac — cf. docs/08-benchmark.md.
 # Le bundle portable embarque ces deps + faster-whisper/sherpa/pyannote (cf. assembler_bundle.py).

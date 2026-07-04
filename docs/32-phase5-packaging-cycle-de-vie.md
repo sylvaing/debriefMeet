@@ -1,11 +1,19 @@
 # Phase 5 — Packaging Windows et cycle de vie (install / mise à jour / désinstallation)
 
-> **Statut : 📝 SPEC à implémenter** (2026-07-03). Dépend de : docs/31 (`_version.py`),
-> docs/34 (mutex `instance_unique.py` pour `AppMutex`). Nécessite la VM Proxmox
-> (`192.168.1.29`) pour l'exécution ; toute la rédaction des scripts se fait sur Mac.
+> **Statut : 🔄 Scripts écrits sur Mac (2026-07-03), build VM pas encore lancé.**
+> Dépend de : docs/31 (`_version.py`), docs/34 (mutex `instance_unique.py` pour
+> `AppMutex`) — tous deux ✅. Reste à faire : exécuter `scripts/build_app_windows_vm.sh`
+> sur la VM Proxmox (`192.168.1.29`) et dérouler la checklist §6.
 >
 > ⚠️ Révise docs/03 : l'installeur (Inno Setup) entre dans le périmètre v1 (décision
 > D1, cf. docs/30 §2). Le ZIP portable n'est plus le livrable.
+>
+> ⚠️ Piège découvert à l'implémentation (absent de la spec initiale) : `platformdirs`
+> sans `appauthor=False` double le dossier sur Windows
+> (`%LOCALAPPDATA%\debriefMeet\debriefMeet`) — corrigé dans `core/config.py`,
+> `core/logs.py`, `platform/windows/moteur_faster_whisper.py`. Conséquence : config,
+> logs et modèles partagent tous `%LOCALAPPDATA%\debriefMeet`, simplifiant §4
+> ci-dessous à une seule entrée `[UninstallDelete]`. Voir CLAUDE.md § dédié.
 
 ---
 

@@ -139,6 +139,9 @@ class _FauxPipeline:
 
 
 def test_diarization_pyannote_pipeline_injecte():
+    # `diariser()` importe torch même avec un pipeline injecté — torch n'est pas
+    # installé sur la VM Windows (diarization hors périmètre v1, docs/30 §3).
+    pytest.importorskip("torch")
     moteur = diar.DiarizationPyannote(token="factice")
     moteur._pipeline = _FauxPipeline([(0.0, 1.0, "SPK0"), (1.0, 2.0, "SPK1")])
     segs = moteur.diariser(np.zeros(diar.SR, dtype=np.float32))

@@ -153,6 +153,10 @@ def test_gestionnaire_lance_et_termine(qapp, qtbot, tmp_path, monkeypatch):
     assert sortie.name == "2026-01-01_10-00_locuteurs.md"
     assert g.job_en_cours() is None            # libéré à la fin
     assert g.dernier_termine() == md
+    # `termine` est émis AVANT que le QThread ne soit réellement fini (quit() est
+    # asynchrone) : attendre sa fin effective, sinon `g` (local) est détruit par le
+    # GC pendant que le thread s'éteint → access violation sur Windows (VM).
+    qtbot.waitUntil(lambda: g._thread is not None and g._thread.isFinished(), timeout=5000)
 
 
 def test_diarization_prete_exige_moteur_et_modele(qapp, tmp_path, monkeypatch):
@@ -417,6 +421,8 @@ def test_gestionnaire_lance_transcription(qapp, qtbot, tmp_path):
     assert "bonjour" in contenu                      # transcription écrite
     assert "non générée" not in contenu              # placeholder remplacé
     assert g.job_en_cours() is None
+    # Cf. test_gestionnaire_lance_et_termine : attendre la fin réelle du QThread.
+    qtbot.waitUntil(lambda: g._thread is not None and g._thread.isFinished(), timeout=5000)
 
 
 # ── Spinner animé du bouton « en cours » (doc 11) ───────────────────────────────

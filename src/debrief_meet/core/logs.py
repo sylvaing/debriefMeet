@@ -21,7 +21,9 @@ _fichier_crash: Any = None   # handle gardé ouvert au niveau module (faulthandl
 
 
 def chemin_log() -> Path:
-    return Path(platformdirs.user_log_dir(APP_NAME)) / "debriefMeet.log"
+    # appauthor=False : cf. core/config.py — sans lui, platformdirs double le
+    # dossier sur Windows (`%LOCALAPPDATA%\debriefMeet\debriefMeet\Logs`).
+    return Path(platformdirs.user_log_dir(APP_NAME, appauthor=False)) / "debriefMeet.log"
 
 
 def chemin_log_crash() -> Path:

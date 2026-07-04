@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -302,3 +302,35 @@ def ecrire_iconset(dossier) -> list[Path]:
         dessiner_icone_app(taille).save(str(chemin), "PNG")
         ecrits.append(chemin)
     return ecrits
+
+
+_ICO_TAILLES = (16, 32, 48, 256)
+
+
+def ecrire_ico(chemin) -> Path:
+    """Écrit une icône Windows multi-résolution (.ico) — packaging/windows (docs/32 §3.2).
+
+    Utilise Pillow (dépendance dev uniquement) : Qt n'expose pas d'API fiable pour
+    combiner plusieurs résolutions dans un seul fichier .ico, alors que Pillow le
+    fait nativement (`append_images` + `sizes`)."""
+    import io
+    from PIL import Image
+
+    chemin = Path(chemin)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+
+    images = []
+    for taille in _ICO_TAILLES:
+        tampon = QByteArray()
+        buf = QBuffer(tampon)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        dessiner_icone_app(taille).save(buf, "PNG")
+        buf.close()
+        images.append(Image.open(io.BytesIO(bytes(tampon))))
+
+    images[-1].save(
+        str(chemin), format="ICO",
+        sizes=[(img.width, img.height) for img in images],
+        append_images=images[:-1],
+    )
+    return chemin

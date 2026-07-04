@@ -6,6 +6,20 @@ import sys
 import pytest
 
 
+class TestCheminLog:
+    def test_appauthor_false_evite_le_doublon_windows(self, monkeypatch):
+        import platformdirs
+        from debrief_meet.core.logs import chemin_log
+
+        appels = []
+        monkeypatch.setattr(
+            platformdirs, "user_log_dir",
+            lambda *a, **kw: appels.append((a, kw)) or "/tmp/logs",
+        )
+        chemin_log()
+        assert appels[0][1].get("appauthor") is False
+
+
 class TestLogsDesactives:
     def test_desactives_par_defaut(self, tmp_path, monkeypatch):
         import platformdirs

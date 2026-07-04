@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.core.raccourcis import appliquer_raccourcis
 from tests.fakes.adapters import RaccourcisFake
+
+# Défauts dépendants de l'OS (décision D3, docs/31 §3.1) : Ctrl+Alt+D/R/J sur
+# Windows, Meta+Alt+Ctrl+D/R/J ailleurs — ces tests tournent aussi sur la VM
+# Windows (build gate docs/32).
+_D, _R, _J = (
+    ("Ctrl+Alt+D", "Ctrl+Alt+R", "Ctrl+Alt+J") if sys.platform == "win32"
+    else ("Meta+Alt+Ctrl+D", "Meta+Alt+Ctrl+R", "Meta+Alt+Ctrl+J")
+)
 
 
 @pytest.fixture
@@ -24,26 +34,26 @@ def test_enregistre_les_trois_combinaisons_par_defaut(machine, raccourcis_fake, 
     cfg = _config(tmp_path)
     echecs = appliquer_raccourcis(raccourcis_fake, cfg, machine)
     assert echecs == []
-    assert set(raccourcis_fake.enregistres) == {"Meta+Alt+Ctrl+D", "Meta+Alt+Ctrl+R", "Meta+Alt+Ctrl+J"}
+    assert set(raccourcis_fake.enregistres) == {_D, _R, _J}
 
 
 def test_callbacks_bascule_bien_la_machine(machine, raccourcis_fake, tmp_path):
     cfg = _config(tmp_path)
     appliquer_raccourcis(raccourcis_fake, cfg, machine)
 
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+D"]()
+    raccourcis_fake.enregistres[_D]()
     assert machine.mode == Mode.DICTEE
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+D"]()
+    raccourcis_fake.enregistres[_D]()
     assert machine.mode == Mode.IDLE
 
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+R"]()
+    raccourcis_fake.enregistres[_R]()
     assert machine.mode == Mode.REUNION
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+R"]()
+    raccourcis_fake.enregistres[_R]()
     assert machine.mode == Mode.IDLE
 
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+J"]()
+    raccourcis_fake.enregistres[_J]()
     assert machine.mode == Mode.JOURNAL
-    raccourcis_fake.enregistres["Meta+Alt+Ctrl+J"]()
+    raccourcis_fake.enregistres[_J]()
     assert machine.mode == Mode.IDLE
 
 
@@ -59,13 +69,13 @@ def test_combinaison_vide_non_enregistree_sans_echec(machine, raccourcis_fake, t
     cfg = _config(tmp_path, raccourci_journal="")
     echecs = appliquer_raccourcis(raccourcis_fake, cfg, machine)
     assert echecs == []
-    assert "Meta+Alt+Ctrl+J" not in raccourcis_fake.enregistres
+    assert _J not in raccourcis_fake.enregistres
     assert len(raccourcis_fake.enregistres) == 2
 
 
 def test_combinaison_refusee_reportee_dans_les_echecs(machine, tmp_path):
-    fake = RaccourcisFake(refuser={"Meta+Alt+Ctrl+R"})
+    fake = RaccourcisFake(refuser={_R})
     cfg = _config(tmp_path)
     echecs = appliquer_raccourcis(fake, cfg, machine)
-    assert echecs == ["Meta+Alt+Ctrl+R"]
-    assert set(fake.enregistres) == {"Meta+Alt+Ctrl+D", "Meta+Alt+Ctrl+J"}
+    assert echecs == [_R]
+    assert set(fake.enregistres) == {_D, _J}

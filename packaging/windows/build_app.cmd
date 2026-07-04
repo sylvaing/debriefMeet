@@ -1,0 +1,66 @@
+@echo off
+setlocal enableextensions
+REM Build natif du setup Windows debriefMeet (appele depuis build_app_windows_vm.sh).
+REM Ne pas executer manuellement - necessite BUILD_INFO (rsync du script Mac, docs/32).
+set VM_DIR=C:\Users\sylvaing\build\debrief-meet
+cd /d %VM_DIR%
+if errorlevel 1 ( echo ERREUR : impossible de cd vers %VM_DIR% & goto :error )
+echo [build_app.cmd] Repertoire : %CD%
+
+echo [1/5] Creation du venv Python 3.13...
+if exist .venv-build ( rmdir /s /q .venv-build )
+py -3.13 -m venv .venv-build
+if errorlevel 1 goto :error
+call .venv-build\Scripts\activate.bat
+python -m pip install --upgrade pip
+if errorlevel 1 goto :error
+python -m pip install -e .[windows,dev]
+if errorlevel 1 goto :error
+python -m pip install pyinstaller
+if errorlevel 1 goto :error
+
+echo [2/5] Generation de la version (_version.py + version.iss)...
+python packaging\windows\generer_version.py --build-info BUILD_INFO
+if errorlevel 1 goto :error
+
+echo [3/5] Suite de tests (bloquant - build refuse si rouge, docs/32)...
+REM Hors gate produit Windows :
+REM - test_benchmark_* / test_spike_backends_* : importent benchmark/ et spike/
+REM   (outils internes, non synchronises sur la VM) ;
+REM - test_build.py : hygiene du DEPOT (Makefile, setup.sh, README, audio du
+REM   benchmark) -- ces fichiers ne font pas partie du produit ni du sync VM.
+python -m pytest -m "not integration" --ignore-glob="tests/test_benchmark_*.py" --ignore-glob="tests/test_spike_backends_*.py" --ignore=tests/test_build.py
+if errorlevel 1 goto :error
+
+echo [4/5] PyInstaller (onedir)...
+pyinstaller packaging\windows\debriefMeet.spec --noconfirm --distpath dist --workpath build\work
+if errorlevel 1 goto :error
+
+echo [5/5] Inno Setup...
+if not defined ISCC_EXE (
+    REM Emplacement selon le mode d'installation : machine (Program Files) ou
+    REM utilisateur (AppData\Local\Programs — cas d'un `winget install --scope user`).
+    if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+        set "ISCC_EXE=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
+        set "ISCC_EXE=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+    )
+)
+if not exist "%ISCC_EXE%" (
+    echo ERREUR : ISCC.exe introuvable ^(cherche dans Program Files et %%LOCALAPPDATA%%^)
+    echo   Installer Inno Setup 6 ^(winget install JRSoftware.InnoSetup^) ou definir ISCC_EXE.
+    goto :error
+)
+"%ISCC_EXE%" packaging\windows\debriefMeet.iss
+if errorlevel 1 goto :error
+
+echo RC=0 > build_app.done
+echo.
+echo === Build termine avec succes ===
+exit /b 0
+
+:error
+set ERR=%errorlevel%
+echo RC=%ERR% > build_app.done
+echo === ECHEC build (RC=%ERR%) ===
+exit /b %ERR%

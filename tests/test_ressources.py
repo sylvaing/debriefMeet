@@ -13,9 +13,14 @@ def test_est_figee_false_en_dev():
 
 
 def test_chemin_ressource_pointe_la_racine_du_depot_en_dev():
-    # En dev, la racine = dépôt → le helper Swift doit s'y trouver.
-    helper = ressources.chemin_ressource("helpers", "macos", "sck-audio", "SCKAudioCapture.swift")
-    assert helper.exists(), f"Source helper introuvable : {helper}"
+    # En dev, la racine = dépôt. Sur Mac on sonde le helper Swift (l'invariant qui
+    # compte pour la capture SCK) ; ailleurs (VM Windows : helpers/ non synchronisé)
+    # on sonde pyproject.toml, présent sur toute copie de travail.
+    if sys.platform == "darwin":
+        sonde = ressources.chemin_ressource("helpers", "macos", "sck-audio", "SCKAudioCapture.swift")
+    else:
+        sonde = ressources.chemin_ressource("pyproject.toml")
+    assert sonde.exists(), f"Sonde racine introuvable : {sonde}"
 
 
 def test_chemin_ressource_utilise_meipass_si_figee(monkeypatch, tmp_path):
