@@ -60,7 +60,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
-| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, implémentation dans l'ordre docs/30 §6) — prérequis §5 ✅, docs/31 (observabilité) ✅, docs/34 (adaptateurs) ✅ (2026-07-03, 667 passed), **docs/32 (packaging) ✅ scripts écrits** (2026-07-03, 677 passed) : `generer_version.py`, spec PyInstaller onedir, `debriefMeet.iss` (AppId figé, AppMutex, désinstallation complète), `build_app.cmd`/`build_app_windows_vm.sh` — **build réel sur la VM pas encore lancé** (piège trouvé et corrigé au passage : `platformdirs` sans `appauthor=False` double le dossier sur Windows, cf. § dédié) ; reste : lancer le build VM, puis docs/35 (livraison) |
+| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, ordre docs/30 §6) — prérequis §5 ✅, docs/31 ✅, docs/34 ✅, **docs/32 (packaging) ✅ PREMIER BUILD RÉUSSI** (2026-07-04) : `dist/debriefMeet-setup-0.2.0+20260704.4029f0d.exe` (125 Mo) produit sur la VM et rapatrié — gate pytest VM 506 passed ; corrigés au passage : `platformdirs appauthor=False` (cf. § dédié), **crash QThread access violation** (`deleteLater` in-thread, `gestionnaire_diarization.py`), tests platform-aware ; reste : fumée VM (spec **docs/37**, à coder en session Sonnet) puis docs/35 (livraison) |
 | **Correctifs fuites CoreAudio (docs/23)** | ✅ TERMINÉ (2026-07-02, 530 passed) |
 | **Robustesse micro hot-plug (docs/25)** | ✅ TERMINÉ (2026-07-02, 542 passed) |
 | **Fix dictée/journal muets (docs/27)** | ✅ TERMINÉ (2026-07-02, 556 passed) |
@@ -155,3 +155,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Phase 5 — transposition des correctifs macOS (exigences E-1→E-8) | `docs/33` |
 | Phase 5 — adaptateurs Windows (moteur, WASAPI, raccourcis…) | `docs/34` |
 | Phase 5 — livraison, notice utilisateur, analyse des diagnostics | `docs/35` |
+| Phase 5 — fumée automatisée du setup via SSH (VM) | `docs/37` (spec à implémenter) |
