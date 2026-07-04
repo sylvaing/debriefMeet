@@ -149,7 +149,8 @@ def icone_pour_etat(etat: EtatVisuel, taille: int = 22) -> QIcon:
 # Remplacent progressivement les glyphes Tabler ci-dessous au fil des étapes de la
 # refonte (composants, Historique, Préférences, tray).
 
-PHOSPHOR_DIR = Path(__file__).parent / "assets" / "icons" / "phosphor"
+ICON_DIR = Path(__file__).parent / "assets" / "icons"
+PHOSPHOR_DIR = ICON_DIR / "phosphor"
 
 
 def icone_phosphor(nom: str) -> Path:
