@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QCursor, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from debrief_meet import __version__
 from debrief_meet.core.config import Config
 from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
+from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.fenetre_principale import FenetrePrincipale
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
-from debrief_meet.ui.icones import icone_pour_etat
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,11 @@ class IconeTray(QSystemTrayIcon):
         self.setToolTip("debriefMeet")
 
     def _construire_menu(self) -> None:
+        # Pas de `setContextMenu()` : sur macOS, un menu attaché s'ouvre au clic
+        # gauche ET droit (limite Qt documentée, cf. IMPLEMENTATION_SPEC §8). Le
+        # menu est affiché manuellement sur clic droit (`_on_activation`).
         menu = QMenu()
+        self._menu = menu
 
         self._action_dictee = QAction("Démarrer Dictée", menu)
         self._action_dictee.triggered.connect(self._machine.toggle_dictee)
@@ -66,6 +69,11 @@ class IconeTray(QSystemTrayIcon):
 
         menu.addSeparator()
 
+        action_ouvrir = QAction("Ouvrir debriefMeet", menu)
+        action_ouvrir.triggered.connect(self._afficher_fenetre_principale)
+        menu.addAction(action_ouvrir)
+        menu.setDefaultAction(action_ouvrir)  # mis en avant (ordre spec §8)
+
         action_hist = QAction("Historique…", menu)
         action_hist.triggered.connect(self._ouvrir_historique)
         menu.addAction(action_hist)
@@ -80,15 +88,9 @@ class IconeTray(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        action_about = QAction(f"debriefMeet {__version__}", menu)
-        action_about.setEnabled(False)
-        menu.addAction(action_about)
-
         action_quitter = QAction("Quitter", menu)
         action_quitter.triggered.connect(QApplication.quit)
         menu.addAction(action_quitter)
-
-        self.setContextMenu(menu)
 
     def _on_mode_change(self, mode: Mode) -> None:
         self._actualiser_libelles(mode)
@@ -105,11 +107,12 @@ class IconeTray(QSystemTrayIcon):
 
     def _on_activation(self, raison: QSystemTrayIcon.ActivationReason) -> None:
         if raison == QSystemTrayIcon.ActivationReason.Trigger:
-            # Clic gauche : affiche le menu (comportement contextMenu par défaut sur macOS)
-            pass
+            self._afficher_fenetre_principale()
+        elif raison == QSystemTrayIcon.ActivationReason.Context:
+            self._menu.popup(QCursor.pos())
 
     def _actualiser_icone(self, etat: EtatVisuel) -> None:
-        self.setIcon(icone_pour_etat(etat))
+        self.setIcon(icone_wavemark_pour_etat(etat))
 
     def _actualiser_libelles(self, mode: Mode) -> None:
         configs = {
@@ -166,33 +169,33 @@ class IconeTray(QSystemTrayIcon):
         self.showMessage(
             "Locuteurs générés",
             f"« {nom} » — cliquez pour ouvrir l'Historique.",
-            icone_pour_etat(EtatVisuel.TERMINE), 8000)
+            icone_wavemark_pour_etat(EtatVisuel.TERMINE), 8000)
 
     def _on_diar_echoue(self, md: object, _message: str) -> None:
         nom = getattr(md, "stem", str(md))
         self.showMessage(
             "Diarization échouée",
             f"La génération des locuteurs de « {nom} » a échoué.",
-            icone_pour_etat(EtatVisuel.ERREUR), 8000)
+            icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
     # ── Notifications micro (robustesse hot-plug, docs/25) ──────────────────────
 
     def notifier_micro_perdu(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
-        self.showMessage("Micro perdu", message, icone_pour_etat(EtatVisuel.ERREUR), 8000)
+        self.showMessage("Micro perdu", message, icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
     def notifier_micro_retabli(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
-        self.showMessage("Micro rétabli", message, icone_pour_etat(EtatVisuel.TERMINE), 8000)
+        self.showMessage("Micro rétabli", message, icone_wavemark_pour_etat(EtatVisuel.TERMINE), 8000)
 
     # ── Notification « rien entendu » (dictée/journal muets, docs/27) ───────────
 
     def notifier_rien_entendu(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
-        self.showMessage("Rien entendu", message, icone_pour_etat(EtatVisuel.ERREUR), 8000)
+        self.showMessage("Rien entendu", message, icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
     def _on_notification_cliquee(self) -> None:
         # messageClicked n'indique pas quelle notif → on cible le dernier job terminé.

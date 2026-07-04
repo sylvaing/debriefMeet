@@ -1,19 +1,10 @@
-"""Icône de tray : carré arrondi (bulle) + onde vocale.
+"""Icônes de l'application : icône Dock/Finder (carré bleu + onde) et icônes
+Phosphor teintées à la volée (refonte design). L'icône de tray par état
+d'activité vit dans `etat_icone.py` (WaveMark, cf. IMPLEMENTATION_SPEC §8).
 
-La forme est constante ; la COULEUR encode l'état d'activité (cf. EtatVisuel) :
-  - REPOS          → carré en contour, monochrome template (s'adapte à la barre macOS)
-  - ENREGISTREMENT → carré plein rouge, ondes en réserve (blanches)
-  - TRANSCRIPTION  → carré plein orange
-  - TERMINE        → carré plein vert (bref)
-  - ERREUR         → carré plein gris (bref)
-
-Dessin programmatique (aucun asset requis), dans un repère logique 100×100.
-L'artwork remplit presque tout le cadre (marge minimale) pour que l'icône occupe
-la même hauteur que les autres icônes de la barre de menu. Rendu en haute
-résolution (devicePixelRatio) pour rester net en Retina.
-
-L'icône d'**application** (Dock/Finder, .icns) reprend le même motif en version
-colorée avec un carré bleu de fond (cf. dessiner_icone_app / _SVG_ICONE_APP).
+Dessin programmatique (aucun asset requis) dans un repère logique 100×100 pour
+l'icône Dock. Rendu en haute résolution (devicePixelRatio) pour rester net en
+Retina.
 """
 from __future__ import annotations
 
@@ -31,16 +22,6 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtSvg import QSvgRenderer
-
-from debrief_meet.core.modes import EtatVisuel
-
-# Couleurs système (palette Apple). REPOS n'a pas de couleur : rendu en template.
-_COULEURS: dict[EtatVisuel, str] = {
-    EtatVisuel.ENREGISTREMENT: "#FF3B30",  # rouge
-    EtatVisuel.TRANSCRIPTION:  "#FF9500",  # orange
-    EtatVisuel.TERMINE:        "#34C759",  # vert
-    EtatVisuel.ERREUR:         "#8E8E93",  # gris (placeholder, ajustable)
-}
 
 # Couleur de l'icône d'application (Dock / barre des tâches) : bleu identité messagerie.
 _COULEUR_APP = "#0A84FF"
@@ -62,13 +43,6 @@ def _ratio_ecran() -> float:
         if ecran is not None:
             return max(1.0, ecran.devicePixelRatio())
     return 2.0
-
-
-def _chemin_bulle() -> QPainterPath:
-    """Carré arrondi (sans queue) remplissant le cadre 100×100, marge pour le contour."""
-    forme = QPainterPath()
-    forme.addRoundedRect(QRectF(6, 6, 88, 88), 22, 22)
-    return forme
 
 
 def _dessiner_onde(painter: QPainter, couleur: QColor) -> None:
@@ -103,43 +77,6 @@ def icone_application(taille: int = 512) -> QIcon:
     painter.end()
 
     return QIcon(pixmap)
-
-
-def icone_pour_etat(etat: EtatVisuel, taille: int = 22) -> QIcon:
-    ratio = _ratio_ecran()
-    pixmap = QPixmap(round(taille * ratio), round(taille * ratio))
-    pixmap.setDevicePixelRatio(ratio)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    # On dessine dans le repère logique 100×100 (Qt gère le facteur Retina).
-    echelle = taille / 100.0
-    painter.scale(echelle, echelle)
-
-    bulle = _chemin_bulle()
-
-    if etat == EtatVisuel.REPOS:
-        # Contour seul, encre noire → rendu en template (cf. setIsMask plus bas)
-        encre = QColor("#000000")
-        pen = QPen(encre, 7)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(bulle)
-        _dessiner_onde(painter, encre)
-    else:
-        couleur = QColor(_COULEURS[etat])
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.fillPath(bulle, couleur)
-        _dessiner_onde(painter, QColor("#FFFFFF"))
-
-    painter.end()
-
-    icone = QIcon(pixmap)
-    # REPOS = template : macOS le recolore selon le thème de la barre de menu.
-    icone.setIsMask(etat == EtatVisuel.REPOS)
-    return icone
 
 
 # ── Icônes Phosphor (refonte design) — SVG embarqués, référencés par nom logique ──

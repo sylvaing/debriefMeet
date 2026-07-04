@@ -25,6 +25,7 @@ from debrief_meet import __version__
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import EtatVisuel, MachineEtats
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription, PressePapiers
+from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
 from debrief_meet.ui.history_view import HistoryView
 from debrief_meet.ui.preferences_view import PreferencesView
@@ -33,14 +34,6 @@ from debrief_meet.ui.recording_view import RecordingView
 from debrief_meet.ui.start_group import StartButtonGroup
 from debrief_meet.ui.theme import C, M, MONO, SANS
 from debrief_meet.ui.wavemark import wavemark_icon
-
-_COULEURS_ETAT: dict[EtatVisuel, tuple[str, bool]] = {
-    EtatVisuel.REPOS: (C.TRAY_IDLE, False),
-    EtatVisuel.ENREGISTREMENT: (C.TRAY_RECORDING, True),
-    EtatVisuel.TRANSCRIPTION: (C.TRAY_TRANSCRIBE, True),
-    EtatVisuel.TERMINE: (C.TRAY_DONE, True),
-    EtatVisuel.ERREUR: (C.TRAY_ERROR, True),
-}
 
 PAGE_HISTORIQUE, PAGE_PREFERENCES, PAGE_ENREGISTREMENT = range(3)
 
@@ -170,5 +163,4 @@ class FenetrePrincipale(QMainWindow):
     # ── État visuel (icône toolbar) ──────────────────────────────────────────────
 
     def definir_etat_visuel(self, etat: EtatVisuel) -> None:
-        couleur, rempli = _COULEURS_ETAT[etat]
-        self._icone_etat.setPixmap(wavemark_icon(24, couleur, filled=rempli).pixmap(24, 24))
+        self._icone_etat.setPixmap(icone_wavemark_pour_etat(etat, taille=24).pixmap(24, 24))
