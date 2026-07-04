@@ -22,14 +22,11 @@ from pathlib import Path
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
-    QFont,
-    QFontDatabase,
     QGuiApplication,
     QIcon,
     QImage,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
     QPixmap,
 )
@@ -179,107 +176,6 @@ def icone_svg_teintee(chemin: Path, hex_color: str, taille: int = 16) -> QIcon:
     painter.end()
 
     return QIcon(pixmap)
-
-
-# ── Glyphes d'action (Historique) : fonte Tabler embarquée (outline, licence MIT) ──
-#
-# Décision (doc 09 §3) : rendu identique à l'aperçu validé → on peint les glyphes de la
-# fonte Tabler outline embarquée (assets/tabler-icons.ttf). API inchangée : `icone_glyphe`
-# (boutons, template recoloré clair/sombre + grisé si désactivé) et `pixmap_glyphe`
-# (indicateurs de ligne, dans la couleur de texte du thème).
-
-_FONTE_TABLER = Path(__file__).parent / "assets" / "tabler-icons.ttf"
-
-# Nom logique → caractère (codepoint Tabler, cf. tabler-icons CSS).
-_GLYPHES = {
-    "micro":     "",   # ti-microphone
-    "personnes": "",   # ti-users
-    "copier":    "",   # ti-copy
-    "note":      "",   # ti-file-text
-    "dossier":   "﫷",   # ti-folder-open
-    "muet":      "",   # ti-volume-off (haut-parleur barré)
-    "corbeille": "",   # ti-trash
-    "attente":   "",   # ti-loader-2 (spinner)
-    "ecrire":    "",   # ti-writing (transcrire l'audio)
-}
-
-_famille_tabler: str | None = None
-
-
-def _charger_fonte() -> str | None:
-    """Charge la fonte Tabler une seule fois et renvoie sa famille (None si indisponible)."""
-    global _famille_tabler
-    if _famille_tabler is not None:
-        return _famille_tabler
-    fid = QFontDatabase.addApplicationFont(str(_FONTE_TABLER))
-    if fid == -1:
-        return None
-    familles = QFontDatabase.applicationFontFamilies(fid)
-    _famille_tabler = familles[0] if familles else None
-    return _famille_tabler
-
-
-def _peindre_glyphe(nom: str, taille: int, couleur: QColor, angle: float = 0.0) -> QPixmap:
-    if nom not in _GLYPHES:
-        raise ValueError(f"glyphe inconnu : {nom!r}")
-    ratio = _ratio_ecran()
-    pixmap = QPixmap(round(taille * ratio), round(taille * ratio))
-    pixmap.setDevicePixelRatio(ratio)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    famille = _charger_fonte()
-    if famille:
-        police = QFont(famille)
-        police.setPixelSize(taille)        # le glyphe remplit l'em (padding intégré Tabler)
-        painter.setFont(police)
-        painter.setPen(couleur)
-        if angle:
-            centre = taille / 2
-            painter.translate(centre, centre)
-            painter.rotate(angle)
-            painter.translate(-centre, -centre)
-        painter.drawText(QRectF(0, 0, taille, taille),
-                         int(Qt.AlignmentFlag.AlignCenter), _GLYPHES[nom])
-    painter.end()
-    return pixmap
-
-
-# Opacité de l'encre des icônes d'action : < 1 → trait perçu plus léger (cf. discussion 2026-06-26).
-_INTENSITE_ACTION = 0.72
-
-
-def _couleur_theme(alpha: float) -> QColor:
-    """Couleur de texte du thème (clair/sombre) à l'opacité `alpha`. Repli noir hors app."""
-    app = QGuiApplication.instance()
-    couleur = (app.palette().color(QPalette.ColorRole.WindowText)
-               if app is not None else QColor("#000000"))
-    couleur.setAlphaF(alpha)
-    return couleur
-
-
-def icone_glyphe(nom: str, taille: int = 18, intensite: float = _INTENSITE_ACTION) -> QIcon:
-    """Icône d'action (boutons de l'Historique), peinte dans la couleur de texte du thème.
-
-    Encre atténuée (`intensite` < 1) pour un rendu **moins lourd** que le noir plein, tout en
-    s'adaptant au thème clair/sombre. Pas de `isMask` (qui forcerait l'opacité pleine) ; Qt grise
-    quand même l'état désactivé. La couleur est figée à la création (cf. note adaptation runtime)."""
-    return QIcon(_peindre_glyphe(nom, taille, _couleur_theme(intensite)))
-
-
-def pixmap_glyphe(nom: str, taille: int = 16, alpha: float = 0.55) -> QPixmap:
-    """Pixmap d'un glyphe dans la couleur de texte du thème (indicateurs de ligne).
-
-    `alpha` < 1 → rendu atténué (indicateur discret, pas un bouton)."""
-    return _peindre_glyphe(nom, taille, _couleur_theme(alpha))
-
-
-def icone_glyphe_pivotee(nom: str, taille: int = 18, angle: float = 0.0,
-                         intensite: float = _INTENSITE_ACTION) -> QIcon:
-    """Icône d'action peinte avec une rotation de `angle` degrés (pour un spinner animé)."""
-    return QIcon(_peindre_glyphe(nom, taille, _couleur_theme(intensite), angle))
 
 
 # ── Icône d'application (Dock / Finder, fichier .icns) ─────────────────────────

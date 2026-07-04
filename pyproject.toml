@@ -47,7 +47,7 @@ debrief-meet = "debrief_meet.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/debrief_meet"]
-artifacts = ["*.ttf", "*.svg"]   # fonte Tabler + illustrations assistant (ui/assets/)
+artifacts = ["*.ttf", "*.svg"]   # polices IBM Plex + icônes Phosphor + illustrations assistant (ui/assets/)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

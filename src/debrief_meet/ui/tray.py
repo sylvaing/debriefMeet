@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
 
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
@@ -10,15 +9,9 @@ from debrief_meet import __version__
 from debrief_meet.core.config import Config
 from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
-from debrief_meet.platform.interfaces import (
-    DemarrageAuto,
-    MoteurTranscription,
-    PressePapiers,
-)
+from debrief_meet.ui.fenetre_principale import FenetrePrincipale
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
-from debrief_meet.ui.historique import FenetreHistorique
 from debrief_meet.ui.icones import icone_pour_etat
-from debrief_meet.ui.preferences import FenetrePreferences
 
 logger = logging.getLogger(__name__)
 
@@ -28,23 +21,15 @@ class IconeTray(QSystemTrayIcon):
         self,
         machine: MachineEtats,
         config: Config,
-        demarrage_auto: DemarrageAuto | None = None,
-        presse_papiers: PressePapiers | None = None,
+        fenetre_principale: FenetrePrincipale,
         gestionnaire: GestionnaireDiarization | None = None,
-        moteur: MoteurTranscription | None = None,
-        reappliquer_raccourcis: Callable[[], list[str]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._machine = machine
         self._config = config
-        self._demarrage_auto = demarrage_auto
-        self._presse_papiers = presse_papiers
+        self._fenetre_principale = fenetre_principale
         self._gestionnaire = gestionnaire
-        self._moteur = moteur
-        self._reappliquer_raccourcis = reappliquer_raccourcis
-        self._fenetre_prefs: FenetrePreferences | None = None
-        self._fenetre_hist: FenetreHistorique | None = None
 
         self._etat_visuel = EtatVisuel.REPOS
 
@@ -139,18 +124,13 @@ class IconeTray(QSystemTrayIcon):
         self._action_journal.setText(tj); self._action_journal.setEnabled(ej)
 
     def _ouvrir_preferences(self) -> None:
-        if self._fenetre_prefs is None:
-            self._fenetre_prefs = FenetrePreferences(
-                self._config, self._demarrage_auto, moteur=self._moteur,
-                reappliquer_raccourcis=self._reappliquer_et_rafraichir)
-        self._fenetre_prefs.show()
-        self._fenetre_prefs.raise_()
-        self._fenetre_prefs.activateWindow()
+        self._fenetre_principale.afficher_preferences()
+        self._afficher_fenetre_principale()
 
-    def _reappliquer_et_rafraichir(self) -> list[str]:
-        echecs = self._reappliquer_raccourcis() if self._reappliquer_raccourcis else []
-        self.rafraichir_raccourcis()
-        return echecs
+    def _afficher_fenetre_principale(self) -> None:
+        self._fenetre_principale.show()
+        self._fenetre_principale.raise_()
+        self._fenetre_principale.activateWindow()
 
     def rafraichir_raccourcis(self) -> None:
         """Affiche les glyphes de raccourcis (⌃⌥⌘D…) dans le menu — purement décoratif,
@@ -175,14 +155,9 @@ class IconeTray(QSystemTrayIcon):
             logger.error("Export diagnostic impossible (%s)", exc, exc_info=True)
             QMessageBox.critical(None, "Erreur", f"Impossible d'exporter le diagnostic :\n{exc}")
 
-    def _ouvrir_historique(self) -> FenetreHistorique:
-        if self._fenetre_hist is None:
-            self._fenetre_hist = FenetreHistorique(
-                self._config, self._presse_papiers, gestionnaire=self._gestionnaire)
-        self._fenetre_hist.show()
-        self._fenetre_hist.raise_()
-        self._fenetre_hist.activateWindow()
-        return self._fenetre_hist
+    def _ouvrir_historique(self) -> None:
+        self._fenetre_principale.afficher_historique()
+        self._afficher_fenetre_principale()
 
     # ── Notifications de diarization ────────────────────────────────────────────
 
@@ -221,6 +196,6 @@ class IconeTray(QSystemTrayIcon):
 
     def _on_notification_cliquee(self) -> None:
         # messageClicked n'indique pas quelle notif → on cible le dernier job terminé.
-        fenetre = self._ouvrir_historique()
         cible = self._gestionnaire.dernier_termine() if self._gestionnaire else None
-        fenetre.selectionner_reunion(cible)
+        self._fenetre_principale.selectionner_reunion(cible)
+        self._afficher_fenetre_principale()

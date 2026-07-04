@@ -3,14 +3,7 @@ from __future__ import annotations
 import pytest
 
 from debrief_meet.core.modes import EtatVisuel
-from debrief_meet.ui.icones import (
-    _GLYPHES,
-    icone_application,
-    icone_glyphe,
-    icone_phosphor,
-    icone_pour_etat,
-    pixmap_glyphe,
-)
+from debrief_meet.ui.icones import icone_application, icone_phosphor, icone_pour_etat
 
 # Jeu Phosphor requis par la refonte design (docs/handoff, IMPLEMENTATION_SPEC.md §1).
 NOMS_PHOSPHOR = (
@@ -106,45 +99,6 @@ def test_icone_application_pleine_et_coloree(qapp):
     assert (y_max - y_min) / hauteur > 0.8
 
 
-@pytest.mark.parametrize("nom", sorted(_GLYPHES))
-def test_glyphe_non_vide(qapp, nom):
-    """Chaque glyphe d'action rend un pixmap non vide (peint dans la couleur du thème)."""
-    icone = icone_glyphe(nom)
-    assert not icone.isNull()
-    pix = icone.pixmap(18, 18)
-    assert not pix.isNull() and pix.width() > 0
-
-
-def test_glyphe_intensite_attenue_lopacite(qapp):
-    """Une intensité plus faible doit réduire l'opacité moyenne de l'encre."""
-    def opacite_moyenne(intensite):
-        img = icone_glyphe("corbeille", 24, intensite=intensite).pixmap(24, 24).toImage()
-        vals = [img.pixelColor(x, y).alpha()
-                for y in range(img.height()) for x in range(img.width())
-                if img.pixelColor(x, y).alpha() > 0]
-        return sum(vals) / len(vals) if vals else 0
-    assert opacite_moyenne(0.5) < opacite_moyenne(1.0)
-
-
-def test_glyphe_inconnu_leve(qapp):
-    with pytest.raises(ValueError):
-        icone_glyphe("inexistant")
-
-
-def test_glyphes_sont_distincts(qapp):
-    """Deux glyphes différents ne doivent pas produire le même rendu."""
-    a = icone_glyphe("micro").pixmap(40, 40).toImage()
-    b = icone_glyphe("corbeille").pixmap(40, 40).toImage()
-    c = icone_glyphe("copier").pixmap(40, 40).toImage()
-    assert a != b and a != c and b != c
-
-
-def test_pixmap_glyphe_indicateur(qapp):
-    pix = pixmap_glyphe("micro", taille=16)
-    assert not pix.isNull()
-    assert round(pix.deviceIndependentSize().width()) == 16
-
-
 def test_couleurs_distinctes_par_etat(qapp):
     """Enregistrement, transcription et terminé doivent produire des pixmaps différents."""
     rouge = icone_pour_etat(EtatVisuel.ENREGISTREMENT).pixmap(22, 22).toImage()
@@ -153,24 +107,6 @@ def test_couleurs_distinctes_par_etat(qapp):
     assert rouge != orange
     assert orange != vert
     assert rouge != vert
-
-
-# ── Glyphe pivoté (spinner animé, doc 11) ────────────────────────────────────
-
-@pytest.mark.parametrize("angle", [0, 30, 90, 180, 330])
-def test_icone_glyphe_pivotee_non_vide(qapp, angle):
-    from debrief_meet.ui.icones import icone_glyphe_pivotee
-    icone = icone_glyphe_pivotee("attente", 20, angle)
-    assert not icone.isNull()
-    pixmap = icone.pixmap(20, 20)
-    assert not pixmap.isNull()
-    assert pixmap.width() > 0
-
-
-def test_icone_glyphe_pivotee_glyphe_inconnu_leve(qapp):
-    from debrief_meet.ui.icones import icone_glyphe_pivotee
-    with pytest.raises(ValueError):
-        icone_glyphe_pivotee("glyphe_qui_nexiste_pas", 20, 45)
 
 
 # ── Icône d'application (.icns, Dock/Finder) ─────────────────────────────────
