@@ -99,7 +99,11 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from debrief_meet.core.modes import MachineEtats
     from debrief_meet.ipc import ServeurIPC
     from debrief_meet.ui.icones import icone_application
+    from debrief_meet.ui.polices import charger_polices
     from debrief_meet.ui.tray import IconeTray
+
+    # Polices embarquées (refonte design) — avant toute création de widget.
+    charger_polices(app)
 
     # Icône d'application (Dock / barre des tâches) : sans elle, macOS affiche l'icône
     # générique du lanceur Python dès qu'une fenêtre (Historique, Préférences) s'ouvre.

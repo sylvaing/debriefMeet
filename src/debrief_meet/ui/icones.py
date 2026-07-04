@@ -144,6 +144,19 @@ def icone_pour_etat(etat: EtatVisuel, taille: int = 22) -> QIcon:
     return icone
 
 
+# ── Icônes Phosphor (refonte design) — SVG embarqués, référencés par nom logique ──
+#
+# Remplacent progressivement les glyphes Tabler ci-dessous au fil des étapes de la
+# refonte (composants, Historique, Préférences, tray).
+
+PHOSPHOR_DIR = Path(__file__).parent / "assets" / "icons" / "phosphor"
+
+
+def icone_phosphor(nom: str) -> Path:
+    """Chemin du SVG Phosphor `nom` (ex: "microphone" → .../phosphor/microphone.svg)."""
+    return PHOSPHOR_DIR / f"{nom}.svg"
+
+
 # ── Glyphes d'action (Historique) : fonte Tabler embarquée (outline, licence MIT) ──
 #
 # Décision (doc 09 §3) : rendu identique à l'aperçu validé → on peint les glyphes de la

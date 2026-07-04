@@ -7,9 +7,25 @@ from debrief_meet.ui.icones import (
     _GLYPHES,
     icone_application,
     icone_glyphe,
+    icone_phosphor,
     icone_pour_etat,
     pixmap_glyphe,
 )
+
+# Jeu Phosphor requis par la refonte design (docs/handoff, IMPLEMENTATION_SPEC.md §1).
+NOMS_PHOSPHOR = (
+    "microphone", "users-three", "notebook", "clock-counter-clockwise", "gear",
+    "magnifying-glass", "copy", "users", "file-text", "folder", "microphone-slash",
+    "trash", "caret-up-down", "caret-up", "caret-down", "check", "check-circle",
+    "record-fill", "waveform", "stop", "plus", "minus", "brain", "folders",
+    "chat-text", "sliders-horizontal", "keyboard", "bug", "arrow-square-out",
+    "sign-out", "cursor-click", "list", "warning-circle",
+)
+
+
+@pytest.mark.parametrize("nom", NOMS_PHOSPHOR)
+def test_icone_phosphor_existe(nom):
+    assert icone_phosphor(nom).exists(), f"SVG Phosphor manquant : {nom}"
 
 
 @pytest.mark.parametrize("etat", list(EtatVisuel))
