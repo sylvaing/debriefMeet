@@ -8,7 +8,9 @@ téléchargement de modèle à chaud, assistant diarization).
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -41,6 +43,7 @@ from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
 from debrief_meet.core.logs import configurer_logs
 from debrief_meet.core.modeles import NOMS_LOGIQUES
+from debrief_meet.core.raccourcis import libelle_modificateurs
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription
 from debrief_meet.ui.chargeur_modele import ChargeurModele
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
@@ -562,9 +565,10 @@ class PreferencesView(QWidget):
 
         texte = sequence.toString(QKeySequence.SequenceFormat.PortableText)
         if not _a_modificateur_suffisant(texte):
+            mods = libelle_modificateurs(("Meta", "Ctrl", "Alt"))
             QMessageBox.warning(
                 self, "Raccourcis",
-                f"Le raccourci « {nom} » doit inclure au moins une touche ⌘/⌃/⌥ "
+                f"Le raccourci « {nom} » doit inclure au moins une touche {mods} "
                 "(une lettre seule ou Maj+lettre capturée globalement rendrait "
                 "le clavier inutilisable).")
             self._revert_raccourci(cle, edit)
@@ -657,10 +661,17 @@ class PreferencesView(QWidget):
         configurer_logs(actifs=self._check_logs.isChecked(), debug=self._check_debug.isChecked())
 
     def _ouvrir_log(self, chemin: Path) -> None:
-        if chemin.exists():
+        if not chemin.exists():
+            QMessageBox.information(self, "Log", "Aucun fichier de log trouvé.")
+            return
+        # `open` (macOS) n'existe pas sur Windows — trouvé en test interactif réel
+        # sur la VM (2026-07-04) : FileNotFoundError [WinError 2] en Préférences.
+        if sys.platform == "win32":
+            os.startfile(str(chemin))  # noqa: S606 — ouverture explicite demandée par l'utilisateur
+        elif sys.platform == "darwin":
             subprocess.Popen(["open", str(chemin)])
         else:
-            QMessageBox.information(self, "Log", "Aucun fichier de log trouvé.")
+            subprocess.Popen(["xdg-open", str(chemin)])
 
     def _vider_log(self, chemin: Path) -> None:
         if chemin.exists():

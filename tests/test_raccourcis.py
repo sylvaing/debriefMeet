@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from debrief_meet.core.modes import MachineEtats, Mode
-from debrief_meet.core.raccourcis import appliquer_raccourcis
+from debrief_meet.core.raccourcis import ACTIONS, appliquer_raccourcis, libelle_modificateurs
 from tests.fakes.adapters import RaccourcisFake
 
 # Défauts dépendants de l'OS (décision D3, docs/31 §3.1) : Ctrl+Alt+D/R/J sur
@@ -79,3 +79,25 @@ def test_combinaison_refusee_reportee_dans_les_echecs(machine, tmp_path):
     echecs = appliquer_raccourcis(fake, cfg, machine)
     assert echecs == [_R]
     assert set(fake.enregistres) == {_D, _J}
+
+
+# ── Défauts (bouton « Réinitialiser », refonte design) ──────────────────────────
+
+def test_defauts_actions_correspondent_aux_defauts_config(tmp_path):
+    """`ACTIONS` (utilisé par « Réinitialiser les défauts ») doit rester aligné
+    sur `Config._DEFAUTS` — sinon une réinitialisation sur Windows réintroduirait
+    Meta (touche Windows, décision D3) au lieu de Ctrl+Alt+<lettre>."""
+    from debrief_meet.core.config import Config
+    cfg = Config(chemin=tmp_path / "config.json")
+    for cle, defaut, _nom in ACTIONS:
+        assert defaut == cfg.get(cle)
+
+
+# ── Libellés de modificateurs par OS (docs/handoff §9) ──────────────────────────
+
+def test_libelle_modificateurs_ne_code_jamais_en_dur_hors_plateforme(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert libelle_modificateurs(("Meta", "Ctrl", "Alt")) == "⌘/⌃/⌥"
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert libelle_modificateurs(("Meta", "Ctrl", "Alt")) == "Win/Ctrl/Alt"
