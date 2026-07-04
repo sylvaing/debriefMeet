@@ -33,6 +33,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
 )
+from PySide6.QtSvg import QSvgRenderer
 
 from debrief_meet.core.modes import EtatVisuel
 
@@ -156,6 +157,28 @@ PHOSPHOR_DIR = ICON_DIR / "phosphor"
 def icone_phosphor(nom: str) -> Path:
     """Chemin du SVG Phosphor `nom` (ex: "microphone" → .../phosphor/microphone.svg)."""
     return PHOSPHOR_DIR / f"{nom}.svg"
+
+
+def icone_svg_teintee(chemin: Path, hex_color: str, taille: int = 16) -> QIcon:
+    """Icône depuis un SVG `fill="currentColor"` (Phosphor), reteint en `hex_color`.
+
+    Qt (`QSvgRenderer`) ne résout pas `currentColor` (rendu noir par défaut) — on
+    substitue donc la couleur directement dans le texte du SVG avant rendu.
+    """
+    svg = chemin.read_text(encoding="utf-8").replace("currentColor", hex_color)
+
+    ratio = _ratio_ecran()
+    pixmap = QPixmap(round(taille * ratio), round(taille * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter, QRectF(0, 0, taille, taille))
+    painter.end()
+
+    return QIcon(pixmap)
 
 
 # ── Glyphes d'action (Historique) : fonte Tabler embarquée (outline, licence MIT) ──
