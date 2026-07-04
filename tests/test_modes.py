@@ -84,6 +84,33 @@ class TestExclusivite:
         assert machine.mode == Mode.DICTEE
 
 
+class TestChrono:
+    """`elapsed_seconds()` — refonte design (StartButtonGroup, RecordingView).
+
+    Calculé à la demande sur une horloge monotone, sans QTimer côté machine — la
+    mise à jour périodique d'un affichage est portée par le composant UI qui en
+    a besoin (RecordingController/RecordingView, Étape 7), pas par le core."""
+
+    def test_elapsed_zero_au_repos(self, machine):
+        assert machine.elapsed_seconds() == 0
+
+    def test_elapsed_zero_au_demarrage(self, machine):
+        machine.toggle_reunion()
+        assert machine.elapsed_seconds() == 0
+
+    def test_elapsed_augmente_avec_le_temps(self, machine, qtbot):
+        machine.toggle_reunion()
+        qtbot.wait(1100)
+        assert machine.elapsed_seconds() >= 1
+
+    def test_arret_reinitialise_elapsed(self, machine, qtbot):
+        machine.toggle_reunion()
+        qtbot.wait(1100)
+        assert machine.elapsed_seconds() >= 1
+        machine.toggle_reunion()  # arrêt
+        assert machine.elapsed_seconds() == 0
+
+
 class TestSignaux:
     def test_signal_mode_change_emis(self, machine, qtbot):
         with qtbot.waitSignal(machine.mode_change, timeout=1000) as blocker:
