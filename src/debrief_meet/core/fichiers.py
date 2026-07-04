@@ -134,6 +134,25 @@ def titre_reunion(md: Path) -> str | None:
     return contenu or None
 
 
+def apercu_journal(md: Path, longueur: int = 80) -> str:
+    """Aperçu court de la dernière entrée d'un fichier journal (colonne « note » de
+    l'Historique, refonte design) — dernière ligne de texte utile, sans `#`/`##`/`---`."""
+    try:
+        texte = md.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    lignes_utiles = [
+        ligne.strip() for ligne in texte.splitlines()
+        if ligne.strip() and not ligne.startswith("#") and ligne.strip() != "---"
+    ]
+    if not lignes_utiles:
+        return ""
+    apercu = lignes_utiles[-1]
+    if len(apercu) > longueur:
+        apercu = apercu[: longueur - 1].rstrip() + "…"
+    return apercu
+
+
 def definir_titre(md: Path, titre: str) -> None:
     """Réécrit le H1 du .md avec `titre`. Un titre vide **restaure** le titre par défaut
     « Réunion — <date> ». N'altère pas le reste du fichier (transcription, durée…)."""

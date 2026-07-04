@@ -44,5 +44,8 @@ class SegmentedControl(QFrame):
         return self._groupe.checkedId()
 
     def definir_index(self, index: int) -> None:
-        if 0 <= index < len(self._boutons):
+        """Change le segment actif — émet `changed` même hors clic utilisateur
+        (`QButtonGroup.idClicked` ne se déclenche que sur clic réel)."""
+        if 0 <= index < len(self._boutons) and index != self.index_actif():
             self._boutons[index].setChecked(True)
+            self.changed.emit(index)
