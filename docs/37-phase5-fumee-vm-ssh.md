@@ -10,13 +10,17 @@
 > dictée réelle, en-tête de session) reste manuelle sur la console Proxmox/RDP —
 > ce script réduit la checklist manuelle à ces seuls points.
 >
-> **Découverte majeure lors de l'implémentation** (§7 ci-dessous, absente de la
-> spec initiale) : `usPostUninstall` ne se déclenche jamais quand le désinstalleur
-> Inno est lancé via SSH (session sans desktop) — l'auto-suppression de
-> `unins000.exe` et le nettoyage `[Code]` de la clé Registre autostart en
-> dépendent tous les deux. Confirmé par un mini-`.iss` instrumenté avec des
-> marqueurs de fichier par étape. Traité en `[INFO]` non bloquant dans le script,
-> **à revalider une fois en session interactive** avant de conclure à un bug produit.
+> **Découverte lors de l'implémentation** (§7 ci-dessous, absente de la spec
+> initiale) : `usPostUninstall` ne se déclenche jamais quand le désinstalleur Inno
+> est lancé via SSH (session sans desktop) — l'auto-suppression de `unins000.exe`
+> et le nettoyage `[Code]` de la clé Registre autostart en dépendent tous les
+> deux. Confirmé par un mini-`.iss` instrumenté avec des marqueurs de fichier par
+> étape. **Revalidé par Sylvain le 2026-07-04 en session interactive (RDP) :
+> désinstallation complète et propre** (dossier app + dossier données + clé
+> Registre tous supprimés, `Documents\debriefMeet` préservé) — confirme que c'est
+> une limite de l'exécution via SSH, pas un bug du `.iss`. Aucune action produit
+> requise ; les deux vérifications restent en `[INFO]` dans le script (fidèle à
+> ce que SSH peut réellement observer).
 
 ---
 
@@ -166,11 +170,14 @@ asynchrone du désinstalleur). Conséquence directe : tout code `[Code]` gaté s
 s'exécute jamais dans ce contexte, et l'auto-suppression de `unins000.exe`
 (qui semble dépendre du même point) n'a pas lieu non plus.
 
-**Hypothèse non confirmée** : lié à l'absence de session desktop interactive sous
-sshd Windows (pas de jeton d'élévation/session complet), sans plus de certitude
-sans accès RDP/console pour comparer. **Reste à faire (Sylvain)** : dérouler une
-désinstallation normale (double-clic depuis « Applications installées ») une fois
-sur la VM ou une machine de test, et vérifier si `unins000.exe` disparaît et si la
-clé Registre est nettoyée. Si oui → confirmé comme limite de l'environnement SSH
-uniquement (aucune action produit requise, le `.iss` est correct). Si non → bug
-produit réel à corriger dans `debriefMeet.iss`.
+**Hypothèse** : liée à l'absence de session desktop interactive sous sshd Windows
+(pas de jeton d'élévation/session complet).
+
+**✅ Confirmée par Sylvain le 2026-07-04** : désinstallation interactive normale
+(double-clic sur `unins000.exe` en session RDP) → dossier app **et** dossier
+données **entièrement supprimés** (`unins000.exe` inclus), clé Registre autostart
+**absente** après coup, `Documents\debriefMeet` **préservé**. Confirme sans
+ambiguïté que la limite est propre à l'exécution via SSH — **le `.iss` est
+correct, aucune action produit requise.** Les deux vérifications restent en
+`[INFO]` (non bloquant) dans `scripts/fumee_setup_vm.sh`, qui ne peut de toute
+façon pas piloter une session interactive.
