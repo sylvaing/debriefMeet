@@ -10,7 +10,9 @@ Cf. docs/09-refonte-historique.md. Points clés :
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QFileSystemWatcher, QSize, Qt, QTimer, Slot
@@ -455,12 +457,27 @@ class FenetreHistorique(QDialog):
                 pass
 
     def _ouvrir(self, chemin: Path) -> None:
-        if chemin.exists():
+        # `open` (macOS) n'existe pas sur Windows — trouvé en test interactif réel
+        # sur la VM (2026-07-04) : crash FileNotFoundError [WinError 2] ailleurs
+        # dans les Préférences pour ce même motif.
+        if not chemin.exists():
+            return
+        if sys.platform == "win32":
+            os.startfile(str(chemin))  # noqa: S606 — ouverture explicite demandée par l'utilisateur
+        elif sys.platform == "darwin":
             subprocess.Popen(["open", str(chemin)])
+        else:
+            subprocess.Popen(["xdg-open", str(chemin)])
 
     def _reveler(self, chemin: Path) -> None:
-        if chemin.exists():
+        if not chemin.exists():
+            return
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(chemin)])
+        elif sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(chemin)])
+        else:
+            subprocess.Popen(["xdg-open", str(chemin.parent)])
 
     # ── Diarization (déléguée au gestionnaire persistant) ───────────────────────
 

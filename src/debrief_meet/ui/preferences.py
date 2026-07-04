@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -517,11 +519,18 @@ class FenetrePreferences(QDialog):
         return w
 
     def _ouvrir_log(self, chemin: Path) -> None:
-        if chemin.exists():
-            subprocess.Popen(["open", str(chemin)])
-        else:
+        if not chemin.exists():
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(self, "Log", "Aucun fichier de log trouvé.")
+            return
+        # `open` (macOS) n'existe pas sur Windows — trouvé en test interactif réel
+        # sur la VM (2026-07-04) : FileNotFoundError [WinError 2].
+        if sys.platform == "win32":
+            os.startfile(str(chemin))  # noqa: S606 — ouverture explicite demandée par l'utilisateur
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(chemin)])
+        else:
+            subprocess.Popen(["xdg-open", str(chemin)])
 
     def _vider_log(self, chemin: Path) -> None:
         if chemin.exists():
