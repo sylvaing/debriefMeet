@@ -60,7 +60,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
-| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, ordre docs/30 §6) — prérequis §5 ✅, docs/31 ✅, docs/34 ✅, **docs/32 (packaging) ✅ PREMIER BUILD RÉUSSI** (2026-07-04) : `dist/debriefMeet-setup-0.2.0+20260704.4029f0d.exe` (125 Mo) produit sur la VM et rapatrié — gate pytest VM 506 passed ; corrigés au passage : `platformdirs appauthor=False` (cf. § dédié), **crash QThread access violation** (`deleteLater` in-thread, `gestionnaire_diarization.py`), tests platform-aware ; reste : fumée VM (spec **docs/37**, à coder en session Sonnet) puis docs/35 (livraison) |
+| **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, ordre docs/30 §6) — prérequis §5 ✅, docs/31 ✅, docs/34 ✅, docs/32 (packaging) ✅ PREMIER BUILD RÉUSSI (2026-07-04, `dist/debriefMeet-setup-0.2.0+20260704.4029f0d.exe`, 125 Mo, gate pytest VM 506 passed), **docs/37 (fumée SSH) ✅ TERMINÉ** (2026-07-04, `scripts/fumee_setup_vm.sh`, 2 runs verts) — corrigés au passage : `platformdirs appauthor=False` (cf. § dédié), crash QThread access violation (`gestionnaire_diarization.py`) ; **découverte docs/37 §7 à revalider par Sylvain en interactif** : `usPostUninstall` ne se déclenche jamais via SSH (désinstalleur non auto-supprimé, Registre non nettoyé — peut-être une limite SSH, pas forcément un bug produit) ; reste : docs/35 (livraison) |
 | **Correctifs fuites CoreAudio (docs/23)** | ✅ TERMINÉ (2026-07-02, 530 passed) |
 | **Robustesse micro hot-plug (docs/25)** | ✅ TERMINÉ (2026-07-02, 542 passed) |
 | **Fix dictée/journal muets (docs/27)** | ✅ TERMINÉ (2026-07-02, 556 passed) |
@@ -87,7 +87,15 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
   sources + `BUILD_INFO` (date+hash git), pytest bloquant sur la VM, PyInstaller onedir
   (`packaging/windows/debriefMeet.spec`), Inno Setup (`packaging/windows/debriefMeet.iss`),
   rapatrie `dist/debriefMeet-setup-<version>.exe`.
-  Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6 (`ISCC.exe`).
+  Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6 (`ISCC.exe`,
+  souvent installé per-user par winget sous `%LOCALAPPDATA%\Programs\Inno Setup 6\`,
+  pas forcément `Program Files (x86)`).
+- **Script fumée (installer/MAJ/désinstaller) : `scripts/fumee_setup_vm.sh`** ← Phase 5
+  (docs/37) — via SSH, sans interface graphique : install `/VERYSILENT`, `--version`,
+  réinstall par-dessus, désinstallation (docs/32 §4). Rejouable (nettoie avant/après).
+  ⚠️ Limite connue : `usPostUninstall` du `.iss` ne se déclenche jamais via SSH
+  (désinstalleur non auto-supprimé, Registre non nettoyé) — signalé en `[INFO]`, pas
+  bloquant ; à revalider une fois en session interactive (cf. docs/37 §7).
 - Garder la session SSH **ouverte** pendant le build — un process détaché est tué à la fermeture de session.
 - Build ~20-40 min (première fois). Rebuild plus rapide : modèles HF déjà en cache sur la VM.
 - HF_TOKEN optionnel : `HF_TOKEN=hf_xxx bash scripts/build_spike_backends_vm.sh`
@@ -155,4 +163,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Phase 5 — transposition des correctifs macOS (exigences E-1→E-8) | `docs/33` |
 | Phase 5 — adaptateurs Windows (moteur, WASAPI, raccourcis…) | `docs/34` |
 | Phase 5 — livraison, notice utilisateur, analyse des diagnostics | `docs/35` |
-| Phase 5 — fumée automatisée du setup via SSH (VM) | `docs/37` (spec à implémenter) |
+| Phase 5 — fumée automatisée du setup via SSH (VM) | `docs/37` ✅ (`scripts/fumee_setup_vm.sh`) |

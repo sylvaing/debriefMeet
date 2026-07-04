@@ -162,23 +162,39 @@ Section `[UninstallDelete]` + section `[Code]` si besoin :
 **Automatisés (Mac, sans Windows)** : néant pour le `.iss` lui-même (pas de test
 unitaire pertinent) ; `generer_version.py` testé unitairement (format, fichiers émis).
 
-**Sur la VM (checklist manuelle, à dérouler à chaque évolution du packaging)** :
+**Automatisés via SSH (docs/37, `scripts/fumee_setup_vm.sh`)** — items 1, 2 (partiel,
+sans le tray), 3, 4 (partiel) et 5 ci-dessous :
 
 1. Build complet depuis Mac → setup produit, nom conforme.
-2. Install neuve → app démarre, tray visible, en-tête session dans
-   `%LOCALAPPDATA%\debriefMeet\Logs\debriefMeet.log`.
-3. Modifier une préférence, relancer le setup (même version rebuildée) → app fermée
-   proprement par Inno, préférence conservée.
-4. Désinstaller depuis « Applications installées » → tableau §4 respecté (vérifier
-   chaque chemin, y compris la clé Registre) ; `Documents\debriefMeet` intact.
-5. Réinstaller après désinstallation → repartir de zéro fonctionne (config par
-   défaut, modèle retéléchargé).
+2. Install neuve → exe présent, désinstalleur présent, raccourci menu Démarrer,
+   `--version` répond (intégrité du bundle). *Reste manuel : tray visible, en-tête
+   de session dans les logs — nécessite une session interactive.*
+3. Réinstaller le même setup par-dessus → app fermée proprement par Inno,
+   `config.json` et `Documents\debriefMeet` intacts.
+4. Désinstaller → tableau §4 respecté pour les fichiers (app, données) et pour
+   `Documents\debriefMeet` (préservé). *Limite confirmée le 2026-07-04 : la clé
+   Registre autostart et l'auto-suppression de `unins000.exe` sont gatées sur
+   `usPostUninstall`, qui ne se déclenche jamais quand l'installeur est lancé via
+   SSH (session sans desktop) — signalé en `[INFO]` par le script, à revalider une
+   fois en session interactive (RDP/console) avant de le traiter comme un bug produit.*
+5. Réinstaller après désinstallation → repartir de zéro fonctionne (couvert par la
+   rejouabilité du script, prouvée par deux runs consécutifs verts le 2026-07-04).
+
+**Reste manuel (checklist résiduelle, nécessite RDP/console)** :
+
+- Tray visible, icône, menu, notifications.
+- Dictée réelle (micro).
+- En-tête de session dans les logs.
+- Confirmation que `usPostUninstall`/le nettoyage Registre fonctionnent bien en
+  désinstallation interactive normale (cf. limite ci-dessus).
 
 ## 7. Definition of Done
 
-- [ ] `bash scripts/build_app_windows_vm.sh` produit `dist/debriefMeet-setup-<version>.exe`
-      sans intervention manuelle (hors session SSH ouverte).
-- [ ] pytest vert sur la VM intégré au build (étape bloquante).
-- [ ] Checklist §6 déroulée entièrement une fois sur la VM.
-- [ ] GUID `AppId` commité et documenté (ne plus jamais changer).
-- [ ] docs/03 et CLAUDE.md mis à jour (installeur v1, commandes de build Windows).
+- [x] `bash scripts/build_app_windows_vm.sh` produit `dist/debriefMeet-setup-<version>.exe`
+      sans intervention manuelle (hors session SSH ouverte). Premier succès 2026-07-04.
+- [x] pytest vert sur la VM intégré au build (étape bloquante). 506 passed.
+- [x] Checklist §6 déroulée automatiquement via SSH (docs/37) le 2026-07-04, deux
+      runs consécutifs verts — reste le résiduel manuel listé ci-dessus.
+- [x] GUID `AppId` commité et documenté (ne plus jamais changer) :
+      `{C18F22B8-EBDF-46FD-8E97-2F4334DA3182}`.
+- [x] CLAUDE.md mis à jour (installeur v1, commandes de build Windows).

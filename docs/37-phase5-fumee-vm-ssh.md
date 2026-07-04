@@ -1,14 +1,22 @@
 # Phase 5 — Fumée automatisée du setup Windows via SSH (VM)
 
-> **Statut : 📝 SPEC à implémenter** (rédigée le 2026-07-04, pour une session LLM
-> Sonnet dédiée). Dépend de : docs/32 ✅ (la chaîne de build produit
-> `dist/debriefMeet-setup-<version>.exe`, premier build réussi le 2026-07-04).
+> **Statut : ✅ TERMINÉ** (implémenté et validé le 2026-07-04 —
+> `scripts/fumee_setup_vm.sh`, deux runs consécutifs verts sur la VM réelle).
+> Dépend de : docs/32 ✅.
 >
 > **Objectif :** automatiser depuis le Mac, via SSH sur la VM Proxmox, tout ce qui
 > est vérifiable **sans interface graphique** dans la checklist docs/32 §6
 > (install / mise à jour / désinstallation). La partie interactive (tray visible,
 > dictée réelle, en-tête de session) reste manuelle sur la console Proxmox/RDP —
 > ce script réduit la checklist manuelle à ces seuls points.
+>
+> **Découverte majeure lors de l'implémentation** (§7 ci-dessous, absente de la
+> spec initiale) : `usPostUninstall` ne se déclenche jamais quand le désinstalleur
+> Inno est lancé via SSH (session sans desktop) — l'auto-suppression de
+> `unins000.exe` et le nettoyage `[Code]` de la clé Registre autostart en
+> dépendent tous les deux. Confirmé par un mini-`.iss` instrumenté avec des
+> marqueurs de fichier par étape. Traité en `[INFO]` non bloquant dans le script,
+> **à revalider une fois en session interactive** avant de conclure à un bug produit.
 
 ---
 
@@ -127,12 +135,42 @@ appauthor=False` — une seule racine de données) :
 
 ## 6. Definition of Done
 
-- [ ] `bash scripts/fumee_setup_vm.sh` déroule A→C sans intervention et sort en 0.
-- [ ] Un second run consécutif passe aussi (rejouable).
-- [ ] Chaque ligne de la table docs/32 §4 est couverte par une vérification.
-- [ ] Échec simulé détecté (ex. lancer avec un chemin de setup inexistant → code ≠ 0
-      et message clair).
-- [ ] CLAUDE.md : ligne ajoutée au § « Build Windows » + table des docs (docs/37).
-- [ ] docs/32 §6 : les étapes couvertes par ce script y sont marquées
+- [x] `bash scripts/fumee_setup_vm.sh` déroule A→C sans intervention et sort en 0.
+- [x] Un second run consécutif passe aussi (rejouable) — deux runs verts le 2026-07-04.
+- [x] Chaque ligne de la table docs/32 §4 est couverte par une vérification (les
+      deux gatées sur `usPostUninstall` sont en `[INFO]` non bloquant, cf. §7).
+- [x] Échec simulé détecté (chemin de setup inexistant → code ≠ 0, message clair).
+- [x] CLAUDE.md : ligne ajoutée au § « Build Windows » + table des docs (docs/37).
+- [x] docs/32 §6 : les étapes couvertes par ce script y sont marquées
       « automatisées (docs/37) », la checklist manuelle résiduelle est réduite aux
-      points GUI.
+      points GUI + la revalidation interactive de `usPostUninstall`.
+
+## 7. Découverte : `usPostUninstall` ne se déclenche jamais via SSH
+
+Investigation menée le 2026-07-04 après deux échecs systématiques et reproductibles
+(désinstalleur non auto-supprimé, valeur Registre non nettoyée) — **survivant même
+à un run parfaitement propre** (pas un artefact de tests manuels antérieurs).
+
+**Méthode** : mini-`.iss` isolé (`TestRegDel2`, hors dépôt), avec dans
+`CurUninstallStepChanged` un `SaveStringToFile` inconditionnel écrivant
+`marker_step_<Ord(CurUninstallStep)>.txt` à CHAQUE étape, avant tout autre
+traitement. Cycle install → pose d'une fausse valeur Registre → désinstallation
+`/VERYSILENT` → inspection des marqueurs.
+
+**Résultat** : `marker_step_0.txt` (`usAppMutexCheck`) et `marker_step_1.txt`
+(`usUninstall`) sont créés — les fichiers de l'app sont bien supprimés à cette
+étape. **`marker_step_2.txt` (`usPostUninstall`) n'apparaît jamais**, même après
+20+ secondes d'attente (élimine l'hypothèse d'un simple délai de relance
+asynchrone du désinstalleur). Conséquence directe : tout code `[Code]` gaté sur
+`usPostUninstall` — dont notre nettoyage `RegDeleteValue` (docs/34 §4) — ne
+s'exécute jamais dans ce contexte, et l'auto-suppression de `unins000.exe`
+(qui semble dépendre du même point) n'a pas lieu non plus.
+
+**Hypothèse non confirmée** : lié à l'absence de session desktop interactive sous
+sshd Windows (pas de jeton d'élévation/session complet), sans plus de certitude
+sans accès RDP/console pour comparer. **Reste à faire (Sylvain)** : dérouler une
+désinstallation normale (double-clic depuis « Applications installées ») une fois
+sur la VM ou une machine de test, et vérifier si `unins000.exe` disparaît et si la
+clé Registre est nettoyée. Si oui → confirmé comme limite de l'environnement SSH
+uniquement (aucune action produit requise, le `.iss` est correct). Si non → bug
+produit réel à corriger dans `debriefMeet.iss`.
