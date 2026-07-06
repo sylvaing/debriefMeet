@@ -85,11 +85,11 @@ class TestExclusivite:
 
 
 class TestChrono:
-    """`elapsed_seconds()` — refonte design (StartButtonGroup, RecordingView).
+    """`elapsed_seconds()` — refonte design (barres d'action de capture).
 
     Calculé à la demande sur une horloge monotone, sans QTimer côté machine — la
     mise à jour périodique d'un affichage est portée par le composant UI qui en
-    a besoin (RecordingController/RecordingView, Étape 7), pas par le core."""
+    a besoin (`RecordingController`/`CaptureActionBar`), pas par le core."""
 
     def test_elapsed_zero_au_repos(self, machine):
         assert machine.elapsed_seconds() == 0

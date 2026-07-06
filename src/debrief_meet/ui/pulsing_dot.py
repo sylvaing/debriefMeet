@@ -1,6 +1,6 @@
 """Point pulsant rouge — indicateur d'enregistrement actif.
 
-Réutilisé par `StartButtonGroup` (Étape 3d) et `RecordingView` (Étape 7).
+Réutilisé par `CaptureActionBar` (refonte design v2, CHANGELOG_v2 §2).
 """
 from __future__ import annotations
 

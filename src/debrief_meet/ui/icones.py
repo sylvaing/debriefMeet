@@ -115,6 +115,19 @@ def icone_svg_teintee(chemin: Path, hex_color: str, taille: int = 16) -> QIcon:
     return QIcon(pixmap)
 
 
+def icone_bascule(nom: str, couleur_repos: str, couleur_actif: str, taille: int = 16) -> QIcon:
+    """Icône Phosphor à deux teintes selon l'état `checked` d'un `QToolButton`
+    (`QIcon.State.Off`/`On`) — Qt choisit automatiquement le bon pixmap au clic,
+    sans repeindre l'icône manuellement (onglets de navigation, bouton engrenage)."""
+    chemin = icone_phosphor(nom)
+    icone = QIcon()
+    icone.addPixmap(icone_svg_teintee(chemin, couleur_repos, taille).pixmap(taille, taille),
+                     QIcon.Mode.Normal, QIcon.State.Off)
+    icone.addPixmap(icone_svg_teintee(chemin, couleur_actif, taille).pixmap(taille, taille),
+                     QIcon.Mode.Normal, QIcon.State.On)
+    return icone
+
+
 # ── Icône d'application (Dock / Finder, fichier .icns) ─────────────────────────
 #
 # Distincte de l'icône de tray : ici on suit les guidelines macOS (carré arrondi

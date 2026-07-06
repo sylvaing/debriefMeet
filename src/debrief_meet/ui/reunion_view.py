@@ -1,11 +1,10 @@
-"""Vue Historique (refonte design) — table dense Réunions/Journal, recherche,
-badges d'état. Remplace l'ancienne `FenetreHistorique` (QDialog + QListWidget) :
-widget embarquable (Étape 4), pas de fenêtre autonome.
+"""Page Réunion (refonte design v2, CHANGELOG_v2 §2/§3) — barre d'action
+(bouton Démarrer/Arrêter + recherche) au-dessus du tableau des réunions, avec
+une ligne « en cours » insérée en tête pendant l'enregistrement.
 
-Porte à l'identique la logique métier de l'ancienne implémentation (actions,
-diarization déléguée au gestionnaire persistant, rafraîchissement live) —
-seule la présentation change (QTableView + délégués au lieu de lignes peintes
-dans un QListWidget).
+Porte la logique métier réunion de l'ancienne `HistoryView` (v1, disparue) —
+actions, diarization déléguée au gestionnaire persistant, rafraîchissement
+live. La partie Journal vit désormais dans `journal_view.py`.
 """
 from __future__ import annotations
 
@@ -18,11 +17,8 @@ from PySide6.QtCore import QFileSystemWatcher, QModelIndex, QRectF, QSortFilterP
 from PySide6.QtGui import QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHBoxLayout,
     QHeaderView,
-    QLineEdit,
     QMessageBox,
-    QStackedWidget,
     QStyle,
     QStyledItemDelegate,
     QTableView,
@@ -32,17 +28,12 @@ from PySide6.QtWidgets import (
 
 from debrief_meet.core.config import Config
 from debrief_meet.core.fichiers import chemin_locuteurs, pistes_audio_existantes
+from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
-from debrief_meet.ui.capture_model import (
-    COL_ACTIONS_JOURNAL,
-    COL_ACTIONS_REUNION,
-    COL_FICHIER_JOURNAL,
-    COL_TITRE_REUNION,
-    CaptureModel,
-)
+from debrief_meet.ui.capture_action_bar import CaptureActionBar
+from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_TITRE_REUNION, CaptureModel
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
-from debrief_meet.ui.segmented import SegmentedControl
 from debrief_meet.ui.status_pill import StatusPillDelegate
 from debrief_meet.ui.theme import C, M, color
 
@@ -70,10 +61,11 @@ class _BarreAccentDelegate(QStyledItemDelegate):
             painter.restore()
 
 
-class HistoryView(QWidget):
+class ReunionView(QWidget):
     def __init__(
         self,
         config: Config,
+        machine: MachineEtats,
         presse_papiers: PressePapiers | None = None,
         gestionnaire: GestionnaireDiarization | None = None,
         parent: QWidget | None = None,
@@ -83,32 +75,24 @@ class HistoryView(QWidget):
         self._presse_papiers = presse_papiers
         self._gestionnaire = gestionnaire
 
-        self._modele_reunions = CaptureModel(self._dossier(True), est_reunion=True, parent=self)
-        self._modele_journal = CaptureModel(self._dossier(False), est_reunion=False, parent=self)
+        self._modele = CaptureModel(self._dossier(), est_reunion=True, parent=self)
+        self._proxy = QSortFilterProxyModel(self)
+        self._proxy.setSourceModel(self._modele)
+        self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._proxy.setFilterKeyColumn(COL_TITRE_REUNION)
 
-        self._proxy_reunions = self._creer_proxy(self._modele_reunions, COL_TITRE_REUNION)
-        self._proxy_journal = self._creer_proxy(self._modele_journal, COL_FICHIER_JOURNAL)
+        self._table = self._creer_table()
 
-        self._table_reunions = self._creer_table(self._proxy_reunions, est_reunion=True)
-        self._table_journal = self._creer_table(self._proxy_journal, est_reunion=False)
-
-        self._construire_ui()
+        self._construire_ui(machine)
         self._cabler_gestionnaire()
         self._installer_surveillance()
-        self.recharger_tout()
+        self.recharger()
 
     # ── Construction UI ────────────────────────────────────────────────────────
 
-    def _creer_proxy(self, modele: CaptureModel, colonne_filtre: int) -> QSortFilterProxyModel:
-        proxy = QSortFilterProxyModel(self)
-        proxy.setSourceModel(modele)
-        proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        proxy.setFilterKeyColumn(colonne_filtre)
-        return proxy
-
-    def _creer_table(self, proxy: QSortFilterProxyModel, est_reunion: bool) -> QTableView:
+    def _creer_table(self) -> QTableView:
         table = QTableView(self)
-        table.setModel(proxy)
+        table.setModel(self._proxy)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setShowGrid(False)
@@ -122,93 +106,61 @@ class HistoryView(QWidget):
         )
         table.setMouseTracking(True)
 
-        col_actions = COL_ACTIONS_REUNION if est_reunion else COL_ACTIONS_JOURNAL
+        table.setItemDelegateForColumn(0, _BarreAccentDelegate(table))
         table.setItemDelegateForColumn(
-            0, _BarreAccentDelegate(table))
-        table.setItemDelegateForColumn(
-            col_actions,
-            ActionsDelegate(lambda idx, er=est_reunion: self._actions_pour_index(idx, er), table),
-        )
-        if est_reunion:
-            table.setItemDelegateForColumn(4, StatusPillDelegate(table))
+            COL_ACTIONS_REUNION, ActionsDelegate(self._actions_pour_index, table))
+        table.setItemDelegateForColumn(4, StatusPillDelegate(table))
 
         entete = table.horizontalHeader()
-        if est_reunion:
-            table.setColumnWidth(0, 40)
-            entete.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            table.setColumnWidth(2, 110)
-            table.setColumnWidth(3, 74)
-            table.setColumnWidth(4, 116)
-            table.setColumnWidth(5, 200)
-        else:
-            table.setColumnWidth(0, 40)
-            table.setColumnWidth(1, 200)
-            entete.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            table.setColumnWidth(3, 150)
+        table.setColumnWidth(0, 40)
+        entete.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.setColumnWidth(2, 110)
+        table.setColumnWidth(3, 74)
+        table.setColumnWidth(4, 116)
+        table.setColumnWidth(5, 200)
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
-        raccourci.activated.connect(lambda t=table, er=est_reunion: self._tout_supprimer(t, er, None))
+        raccourci.activated.connect(lambda: self._tout_supprimer(None))
 
         return table
 
-    def _construire_ui(self) -> None:
+    def _construire_ui(self, machine: MachineEtats) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        sous_entete = QWidget(self)
-        sous_entete.setStyleSheet(f"background: {C.SURFACE}; border-bottom: 1px solid {C.BORDER_SOFT};")
-        lay_entete = QHBoxLayout(sous_entete)
-        lay_entete.setContentsMargins(20, 14, 20, 14)
+        self._action_bar = CaptureActionBar(
+            Mode.REUNION, avec_recherche=True, placeholder_recherche="Rechercher une réunion…", parent=self)
+        self._action_bar.demande_bascule.connect(machine.toggle_reunion)
+        self._action_bar.recherche_change.connect(self._proxy.setFilterFixedString)
+        layout.addWidget(self._action_bar)
 
-        self._segmented = SegmentedControl(["Réunions", "Journal"], sous_entete)
-        self._segmented.changed.connect(self._sur_segment_change)
-        lay_entete.addWidget(self._segmented)
-        lay_entete.addStretch()
+        layout.addWidget(self._table, 1)
 
-        self._recherche = QLineEdit(sous_entete)
-        self._recherche.setPlaceholderText("Rechercher une réunion…")
-        self._recherche.setFixedWidth(260)
-        self._recherche.textChanged.connect(self._sur_recherche_change)
-        lay_entete.addWidget(self._recherche)
+    # ── Machine à états (RecordingController) ───────────────────────────────────
 
-        layout.addWidget(sous_entete)
-
-        self._pages = QStackedWidget(self)
-        self._pages.addWidget(self._table_reunions)
-        self._pages.addWidget(self._table_journal)
-        layout.addWidget(self._pages)
-
-    def _sur_segment_change(self, index: int) -> None:
-        self._pages.setCurrentIndex(index)
-        self._recherche.setPlaceholderText(
-            "Rechercher une réunion…" if index == 0 else "Rechercher dans le journal…")
-
-    def _sur_recherche_change(self, texte: str) -> None:
-        self._proxy_reunions.setFilterFixedString(texte)
-        self._proxy_journal.setFilterFixedString(texte)
+    def definir_etat_enregistrement(self, mode_actif: Mode, secondes: int) -> None:
+        self._action_bar.definir_etat(mode_actif, secondes)
+        self._modele.definir_ligne_en_cours(mode_actif is Mode.REUNION, secondes)
 
     # ── Chargement ───────────────────────────────────────────────────────────
 
-    def _dossier(self, est_reunion: bool) -> Path:
-        cle = "dossier_reunions" if est_reunion else "dossier_journal"
-        return Path(self._config.get(cle))
+    def _dossier(self) -> Path:
+        return Path(self._config.get("dossier_reunions"))
 
-    def recharger_tout(self) -> None:
-        self._modele_reunions.recharger()
-        self._modele_journal.recharger()
+    def recharger(self) -> None:
+        self._modele.recharger()
 
     # ── Actions par ligne (fournisseur du délégué) ──────────────────────────────
 
-    def _actions_pour_index(self, index: QModelIndex, est_reunion: bool) -> list[ActionSpec]:
+    def _actions_pour_index(self, index: QModelIndex) -> list[ActionSpec]:
         proxy = index.model()
         source = proxy.mapToSource(index)
-        modele = self._modele_reunions if est_reunion else self._modele_journal
-        info = modele.info_ligne(source.row())
-        if info is None:
+        info = self._modele.info_ligne(source.row())
+        if info is None or info.en_cours:
             return []
-        return self._actions_reunion(info) if est_reunion else self._actions_journal(info.chemin)
+        return self._actions_reunion(info)
 
     def _actions_reunion(self, ligne) -> list[ActionSpec]:
         chemin = ligne.chemin
@@ -218,7 +170,7 @@ class HistoryView(QWidget):
         un_job_tourne = job is not None
 
         actions = [ActionSpec(_ICONE_COPIER, "Copier la transcription", True,
-                              lambda c=chemin: self._copier(c, True))]
+                              lambda c=chemin: self._copier(c))]
 
         if ligne.en_attente:
             if en_cours and type_job == "transcription":
@@ -263,35 +215,26 @@ class HistoryView(QWidget):
             lambda c=chemin: self._supprimer_audio_un(c)))
         actions.append(ActionSpec(
             _ICONE_TOUT_SUPPR, "Tout supprimer (transcription + locuteurs + audio)", True,
-            lambda c=chemin: self._tout_supprimer_un(c, True)))
+            lambda c=chemin: self._tout_supprimer_un(c)))
         return actions
-
-    def _actions_journal(self, chemin: Path) -> list[ActionSpec]:
-        return [
-            ActionSpec(_ICONE_COPIER, "Copier", True, lambda c=chemin: self._copier(c, False)),
-            ActionSpec(_ICONE_OUVRIR, "Ouvrir", True, lambda c=chemin: self._ouvrir(c)),
-            ActionSpec(_ICONE_REVELER, "Révéler dans le Finder", True, lambda c=chemin: self._reveler(c)),
-            ActionSpec(_ICONE_TOUT_SUPPR, "Supprimer", True, lambda c=chemin: self._tout_supprimer_un(c, False)),
-        ]
 
     # ── Sélection ──────────────────────────────────────────────────────────────
 
-    def _chemins_selectionnes(self, table: QTableView, modele: CaptureModel) -> list[Path]:
-        proxy = table.model()
+    def _chemins_selectionnes(self) -> list[Path]:
         out: list[Path] = []
         lignes_vues = set()
-        for proxy_idx in table.selectionModel().selectedIndexes():
+        for proxy_idx in self._table.selectionModel().selectedIndexes():
             if proxy_idx.row() in lignes_vues:
                 continue
             lignes_vues.add(proxy_idx.row())
-            source = proxy.mapToSource(proxy_idx)
-            chemin = modele.chemin_a_la_ligne(source.row())
+            source = self._proxy.mapToSource(proxy_idx)
+            chemin = self._modele.chemin_a_la_ligne(source.row())
             if chemin is not None:
                 out.append(chemin)
         return out
 
-    def _cibles(self, table: QTableView, modele: CaptureModel, chemin: Path | None) -> list[Path]:
-        selection = self._chemins_selectionnes(table, modele)
+    def _cibles(self, chemin: Path | None) -> list[Path]:
+        selection = self._chemins_selectionnes()
         if chemin is None:
             return selection
         if chemin in selection and len(selection) > 1:
@@ -300,12 +243,11 @@ class HistoryView(QWidget):
 
     # ── Actions simples (mono-cible) ────────────────────────────────────────────
 
-    def _copier(self, chemin: Path, est_reunion: bool) -> None:
+    def _copier(self, chemin: Path) -> None:
         source = chemin
-        if est_reunion:
-            loc = chemin_locuteurs(chemin)
-            if loc.exists():
-                source = loc
+        loc = chemin_locuteurs(chemin)
+        if loc.exists():
+            source = loc
         if not source.exists():
             return
         texte = source.read_text(encoding="utf-8")
@@ -375,10 +317,10 @@ class HistoryView(QWidget):
         self._gestionnaire.echoue.connect(self._sur_diar_echoue)
 
     def _sur_diar_change(self, *_args) -> None:
-        self._modele_reunions.recharger()
+        self._modele.recharger()
 
     def _sur_diar_echoue(self, _md: object, message: str) -> None:
-        self._modele_reunions.recharger()
+        self._modele.recharger()
         if self.isVisible():
             QMessageBox.warning(self, "Diarization — échec",
                                 f"La génération des locuteurs a échoué :\n{message}")
@@ -386,8 +328,7 @@ class HistoryView(QWidget):
     # ── Suppressions ────────────────────────────────────────────────────────────
 
     def _supprimer_audio_un(self, chemin: Path) -> None:
-        cibles = [c for c in self._cibles(self._table_reunions, self._modele_reunions, chemin)
-                  if pistes_audio_existantes(c)]
+        cibles = [c for c in self._cibles(chemin) if pistes_audio_existantes(c)]
         if not cibles:
             QMessageBox.information(self, "Audio retenu", "Aucun audio retenu à supprimer.")
             return
@@ -404,33 +345,28 @@ class HistoryView(QWidget):
                     p.unlink()
                 except OSError:
                     pass
-        self._modele_reunions.recharger()
+        self._modele.recharger()
 
-    def _tout_supprimer_un(self, chemin: Path, est_reunion: bool) -> None:
-        table = self._table_reunions if est_reunion else self._table_journal
-        self._tout_supprimer(table, est_reunion, chemin)
+    def _tout_supprimer_un(self, chemin: Path) -> None:
+        self._tout_supprimer(chemin)
 
-    def _tout_supprimer(self, table: QTableView, est_reunion: bool, chemin: Path | None) -> None:
-        modele = self._modele_reunions if est_reunion else self._modele_journal
-        cibles = self._cibles(table, modele, chemin)
+    def _tout_supprimer(self, chemin: Path | None) -> None:
+        cibles = self._cibles(chemin)
         if not cibles:
             return
         rep = QMessageBox.question(
             self, "Tout supprimer",
             f"Supprimer définitivement {len(cibles)} enregistrement(s) ?"
-            + ("\n(Transcription + débrief locuteurs + audio retenu.)" if est_reunion else ""),
+            "\n(Transcription + débrief locuteurs + audio retenu.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if rep != QMessageBox.StandardButton.Yes:
             return
         for c in cibles:
-            self._supprimer_un(c, est_reunion)
-        modele.recharger()
+            self._supprimer_un(c)
+        self._modele.recharger()
 
-    def _supprimer_un(self, chemin: Path, est_reunion: bool) -> None:
-        a_supprimer = [chemin]
-        if est_reunion:
-            a_supprimer.append(chemin_locuteurs(chemin))
-            a_supprimer += pistes_audio_existantes(chemin)
+    def _supprimer_un(self, chemin: Path) -> None:
+        a_supprimer = [chemin, chemin_locuteurs(chemin), *pistes_audio_existantes(chemin)]
         for p in a_supprimer:
             try:
                 if p.exists():
@@ -442,15 +378,14 @@ class HistoryView(QWidget):
 
     def _installer_surveillance(self) -> None:
         self._watcher = QFileSystemWatcher(self)
-        dossiers = {str(self._dossier(True)), str(self._dossier(False))}
-        for d in dossiers:
-            if Path(d).exists():
-                self._watcher.addPath(d)
+        dossier = str(self._dossier())
+        if Path(dossier).exists():
+            self._watcher.addPath(dossier)
         self._watcher.directoryChanged.connect(self._sur_dossier_change)
         self._timer_refresh = QTimer(self)
         self._timer_refresh.setSingleShot(True)
         self._timer_refresh.setInterval(200)
-        self._timer_refresh.timeout.connect(self.recharger_tout)
+        self._timer_refresh.timeout.connect(self.recharger)
 
     def _sur_dossier_change(self, _chemin: str) -> None:
         self._timer_refresh.start()
@@ -458,17 +393,15 @@ class HistoryView(QWidget):
     # ── Sélection programmatique (clic sur notification) ─────────────────────────
 
     def selectionner_reunion(self, chemin_md: Path | None) -> None:
-        """Bascule sur l'onglet Réunions et sélectionne la ligne du `.md` donné."""
-        self._segmented.definir_index(0)
-        self._pages.setCurrentIndex(0)
-        self._modele_reunions.recharger()
+        """Sélectionne la ligne du `.md` donné."""
+        self._modele.recharger()
         if chemin_md is None:
             return
-        row = self._modele_reunions.ligne_pour_chemin(Path(chemin_md))
+        row = self._modele.ligne_pour_chemin(Path(chemin_md))
         if row is None:
             return
-        source_index = self._modele_reunions.index(row, 0)
-        proxy_index = self._proxy_reunions.mapFromSource(source_index)
-        self._table_reunions.selectionModel().clearSelection()
-        self._table_reunions.selectRow(proxy_index.row())
-        self._table_reunions.scrollTo(proxy_index)
+        source_index = self._modele.index(row, 0)
+        proxy_index = self._proxy.mapFromSource(source_index)
+        self._table.selectionModel().clearSelection()
+        self._table.selectRow(proxy_index.row())
+        self._table.scrollTo(proxy_index)

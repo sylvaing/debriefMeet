@@ -23,9 +23,13 @@ QPushButton#destructive { background: #fff; color: #B42318; border: 1px solid #F
 QPushButton#destructive:hover { background: #FEF3F2; }
 
 /* ---------- Onglets de navigation (toolbar) ---------- */
-QToolButton#navTab { background: transparent; border: none; padding: 0 4px;
+QToolButton#navTab { background: transparent; border: none; padding: 0 8px;
   font-size: 14px; font-weight: 600; color: #7A828F; }
 QToolButton#navTab:checked { color: #2A46B8; border-bottom: 2px solid #3B5BDB; }
+
+/* ---------- Bouton engrenage Préférences (toolbar) ---------- */
+QToolButton#gearBtn { background: transparent; border: none; border-radius: 8px; padding: 0; }
+QToolButton#gearBtn:checked { background: #EEF1FE; }
 
 /* ---------- En-tête de tableau ---------- */
 QHeaderView::section { background: #FBFBFC; color: #98A2B3; font-family: "IBM Plex Mono";

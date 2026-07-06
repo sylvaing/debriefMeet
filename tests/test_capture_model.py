@@ -125,3 +125,55 @@ def test_recharger_vide_si_dossier_absent(qapp, tmp_path):
     modele = CaptureModel(tmp_path / "n_existe_pas", est_reunion=True)
     modele.recharger()
     assert modele.rowCount() == 0
+
+
+# ── Ligne « en cours » (CHANGELOG_v2 §3) ─────────────────────────────────────
+
+def test_ligne_en_cours_ajoute_une_ligne_en_tete(qapp, tmp_path):
+    _creer_reunion(tmp_path, titre="Point équipe")
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    assert modele.rowCount() == 1
+
+    modele.definir_ligne_en_cours(True, 65)
+    assert modele.rowCount() == 2
+    assert modele.data(modele.index(0, COL_TITRE_REUNION)) == "Réunion en cours"
+    assert modele.data(modele.index(0, 3)) == "01:05"
+    assert modele.data(modele.index(0, 4), Qt.ItemDataRole.UserRole) == HistoryState.EN_COURS
+    # la ligne réelle est décalée d'un cran
+    assert modele.data(modele.index(1, COL_TITRE_REUNION)) == "Point équipe"
+
+
+def test_ligne_en_cours_ignoree_hors_reunion(qapp, tmp_path):
+    modele = CaptureModel(tmp_path, est_reunion=False)
+    modele.recharger()
+    modele.definir_ligne_en_cours(True, 10)
+    assert modele.rowCount() == 0
+
+
+def test_ligne_en_cours_retiree_a_l_arret(qapp, tmp_path):
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    modele.definir_ligne_en_cours(True, 10)
+    assert modele.rowCount() == 1
+    modele.definir_ligne_en_cours(False)
+    assert modele.rowCount() == 0
+
+
+def test_ligne_en_cours_n_a_pas_d_actions_ni_de_selection(qapp, tmp_path):
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    modele.definir_ligne_en_cours(True, 10)
+    idx = modele.index(0, COL_TITRE_REUNION)
+    assert not (modele.flags(idx) & Qt.ItemFlag.ItemIsSelectable)
+    assert not (modele.flags(idx) & Qt.ItemFlag.ItemIsEditable)
+    assert modele.chemin_a_la_ligne(0) is None
+    assert modele.info_ligne(0).en_cours is True
+
+
+def test_ligne_en_cours_decale_ligne_pour_chemin(qapp, tmp_path):
+    md = _creer_reunion(tmp_path)
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    modele.definir_ligne_en_cours(True, 10)
+    assert modele.ligne_pour_chemin(md) == 1

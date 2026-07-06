@@ -8,6 +8,7 @@ qui construisait déjà les lignes une seule fois par rechargement.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
@@ -24,6 +25,7 @@ from debrief_meet.core.fichiers import (
     titre_reunion,
     transcription_en_attente,
 )
+from debrief_meet.ui.chrono import formater_chrono
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.status_pill import HistoryState
 from debrief_meet.ui.theme import C
@@ -55,6 +57,7 @@ class _LigneReunion:
     audio: list[Path]
     locuteurs: bool
     en_attente: bool
+    en_cours: bool = False  # ligne live insérée en tête pendant l'enregistrement (pas de fichier réel)
 
 
 @dataclass
@@ -96,6 +99,23 @@ def _construire_ligne_journal(chemin: Path) -> _LigneJournal:
     return _LigneJournal(chemin=chemin, nom=chemin.name, note=apercu_journal(chemin))
 
 
+def _construire_ligne_en_cours(secondes: int) -> _LigneReunion:
+    """Ligne « Réunion en cours » (CHANGELOG_v2 §3) — pas de fichier réel, chemin
+    sentinelle jamais déréférencé (actions désactivées, ligne non sélectionnable)."""
+    return _LigneReunion(
+        chemin=Path(),
+        titre_affiche="Réunion en cours",
+        titre_brut="",
+        date_texte=datetime.now().strftime("%d/%m/%Y"),
+        duree_texte=formater_chrono(secondes),
+        etat=HistoryState.EN_COURS,
+        audio=[],
+        locuteurs=False,
+        en_attente=False,
+        en_cours=True,
+    )
+
+
 class CaptureModel(QAbstractTableModel):
     """Table des enregistrements d'un dossier (Réunions ou Journal selon `est_reunion`)."""
 
@@ -104,11 +124,14 @@ class CaptureModel(QAbstractTableModel):
         self._dossier = dossier
         self._est_reunion = est_reunion
         self._lignes: list[_LigneReunion] | list[_LigneJournal] = []
+        self._ligne_en_cours: _LigneReunion | None = None  # Réunion uniquement (CHANGELOG_v2 §3)
 
     # ── API Qt ───────────────────────────────────────────────────────────────
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._lignes)
+        if parent.isValid():
+            return 0
+        return len(self._lignes) + (1 if self._ligne_en_cours is not None else 0)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else (6 if self._est_reunion else 4)
@@ -119,16 +142,30 @@ class CaptureModel(QAbstractTableModel):
         entetes = _ENTETES_REUNIONS if self._est_reunion else _ENTETES_JOURNAL
         return entetes[section]
 
+    def _ligne_a_index(self, row: int) -> _LigneReunion | _LigneJournal | None:
+        if self._ligne_en_cours is not None:
+            if row == 0:
+                return self._ligne_en_cours
+            row -= 1
+        if 0 <= row < len(self._lignes):
+            return self._lignes[row]
+        return None
+
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        ligne = self._ligne_a_index(index.row()) if index.isValid() else None
+        if isinstance(ligne, _LigneReunion) and ligne.en_cours:
+            return Qt.ItemFlag.ItemIsEnabled  # ni sélectionnable ni éditable
         base = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if self._est_reunion and index.column() == COL_TITRE_REUNION:
             base |= Qt.ItemFlag.ItemIsEditable
         return base
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < len(self._lignes)):
+        if not index.isValid():
             return None
-        ligne = self._lignes[index.row()]
+        ligne = self._ligne_a_index(index.row())
+        if ligne is None:
+            return None
         col = index.column()
 
         if role == ROLE_CHEMIN:
@@ -140,7 +177,8 @@ class CaptureModel(QAbstractTableModel):
 
     def _data_reunion(self, ligne: _LigneReunion, col: int, role: int):
         if role == Qt.ItemDataRole.DecorationRole and col == 0:
-            return icone_svg_teintee(icone_phosphor("users-three"), C.INK400, 16)
+            icone = "microphone" if ligne.en_cours else "users-three"
+            return icone_svg_teintee(icone_phosphor(icone), C.INK400, 16)
         if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
             if col == COL_TITRE_REUNION:
                 return ligne.titre_brut if role == Qt.ItemDataRole.EditRole else ligne.titre_affiche
@@ -166,31 +204,54 @@ class CaptureModel(QAbstractTableModel):
         if (not self._est_reunion or index.column() != COL_TITRE_REUNION
                 or role != Qt.ItemDataRole.EditRole):
             return False
-        ligne = self._lignes[index.row()]
+        ligne = self._ligne_a_index(index.row())
+        if ligne is None or ligne.en_cours:
+            return False
         nouveau = str(value).strip()
         if nouveau == ligne.titre_brut:
             return False
         definir_titre(ligne.chemin, nouveau)
-        self._lignes[index.row()] = _construire_ligne_reunion(ligne.chemin)
+        offset = 1 if self._ligne_en_cours is not None else 0
+        self._lignes[index.row() - offset] = _construire_ligne_reunion(ligne.chemin)
         self.dataChanged.emit(index, index)
         return True
+
+    # ── Ligne « en cours » (Réunion, CHANGELOG_v2 §3) ───────────────────────────
+
+    def definir_ligne_en_cours(self, active: bool, secondes: int = 0) -> None:
+        """Insère/retire/actualise la ligne « Réunion en cours » en tête de table."""
+        if not self._est_reunion:
+            return
+        if not active:
+            if self._ligne_en_cours is not None:
+                self.beginRemoveRows(QModelIndex(), 0, 0)
+                self._ligne_en_cours = None
+                self.endRemoveRows()
+            return
+        if self._ligne_en_cours is None:
+            self.beginInsertRows(QModelIndex(), 0, 0)
+            self._ligne_en_cours = _construire_ligne_en_cours(secondes)
+            self.endInsertRows()
+        else:
+            self._ligne_en_cours = _construire_ligne_en_cours(secondes)
+            self.dataChanged.emit(self.index(0, 2), self.index(0, 3))
 
     # ── Chargement ───────────────────────────────────────────────────────────
 
     def chemin_a_la_ligne(self, row: int) -> Path | None:
-        if 0 <= row < len(self._lignes):
-            return self._lignes[row].chemin
-        return None
+        ligne = self._ligne_a_index(row)
+        if ligne is None or (isinstance(ligne, _LigneReunion) and ligne.en_cours):
+            return None
+        return ligne.chemin
 
     def info_ligne(self, row: int) -> _LigneReunion | _LigneJournal | None:
-        if 0 <= row < len(self._lignes):
-            return self._lignes[row]
-        return None
+        return self._ligne_a_index(row)
 
     def ligne_pour_chemin(self, chemin: Path) -> int | None:
+        offset = 1 if self._ligne_en_cours is not None else 0
         for i, ligne in enumerate(self._lignes):
             if ligne.chemin == chemin:
-                return i
+                return i + offset
         return None
 
     def recharger(self) -> None:

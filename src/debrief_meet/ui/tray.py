@@ -74,10 +74,6 @@ class IconeTray(QSystemTrayIcon):
         menu.addAction(action_ouvrir)
         menu.setDefaultAction(action_ouvrir)  # mis en avant (ordre spec §8)
 
-        action_hist = QAction("Historique…", menu)
-        action_hist.triggered.connect(self._ouvrir_historique)
-        menu.addAction(action_hist)
-
         action_prefs = QAction("Préférences…", menu)
         action_prefs.triggered.connect(self._ouvrir_preferences)
         menu.addAction(action_prefs)
@@ -157,10 +153,6 @@ class IconeTray(QSystemTrayIcon):
         except Exception as exc:
             logger.error("Export diagnostic impossible (%s)", exc, exc_info=True)
             QMessageBox.critical(None, "Erreur", f"Impossible d'exporter le diagnostic :\n{exc}")
-
-    def _ouvrir_historique(self) -> None:
-        self._fenetre_principale.afficher_historique()
-        self._afficher_fenetre_principale()
 
     # ── Notifications de diarization ────────────────────────────────────────────
 

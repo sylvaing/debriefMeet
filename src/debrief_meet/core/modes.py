@@ -61,7 +61,7 @@ class MachineEtats(QObject):
 
         Calculé à la demande (horloge monotone), sans QTimer : la mise à jour
         périodique d'un affichage (chrono) est une responsabilité UI (Étape 7,
-        `RecordingController`/`RecordingView`), pas de la machine à états —
+        `RecordingController`/`CaptureActionBar`), pas de la machine à états —
         un QTimer répétitif ici survivrait à une instance de test non
         référencée et peut planter en tirant sur un objet déjà détruit."""
         if self._debut is None:
