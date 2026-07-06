@@ -17,6 +17,7 @@ from PySide6.QtCore import QModelIndex, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from debrief_meet.ui.fond_ligne import peindre_fond_ligne
 from debrief_meet.ui.theme import C, color
 
 INSET_GAUCHE = 20  # CHANGELOG_v2 correctif #3 — colonne icône démarre à 20px du bord
@@ -32,13 +33,16 @@ class IconeColonneDelegate(QStyledItemDelegate):
         option.icon = QIcon()  # peinte manuellement dans paint(), décalée
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        option = QStyleOptionViewItem(option)
+        est_selectionnee = peindre_fond_ligne(painter, option, index)
+        option.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
         super().paint(painter, option, index)
         icone = index.data(Qt.ItemDataRole.DecorationRole)
         if isinstance(icone, QIcon) and not icone.isNull():
             x = option.rect.left() + INSET_GAUCHE
             y = option.rect.top() + (option.rect.height() - TAILLE_ICONE) / 2
             icone.paint(painter, int(x), int(y), TAILLE_ICONE, TAILLE_ICONE)
-        if option.state & QStyle.StateFlag.State_Selected:
+        if est_selectionnee:
             painter.save()
             rect = QRectF(option.rect.left(), option.rect.top(), LARGEUR_ACCENT, option.rect.height())
             painter.fillRect(rect, color(C.ACCENT))

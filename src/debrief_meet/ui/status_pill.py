@@ -12,6 +12,7 @@ from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate
 
+from debrief_meet.ui.fond_ligne import peindre_fond_ligne
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.theme import C, SANS, color
 
@@ -71,6 +72,8 @@ class StatusPillDelegate(QStyledItemDelegate):
         rect = option.rect
         x = rect.left() + (rect.width() - largeur) / 2
         y = rect.top() + (rect.height() - hauteur) / 2
+
+        peindre_fond_ligne(painter, option, index)
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

@@ -3,12 +3,19 @@ QWidget { font-family: "IBM Plex Sans"; font-size: 13px; color: #1A1D23; }
 QMainWindow, QDialog { background: #FFFFFF; }
 
 /* ---------- Champs ---------- */
-QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QAbstractSpinBox {
+QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QAbstractSpinBox, QKeySequenceEdit {
   background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px;
   padding: 10px 13px; font-size: 14px; color: #1A1D23; selection-background-color: #EEF1FE;
 }
-QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus { border-color: #3B5BDB; }
-QPlainTextEdit#promptEditor { font-family: "IBM Plex Mono"; font-size: 12.5px; }
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus,
+QKeySequenceEdit:focus { border-color: #3B5BDB; }
+QPlainTextEdit#promptEditor {
+  font-family: "IBM Plex Mono"; font-size: 12.5px; line-height: 1.6; color: #344054;
+}
+
+/* Liste des prompts (Préférences › Prompts, CHANGELOG_v2 §1) : cadre net */
+QListWidget#promptsList { border: 1px solid #E7E9EE; border-radius: 8px; background: #fff; }
+QListWidget#promptsList::item { border: none; }
 
 /* Champ de recherche (barre d'action de capture) — pas de focus ring (correctif #6) */
 QLineEdit#searchField:focus { border: 1px solid #E7E9EE; outline: none; }

@@ -104,7 +104,7 @@ class FenetrePrincipale(QMainWindow):
         nom.setFont(QFont(SANS, 15, QFont.Weight.Bold))
         lay.addWidget(nom)
 
-        version = QLabel(f"v{__version__}", barre)
+        version = QLabel(__version__, barre)
         version.setStyleSheet(
             f"color: {C.INK300}; border: 1px solid {C.BORDER}; border-radius: 5px; padding: 1px 5px;"
             f" font-family: '{MONO}'; font-size: 10.5px;")

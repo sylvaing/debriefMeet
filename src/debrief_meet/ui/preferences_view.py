@@ -14,14 +14,12 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, QThread, QTimer, Slot
-from PySide6.QtGui import QFont, QIcon, QKeySequence
+from PySide6.QtCore import QRectF, QSize, Qt, QThread, QTimer, Slot
+from PySide6.QtGui import QFont, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
@@ -35,6 +33,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -47,7 +47,7 @@ from debrief_meet.core.raccourcis import libelle_modificateurs
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription
 from debrief_meet.ui.chargeur_modele import ChargeurModele
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
-from debrief_meet.ui.theme import C, M, SANS
+from debrief_meet.ui.theme import C, M, MONO, SANS, color
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +84,62 @@ def _a_modificateur_suffisant(texte_portable: str) -> bool:
 def _note(texte: str) -> QLabel:
     lab = QLabel(texte)
     lab.setWordWrap(True)
-    lab.setStyleSheet(f"color: {C.INK400}; font-size: 11px;")
+    lab.setStyleSheet(f"color: {C.INK400}; font-size: 12px; line-height: 1.7;")
     return lab
+
+
+def _libelle_champ(texte: str) -> QLabel:
+    """Label au-dessus d'un champ (colonne, jamais à côté) — DESIGN.md §3/§8.4."""
+    lab = QLabel(texte)
+    lab.setStyleSheet(f"font-size: 12.5px; font-weight: 600; color: {C.INK700};")
+    return lab
+
+
+_STYLE_MINI_CARRE = (
+    "QPushButton { background: #fff; border: 1px solid #D6D9DE; border-radius: 7px; }"
+    f"QPushButton:hover {{ border-color: {C.ACCENT}; }}"
+)
+
+
+class _PromptDelegate(QStyledItemDelegate):
+    """Ligne de la liste des prompts (onglet Préférences › Prompts, CHANGELOG_v2
+    §1) : item actif = fond accent-soft + texte gras + coche à droite ; les
+    autres = fond blanc + texte normal. Séparateur fin sous chaque ligne."""
+
+    ROLE_ACTIF = Qt.ItemDataRole.UserRole + 1
+
+    def paint(self, painter: QPainter, option, index) -> None:
+        actif = bool(index.data(self.ROLE_ACTIF))
+        rect = option.rect
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if actif:
+            painter.fillRect(rect, color(C.ACCENT_SOFT))
+        elif option.state & QStyle.StateFlag.State_MouseOver:
+            painter.fillRect(rect, color(C.HOVER))
+
+        marge = 12
+        largeur_coche = 19 if actif else 0
+        police = QFont(SANS, 13, QFont.Weight.DemiBold if actif else QFont.Weight.Medium)
+        painter.setFont(police)
+        painter.setPen(color(C.ACCENT_INK if actif else C.INK900))
+        zone = QRectF(rect.left() + marge, rect.top(),
+                       rect.width() - marge * 2 - largeur_coche, rect.height())
+        texte = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        texte_elide = painter.fontMetrics().elidedText(
+            texte, Qt.TextElideMode.ElideRight, int(zone.width()))
+        painter.drawText(zone, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, texte_elide)
+
+        if actif:
+            icone = icone_svg_teintee(icone_phosphor("check"), C.ACCENT_INK, 13)
+            icone.paint(painter, int(rect.right() - marge - 13), int(rect.center().y() - 6), 13, 13)
+
+        painter.setPen(color(C.BORDER_SOFT))
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        painter.restore()
+
+    def sizeHint(self, option, index) -> QSize:
+        return QSize(200, 33)
 
 
 class PreferencesView(QWidget):
@@ -182,23 +236,31 @@ class PreferencesView(QWidget):
 
     def _section_modele(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        w.setMaximumWidth(540)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        lay.addWidget(_libelle_champ("Modèle Whisper"))
 
         self._combo_modele = QComboBox()
+        self._combo_modele.setFont(QFont(MONO, 13.5))
         for nom in NOMS_LOGIQUES:
             self._combo_modele.addItem(nom, nom)
         idx = self._combo_modele.findData(self._config.get("modele"))
         if idx >= 0:
             self._combo_modele.setCurrentIndex(idx)
         self._combo_modele.currentIndexChanged.connect(self._sur_modele_change)
-        form.addRow("Modèle Whisper :", self._combo_modele)
+        lay.addWidget(self._combo_modele)
 
-        form.addRow("", _note(
+        lay.addSpacing(4)
+        lay.addWidget(_note(
             "tiny et small sont rapides mais moins précis.\n"
             "large-v3-turbo : meilleur rapport qualité/vitesse (≈ 1,6 Go) — recommandé.\n"
             "large-v3 : qualité maximale (≈ 3 Go).\n"
             "Le modèle est téléchargé au premier usage."
         ))
+        lay.addStretch()
         return w
 
     def _sur_modele_change(self, _index: int) -> None:
@@ -214,9 +276,16 @@ class PreferencesView(QWidget):
 
     def _section_audio(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        w.setMaximumWidth(600)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(20)
 
+        bloc_micro = QVBoxLayout()
+        bloc_micro.setSpacing(6)
+        bloc_micro.addWidget(_libelle_champ("Microphone"))
         self._combo_micro = QComboBox()
+        self._combo_micro.setMaximumWidth(600)
         self._combo_micro.addItem("Périphérique par défaut", None)
         try:
             import sounddevice as sd
@@ -232,14 +301,23 @@ class PreferencesView(QWidget):
                 self._combo_micro.setCurrentIndex(idx)
         self._combo_micro.currentIndexChanged.connect(
             lambda _i: self._definir("micro_index", self._combo_micro.currentData()))
-        form.addRow("Microphone :", self._combo_micro)
+        bloc_micro.addWidget(self._combo_micro)
+        lay.addLayout(bloc_micro)
 
+        bloc_intervalle = QVBoxLayout()
+        bloc_intervalle.setSpacing(6)
+        bloc_intervalle.addWidget(_libelle_champ("Intervalle réunion"))
         self._spin_intervalle = QSpinBox()
+        self._spin_intervalle.setMaximumWidth(180)
         self._spin_intervalle.setRange(10, 300)
         self._spin_intervalle.setSuffix(" s")
         self._spin_intervalle.setValue(self._config.get("intervalle_reunion") or 30)
         self._spin_intervalle.valueChanged.connect(lambda v: self._definir("intervalle_reunion", v))
-        form.addRow("Intervalle réunion :", self._spin_intervalle)
+        bloc_intervalle.addWidget(self._spin_intervalle)
+        lay.addLayout(bloc_intervalle)
+
+        bloc_checks = QVBoxLayout()
+        bloc_checks.setSpacing(11)
 
         self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
         self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
@@ -249,7 +327,7 @@ class PreferencesView(QWidget):
         )
         self._check_transcription_live.toggled.connect(
             lambda c: self._definir("transcription_live", c))
-        form.addRow("Transcription :", self._check_transcription_live)
+        bloc_checks.addWidget(self._check_transcription_live)
 
         self._check_aec = QCheckBox("Annuler l'écho des haut-parleurs (sans casque)")
         self._check_aec.setChecked(bool(self._config.get("aec_actif")))
@@ -258,7 +336,7 @@ class PreferencesView(QWidget):
             "la voix des participants. Prend effet à la prochaine réunion."
         )
         self._check_aec.toggled.connect(lambda c: self._definir("aec_actif", c))
-        form.addRow("Annulation d'écho :", self._check_aec)
+        bloc_checks.addWidget(self._check_aec)
 
         self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
         self._check_retention.setChecked(bool(self._config.get("retention_audio")))
@@ -267,10 +345,11 @@ class PreferencesView(QWidget):
             "« qui a parlé » plus tard depuis l'Historique. Supprimable par réunion."
         )
         self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
-        form.addRow("Rétention audio :", self._check_retention)
+        bloc_checks.addWidget(self._check_retention)
+        lay.addLayout(bloc_checks)
 
-        form.addRow("Diarization :", self._construire_ligne_diarization())
-
+        lay.addWidget(self._construire_ligne_diarization())
+        lay.addStretch()
         return w
 
     def _construire_ligne_diarization(self) -> QWidget:
@@ -327,38 +406,43 @@ class PreferencesView(QWidget):
     # ── Section Dossiers ───────────────────────────────────────────────────────
 
     def _section_dossiers(self) -> QWidget:
+        """Structure plate — pas de carte grise englobante (CHANGELOG_v2 §1) :
+        label seul au-dessus, puis une ligne champ mono + bouton blanc « Choisir… »."""
         w = QWidget()
+        w.setMaximumWidth(620)
         layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
 
-        group_r = QGroupBox("Réunions")
-        row_r = QHBoxLayout(group_r)
         self._edit_dossier_reunions = QLineEdit(self._config.get("dossier_reunions"))
-        self._edit_dossier_reunions.editingFinished.connect(
-            lambda: self._sur_dossier_edite("dossier_reunions", self._edit_dossier_reunions))
-        btn_r = QPushButton("Choisir…")
-        btn_r.setObjectName("secondary")
-        btn_r.clicked.connect(
-            lambda: self._choisir_dossier("dossier_reunions", self._edit_dossier_reunions))
-        row_r.addWidget(self._edit_dossier_reunions)
-        row_r.addWidget(btn_r)
-        layout.addWidget(group_r)
+        layout.addLayout(self._bloc_dossier(
+            "Réunions", self._edit_dossier_reunions, "dossier_reunions"))
 
-        group_j = QGroupBox("Journal")
-        row_j = QHBoxLayout(group_j)
         self._edit_dossier_journal = QLineEdit(self._config.get("dossier_journal"))
-        self._edit_dossier_journal.editingFinished.connect(
-            lambda: self._sur_dossier_edite("dossier_journal", self._edit_dossier_journal))
-        btn_j = QPushButton("Choisir…")
-        btn_j.setObjectName("secondary")
-        btn_j.clicked.connect(
-            lambda: self._choisir_dossier("dossier_journal", self._edit_dossier_journal))
-        row_j.addWidget(self._edit_dossier_journal)
-        row_j.addWidget(btn_j)
-        layout.addWidget(group_j)
+        layout.addLayout(self._bloc_dossier(
+            "Journal", self._edit_dossier_journal, "dossier_journal"))
 
-        layout.addStretch()
         layout.addWidget(_note("Changer un dossier ne déplace pas les fichiers déjà produits."))
+        layout.addStretch()
         return w
+
+    def _bloc_dossier(self, label_texte: str, edit: QLineEdit, cle: str) -> QVBoxLayout:
+        bloc = QVBoxLayout()
+        bloc.setSpacing(6)
+        bloc.addWidget(_libelle_champ(label_texte))
+
+        ligne = QHBoxLayout()
+        ligne.setSpacing(8)
+        edit.setFont(QFont(MONO, 12.5))
+        edit.setStyleSheet(f"color: {C.INK600};")
+        edit.editingFinished.connect(lambda c=cle, e=edit: self._sur_dossier_edite(c, e))
+        btn = QPushButton("Choisir…")
+        btn.setObjectName("secondary")
+        btn.clicked.connect(lambda c=cle, e=edit: self._choisir_dossier(c, e))
+        ligne.addWidget(edit, 1)
+        ligne.addWidget(btn)
+        bloc.addLayout(ligne)
+        return bloc
 
     def _choisir_dossier(self, cle: str, edit: QLineEdit) -> None:
         dossier = QFileDialog.getExistingDirectory(
@@ -384,41 +468,64 @@ class PreferencesView(QWidget):
 
         w = QWidget()
         lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(20)
 
         gauche = QVBoxLayout()
+        gauche.setSpacing(10)
         self._liste_prompts = QListWidget()
+        self._liste_prompts.setObjectName("promptsList")
+        self._liste_prompts.setFixedWidth(200)
+        self._liste_prompts.setMouseTracking(True)
+        self._liste_prompts.setItemDelegate(_PromptDelegate(self._liste_prompts))
         self._liste_prompts.currentRowChanged.connect(self._prompt_selection_change)
-        gauche.addWidget(self._liste_prompts)
+        gauche.addWidget(self._liste_prompts, 1)
         barre = QHBoxLayout()
-        btn_add = QPushButton("＋")
+        barre.setSpacing(8)
+        btn_add = QPushButton()
+        btn_add.setIcon(icone_svg_teintee(icone_phosphor("plus"), C.INK600, 14))
+        btn_add.setFixedSize(32, 28)
         btn_add.setToolTip("Ajouter un prompt")
+        btn_add.setStyleSheet(_STYLE_MINI_CARRE)
         btn_add.clicked.connect(self._prompt_ajouter)
-        btn_del = QPushButton("−")
+        btn_del = QPushButton()
+        btn_del.setIcon(icone_svg_teintee(icone_phosphor("minus"), C.INK600, 14))
+        btn_del.setFixedSize(32, 28)
         btn_del.setToolTip("Supprimer le prompt sélectionné")
+        btn_del.setStyleSheet(_STYLE_MINI_CARRE)
         btn_del.clicked.connect(self._prompt_supprimer)
         barre.addWidget(btn_add)
         barre.addWidget(btn_del)
         barre.addStretch()
         gauche.addLayout(barre)
-        lay.addLayout(gauche, 1)
+        lay.addLayout(gauche)
 
         droite = QVBoxLayout()
-        droite.addWidget(QLabel("Titre :"))
+        droite.setSpacing(13)
+        bloc_titre = QVBoxLayout()
+        bloc_titre.setSpacing(6)
+        bloc_titre.addWidget(_libelle_champ("Titre"))
         self._edit_prompt_titre = QLineEdit()
         self._edit_prompt_titre.textEdited.connect(self._prompt_titre_change)
-        droite.addWidget(self._edit_prompt_titre)
-        droite.addWidget(QLabel("Contenu :"))
+        bloc_titre.addWidget(self._edit_prompt_titre)
+        droite.addLayout(bloc_titre)
+
+        bloc_contenu = QVBoxLayout()
+        bloc_contenu.setSpacing(6)
+        bloc_contenu.addWidget(_libelle_champ("Contenu"))
         self._edit_prompt_contenu = QPlainTextEdit()
         self._edit_prompt_contenu.setObjectName("promptEditor")
         self._edit_prompt_contenu.textChanged.connect(self._prompt_contenu_change)
-        droite.addWidget(self._edit_prompt_contenu, 1)
+        bloc_contenu.addWidget(self._edit_prompt_contenu, 1)
+        droite.addLayout(bloc_contenu, 1)
+
         self._check_prompt_actif = QCheckBox("Utiliser ce prompt à la copie")
         self._check_prompt_actif.toggled.connect(self._prompt_actif_toggle)
         droite.addWidget(self._check_prompt_actif)
         droite.addWidget(_note(
             "Le prompt actif est ajouté en tête lors de la copie d'une transcription "
             "ou d'un débrief locuteurs depuis l'Historique."))
-        lay.addLayout(droite, 2)
+        lay.addLayout(droite, 1)
 
         self._remplir_liste_prompts()
         if self._prompts:
@@ -436,7 +543,9 @@ class PreferencesView(QWidget):
         self._liste_prompts.clear()
         for i, p in enumerate(self._prompts):
             titre = p.get("titre") or "(sans titre)"
-            self._liste_prompts.addItem(titre + ("  ✓" if i == self._prompt_actif else ""))
+            item = QListWidgetItem(titre)
+            item.setData(_PromptDelegate.ROLE_ACTIF, i == self._prompt_actif)
+            self._liste_prompts.addItem(item)
         self._maj_prompt = False
 
     def _prompt_selection_change(self, row: int) -> None:
@@ -457,7 +566,7 @@ class PreferencesView(QWidget):
         self._maj_prompt = True
         item = self._liste_prompts.item(row)
         if item is not None:
-            item.setText(texte + ("  ✓" if self._prompt_actif == row else ""))
+            item.setText(texte)
         self._maj_prompt = False
         self._sauver_prompts()
 
@@ -511,9 +620,16 @@ class PreferencesView(QWidget):
 
     def _section_general(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        w.setMaximumWidth(540)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(20)
 
+        bloc_langue = QVBoxLayout()
+        bloc_langue.setSpacing(6)
+        bloc_langue.addWidget(_libelle_champ("Langue"))
         self._combo_langue = QComboBox()
+        self._combo_langue.setMaximumWidth(300)
         for label, code in _LANGUES:
             self._combo_langue.addItem(label, code)
         idx = self._combo_langue.findData(self._config.get("langue"))
@@ -521,7 +637,8 @@ class PreferencesView(QWidget):
             self._combo_langue.setCurrentIndex(idx)
         self._combo_langue.currentIndexChanged.connect(
             lambda _i: self._definir("langue", self._combo_langue.currentData()))
-        form.addRow("Langue :", self._combo_langue)
+        bloc_langue.addWidget(self._combo_langue)
+        lay.addLayout(bloc_langue)
 
         self._check_autostart = QCheckBox("Lancer debriefMeet au démarrage de session")
         if self._demarrage_auto:
@@ -529,13 +646,14 @@ class PreferencesView(QWidget):
             self._check_autostart.toggled.connect(self._sur_autostart_toggle)
         else:
             self._check_autostart.setEnabled(False)
-        form.addRow("Démarrage auto :", self._check_autostart)
+        lay.addWidget(self._check_autostart)
 
         self._check_notifs = QCheckBox("Activer les notifications")
         self._check_notifs.setChecked(bool(self._config.get("notifications")))
         self._check_notifs.toggled.connect(lambda c: self._definir("notifications", c))
-        form.addRow("Notifications :", self._check_notifs)
+        lay.addWidget(self._check_notifs)
 
+        lay.addStretch()
         return w
 
     def _sur_autostart_toggle(self, coche: bool) -> None:
@@ -551,25 +669,46 @@ class PreferencesView(QWidget):
 
     def _section_raccourcis(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        w.setMaximumWidth(440)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(14)
 
         self._edit_raccourci_dictee = self._creer_edit_raccourci("raccourci_dictee", "Dictée")
-        form.addRow("Dictée :", self._edit_raccourci_dictee)
+        lay.addLayout(self._ligne_raccourci("Dictée", self._edit_raccourci_dictee))
         self._edit_raccourci_reunion = self._creer_edit_raccourci("raccourci_reunion", "Réunion")
-        form.addRow("Réunion :", self._edit_raccourci_reunion)
+        lay.addLayout(self._ligne_raccourci("Réunion", self._edit_raccourci_reunion))
         self._edit_raccourci_journal = self._creer_edit_raccourci("raccourci_journal", "Journal")
-        form.addRow("Journal :", self._edit_raccourci_journal)
+        lay.addLayout(self._ligne_raccourci("Journal", self._edit_raccourci_journal))
 
+        pied = QVBoxLayout()
+        pied.setContentsMargins(98, 0, 0, 0)
+        pied.setSpacing(13)
         btn_defaut = QPushButton("Réinitialiser les défauts")
         btn_defaut.setObjectName("secondary")
         btn_defaut.clicked.connect(self._reinitialiser_raccourcis)
-        form.addRow("", btn_defaut)
-
-        form.addRow("", _note(
+        pied.addWidget(btn_defaut, alignment=Qt.AlignmentFlag.AlignLeft)
+        note = _note(
             "Un raccourci démarre/arrête l'action correspondante, même quand "
             "debriefMeet n'a pas le focus. Laisser un champ vide désactive ce "
-            "raccourci."))
+            "raccourci.")
+        note.setMaximumWidth(320)
+        pied.addWidget(note)
+        lay.addLayout(pied)
+
+        lay.addStretch()
         return w
+
+    def _ligne_raccourci(self, label_texte: str, edit: QKeySequenceEdit) -> QHBoxLayout:
+        ligne = QHBoxLayout()
+        ligne.setSpacing(14)
+        label = QLabel(label_texte)
+        label.setFixedWidth(84)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setStyleSheet(f"font-size: 13.5px; font-weight: 600; color: {C.INK700};")
+        ligne.addWidget(label)
+        ligne.addWidget(edit, 1)
+        return ligne
 
     def _champs_raccourcis(self) -> tuple[tuple[str, QKeySequenceEdit, str], ...]:
         return (
@@ -580,6 +719,7 @@ class PreferencesView(QWidget):
 
     def _creer_edit_raccourci(self, cle: str, nom: str) -> QKeySequenceEdit:
         edit = QKeySequenceEdit()
+        edit.setFont(QFont(MONO, 14))
         edit.setMaximumSequenceLength(1)
         valeur = self._config.get(cle)
         if valeur:
