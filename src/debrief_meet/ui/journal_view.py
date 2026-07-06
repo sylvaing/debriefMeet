@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QMessageBox,
-    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +28,8 @@ from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import COL_ACTIONS_JOURNAL, COL_FICHIER_JOURNAL, CaptureModel
 from debrief_meet.ui.icon_delegate import IconeColonneDelegate
+from debrief_meet.ui.survol_ligne import TableAvecSurvolLigne
+from debrief_meet.ui.texte_delegate import TexteLigneDelegate
 from debrief_meet.ui.theme import M
 
 _ICONE_COPIER = "copy"
@@ -63,24 +64,27 @@ class JournalView(QWidget):
 
     # ── Construction UI ────────────────────────────────────────────────────────
 
-    def _creer_table(self) -> QTableView:
-        table = QTableView(self)
+    def _creer_table(self) -> TableAvecSurvolLigne:
+        table = TableAvecSurvolLigne(self)
         table.setModel(self._proxy)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setShowGrid(False)
         table.setAlternatingRowColors(False)
-        table.setFrameShape(QTableView.Shape.NoFrame)
+        table.setFrameShape(TableAvecSurvolLigne.Shape.NoFrame)
         table.setSortingEnabled(False)
+        table.setWordWrap(False)
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(M.ROW_H)
         table.setMouseTracking(True)
 
+        table.setItemDelegate(TexteLigneDelegate(table))
         table.setItemDelegateForColumn(0, IconeColonneDelegate(table))
         table.setItemDelegateForColumn(
             COL_ACTIONS_JOURNAL, ActionsDelegate(self._actions_pour_index, table))
 
         entete = table.horizontalHeader()
+        entete.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         table.setColumnWidth(0, 40)
         table.setColumnWidth(1, 200)
         entete.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)

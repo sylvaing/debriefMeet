@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QColor, QFont
 
 from debrief_meet.core.fichiers import (
     apercu_journal,
@@ -28,7 +29,15 @@ from debrief_meet.core.fichiers import (
 from debrief_meet.ui.chrono import formater_chrono
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.status_pill import HistoryState
-from debrief_meet.ui.theme import C
+from debrief_meet.ui.theme import C, MONO, SANS
+
+# Polices/couleurs des colonnes texte (CHANGELOG_v2 §1, « polices des lignes
+# d'historique ») — lues par `TexteLigneDelegate` (Qt.FontRole/Qt.ForegroundRole).
+_FONT_TITRE = QFont(SANS, 13.5, QFont.Weight.Bold)
+_FONT_MONO = QFont(MONO, 12)
+_FONT_FICHIER = QFont(MONO, 13, QFont.Weight.Medium)
+_FONT_NOTE = QFont(SANS, 12.5)
+_COULEUR_SECONDAIRE = QColor(C.INK500)
 
 # Rôle custom : chemin du fichier associé à la ligne (toutes colonnes). `Qt.UserRole`
 # reste réservé à `HistoryState` sur la colonne état (contrat de `StatusPillDelegate`).
@@ -86,7 +95,7 @@ def _construire_ligne_reunion(chemin: Path) -> _LigneReunion:
         chemin=chemin,
         titre_affiche=titre or (dh.strftime("%d/%m/%Y %H:%M") if dh else chemin.stem),
         titre_brut=titre or "",
-        date_texte=dh.strftime("%d/%m/%Y") if dh else "—",
+        date_texte=dh.strftime("%d/%m/%Y · %H:%M") if dh else "—",
         duree_texte=formater_duree(duree_secondes),
         etat=etat,
         audio=audio,
@@ -106,7 +115,7 @@ def _construire_ligne_en_cours(secondes: int) -> _LigneReunion:
         chemin=Path(),
         titre_affiche="Réunion en cours",
         titre_brut="",
-        date_texte=datetime.now().strftime("%d/%m/%Y"),
+        date_texte=datetime.now().strftime("%d/%m/%Y · %H:%M"),
         duree_texte=formater_chrono(secondes),
         etat=HistoryState.EN_COURS,
         audio=[],
@@ -186,6 +195,13 @@ class CaptureModel(QAbstractTableModel):
                 return ligne.date_texte
             if col == 3:
                 return ligne.duree_texte
+        if role == Qt.ItemDataRole.FontRole:
+            if col == COL_TITRE_REUNION:
+                return _FONT_TITRE
+            if col in (2, 3):
+                return _FONT_MONO
+        if role == Qt.ItemDataRole.ForegroundRole and col in (2, 3):
+            return _COULEUR_SECONDAIRE
         if role == Qt.ItemDataRole.UserRole and col == 4:
             return ligne.etat
         return None
@@ -198,6 +214,13 @@ class CaptureModel(QAbstractTableModel):
                 return ligne.nom
             if col == 2:
                 return ligne.note
+        if role == Qt.ItemDataRole.FontRole:
+            if col == COL_FICHIER_JOURNAL:
+                return _FONT_FICHIER
+            if col == 2:
+                return _FONT_NOTE
+        if role == Qt.ItemDataRole.ForegroundRole and col == 2:
+            return _COULEUR_SECONDAIRE
         return None
 
     def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole) -> bool:
