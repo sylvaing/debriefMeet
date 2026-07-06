@@ -70,6 +70,21 @@ def test_appliquer_wer_relatif_reference_large():
     assert "_texte" not in r_sm
 
 
+def test_appliquer_wer_relatif_reference_traitee_en_premier():
+    # Ordre inverse du cas nominal : la référence (large-v3) est en tête.
+    # Régression : `del` sur le dict de référence effaçait `_texte` avant que
+    # les entrées suivantes ne l'utilisent → KeyError.
+    resultats = [
+        {"backend": "test", "modele": "large-v3", "_texte": "le chat dort"},
+        {"backend": "test", "modele": "small", "_texte": "le chat"},
+        {"backend": "test", "modele": "medium", "_texte": "le chat dormait"},
+    ]
+    qualite.appliquer_wer_relatif(resultats)
+    for r in resultats:
+        assert "wer" in r
+        assert "_texte" not in r
+
+
 def test_appliquer_wer_relatif_sans_texte():
     resultats = [
         {"backend": "test", "modele": "small", "statut": "erreur", "erreur": "OOM"},
