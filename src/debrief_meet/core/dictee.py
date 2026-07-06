@@ -146,7 +146,11 @@ class OrchestrateurDictee(QObject):
 
     def terminer(self) -> None:
         """Appelé par aboutToQuit — attend le QThread en cours avant de rendre la main."""
-        if self._thread is not None and self._thread.isRunning():
+        if self._thread is not None:
+            # Pas de garde `isRunning()` : un thread en cours de finalisation
+            # (QThreadPrivate::finish qui vide le deleteLater du worker) rend déjà
+            # isRunning()=False mais touche encore Shiboken côté thread worker —
+            # on doit l'attendre pour éviter un SIGSEGV concurrent (cf. arret_threads).
             logger.debug("OrchestrateurDictee : attente fin du thread de transcription…")
             arreter_thread(self._thread, 10_000,
                            debloquer=self._moteur.terminer, garder=(self._worker,))

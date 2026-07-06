@@ -741,3 +741,32 @@ def test_lancer_worker_garde_serialisation_sans_deblocage(qapp, monkeypatch, tmp
     _, timeout_ms, debloquer, _garder = appels[0]
     assert timeout_ms == 10_000
     assert debloquer is None                 # volontairement sans déblocage (docs/26 §4.2)
+
+
+def test_terminer_joint_le_thread_meme_apres_isRunning_faux(qapp, qtbot, monkeypatch, tmp_path):
+    """Régression gel/SIGSEGV à l'arrêt : `terminer()` doit attendre le thread de
+    transcription MÊME quand `QThread.isRunning()` rend déjà False.
+
+    Un QThread repasse à non-running dès que `run()` retourne, AVANT que
+    `QThreadPrivate::finish()` ait vidé le `deleteLater()` du worker (destruction du
+    wrapper → appel Shiboken/Python, côté thread worker). L'ancienne garde
+    `and self._thread.isRunning()` faisait sauter l'attente dans cette fenêtre : le
+    thread principal repartait (teardown pytest) pendant que le thread worker touchait
+    encore Shiboken → SIGSEGV concurrent (ou gel). Ici on prouve que la garde a disparu :
+    thread bel et bien terminé (isRunning() False) et pourtant `arreter_thread` appelé."""
+    import debrief_meet.core.reunion as reunion_module
+
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path, delai_termine_ms=50)
+
+    machine.toggle_reunion()
+    machine.toggle_reunion()                 # tranche finale → un QThread
+    qtbot.waitUntil(
+        lambda: orch._thread is not None and not orch._thread.isRunning(), timeout=5000)
+
+    appels = _espionner(monkeypatch, reunion_module)
+    orch.terminer()
+
+    # Avant le correctif : 0 appel (garde isRunning() court-circuitait). Après : 1.
+    assert len(appels) == 1
+    assert appels[0][0] is orch._thread

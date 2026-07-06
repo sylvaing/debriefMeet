@@ -38,8 +38,15 @@ def arreter_thread(
     le worker qui a été moveToThread() — sinon son wrapper Python peut être GC'd
     et son C++ détruit pendant que le thread l'exécute → SIGSEGV).
     """
-    if thread is None or not thread.isRunning():
+    if thread is None:
         return True
+    # On ne teste PAS `isRunning()` avant d'attendre : `QThread::isRunning()` repasse
+    # à False dès que `run()` retourne, AVANT que `QThreadPrivate::finish()` ait fini
+    # de vider ses DeferredDelete (destruction du worker `deleteLater()` — côté thread
+    # worker, donc appel Shiboken/Python). Sauter le `wait()` dans cette fenêtre laisse
+    # le thread principal repartir pendant que le thread worker touche encore Shiboken
+    # → SIGSEGV concurrent. `quit()+wait()` sur un thread déjà terminé est un no-op
+    # instantané ; en pleine fenêtre de finalisation, il bloque jusqu'au vrai bout.
     thread.quit()
     if thread.wait(timeout_ms):
         return True

@@ -335,7 +335,7 @@ class OrchestrateurReunion(QObject):
         # Sérialisation : ne jamais écraser un worker encore en vol (sinon son objet C++,
         # possédé par son wrapper Python, peut être détruit pendant qu'un signal est livré
         # → crash). On attend la fin du précédent (quit() explicite + wait, comme terminer()).
-        if self._thread is not None and self._thread.isRunning():
+        if self._thread is not None:
             self._thread.quit()
             if not arreter_thread(self._thread, 10_000, garder=(self._worker,)):
                 # Thread gelé abandonné : couper ses signaux pour qu'une éventuelle fin
@@ -458,7 +458,11 @@ class OrchestrateurReunion(QObject):
     def terminer(self) -> None:
         """Appelé par aboutToQuit — attend le QThread en cours avant de rendre la main."""
         self._timer.stop()
-        if self._thread is not None and self._thread.isRunning():
+        if self._thread is not None:
+            # Pas de garde `isRunning()` : cf. arreter_thread — un thread peut être en
+            # cours de finalisation (DeferredDelete du worker) alors qu'isRunning() rend
+            # déjà False ; on doit quand même attendre pour ne pas laisser le worker
+            # toucher Shiboken en // du thread principal (SIGSEGV).
             logger.debug("OrchestrateurReunion : attente fin du thread de transcription…")
             arreter_thread(
                 self._thread, 10_000,
