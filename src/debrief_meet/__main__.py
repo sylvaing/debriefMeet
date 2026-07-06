@@ -1,7 +1,37 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+
+class _FluxNul:
+    """Flux d'écriture no-op — remplace `sys.stdout`/`sys.stderr` valant `None`.
+
+    En app figée fenêtrée (PyInstaller `console=False`), `sys.stdout`/`sys.stderr`
+    valent `None` : toute écriture (un `print`, ou surtout les barres de progression
+    tqdm de `huggingface_hub` au téléchargement d'un modèle) lève alors
+    `'NoneType' object has no attribute 'write'`. Bug observé sur Windows au premier
+    lancement (2026-07-06). Rediriger vers ce flux neutralise toute la classe de
+    crashs — le vrai canal de diagnostic reste `logging` + `faulthandler` (docs/31)."""
+
+    def write(self, _texte: str) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
+
+def _garantir_stdio() -> None:
+    """Remplace `sys.stdout`/`sys.stderr` par un flux nul s'ils valent `None`.
+
+    No-op quand les flux sont réels (dev, ou worker subprocess dont stdin/stdout
+    sont de vrais pipes pour le protocole pickle) — d'où l'appel APRÈS le routage
+    des workers dans `main()`."""
+    if sys.stdout is None:
+        sys.stdout = _FluxNul()
+    if sys.stderr is None:
+        sys.stderr = _FluxNul()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -43,6 +73,13 @@ def main() -> None:
         from debrief_meet.platform.windows._fw_worker import main as _fw_worker_main
         _fw_worker_main()
         return
+
+    # App fenêtrée : neutralise stdout/stderr None (PyInstaller console=False) —
+    # sinon les barres tqdm de huggingface_hub plantent le téléchargement de modèle.
+    _garantir_stdio()
+    # Ceinture + bretelles : couper aussi les barres de progression HF côté GUI
+    # (comme le worker le fait déjà) — rien à rendre dans un flux nul.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
     from debrief_meet import __version__
 
