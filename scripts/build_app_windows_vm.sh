@@ -51,6 +51,11 @@ cat "$RACINE/BUILD_INFO"
 echo ""
 echo "[2/4] Creation du repertoire sur la VM (idempotent)..."
 ssh_vm "cmd /c mkdir C:\\Users\\sylvaing\\build\\debrief-meet 2>nul" || true
+# Purge les anciens setups AVANT le build : sinon plusieurs
+# debriefMeet-setup-*.exe (versions differentes) s'accumulent dans dist\ au fil
+# des builds -- le rapatriement ci-dessous suppose un seul resultat (bug vecu
+# le 2026-07-06 : dir /b a rendu 3 noms concatenes, scp a echoue).
+ssh_vm "cmd /c del /q $VM_REPO\\dist\\debriefMeet-setup-*.exe 2>nul" || true
 
 echo ""
 echo "[3/4] Sync sources Mac -> VM ($VM_REPO)"
@@ -77,7 +82,9 @@ fi
 echo ""
 echo "Rapatriement du setup -> $SORTIE/"
 mkdir -p "$SORTIE"
-NOM_SETUP="$(ssh_vm "cmd /c dir /b $VM_REPO\\dist\\debriefMeet-setup-*.exe" | tr -d '\r')"
+# /o-d : le plus recent en premier -- filet de securite si la purge ci-dessus
+# a echoue et que plusieurs setups trainent encore (on ne garde que le 1er).
+NOM_SETUP="$(ssh_vm "cmd /c dir /b /o-d $VM_REPO\\dist\\debriefMeet-setup-*.exe" | tr -d '\r' | head -n 1)"
 if [ -z "$NOM_SETUP" ]; then
     echo "✗ Aucun debriefMeet-setup-*.exe trouve dans $VM_REPO\\dist sur la VM" >&2
     exit 1
