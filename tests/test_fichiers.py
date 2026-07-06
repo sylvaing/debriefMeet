@@ -423,8 +423,12 @@ def test_formater_duree_inconnue():
 
 def test_apercu_journal_derniere_ligne_utile(tmp_path):
     md = tmp_path / "2026-07-04.md"
-    EcrivainJournal(tmp_path).ajouter_entree("Première entrée")
-    EcrivainJournal(tmp_path).ajouter_entree("Deuxième entrée")
+    EcrivainJournal(tmp_path).ajouter_entree(
+        "Première entrée", horodatage=datetime(2026, 7, 4, 9, 0)
+    )
+    EcrivainJournal(tmp_path).ajouter_entree(
+        "Deuxième entrée", horodatage=datetime(2026, 7, 4, 9, 5)
+    )
     assert apercu_journal(md) == "Deuxième entrée"
 
 
