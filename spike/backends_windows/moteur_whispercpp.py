@@ -53,7 +53,6 @@ class MoteurWhisperCpp:
                 "-m", self._chemin_modele,
                 "-f", str(wav),
                 "--no-prints",       # supprime les méta-infos, garde la transcription
-                "--print-special",   # n.
                 "-t", str(max(1, 4)),  # threads (conservateur — ne pas saturer l'hôte)
             ]
             if langue:

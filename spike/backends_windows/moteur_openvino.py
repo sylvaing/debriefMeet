@@ -30,7 +30,10 @@ class MoteurOpenVINO:
         chemin = modeles.resoudre_openvino(taille)
         journal().debug("openvino : chargement %s sur device=%s", chemin, self.device)
         self._modele = OVModelForSpeechSeq2Seq.from_pretrained(chemin, device=self.device)
-        self._processor = AutoProcessor.from_pretrained(chemin)
+        # use_fast=False : le tokenizer fast plante sur certains repos turbo
+        # (transformers 4.57 : `extra_special_tokens` mal formé → AttributeError
+        # 'list' object has no attribute 'keys'). Le tokenizer lent évite ce chemin.
+        self._processor = AutoProcessor.from_pretrained(chemin, use_fast=False)
 
     def transcrire(self, audio: np.ndarray, langue: str | None = None) -> ResultatTranscription:
         if self._modele is None or self._processor is None:

@@ -97,9 +97,14 @@ def appliquer_wer_relatif(resultats: list[dict]) -> None:
     if reference is None and reussis:
         reference = reussis[-1]
 
+    # Capturés avant la boucle : `del r["_texte"]` ci-dessous efface la clé
+    # du dict de référence lui-même quand r is reference, sinon.
+    reference_texte = reference["_texte"] if reference is not None else None
+    reference_modele = reference["modele"] if reference is not None else None
+
     for r in resultats:
         if "_texte" in r:
-            if reference is not None:
-                r["wer"] = round(wer(reference["_texte"], r["_texte"]), 4)
-                r["wer_reference"] = reference["modele"]
+            if reference_texte is not None:
+                r["wer"] = round(wer(reference_texte, r["_texte"]), 4)
+                r["wer_reference"] = reference_modele
             del r["_texte"]
