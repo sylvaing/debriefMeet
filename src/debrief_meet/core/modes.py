@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from enum import Enum, auto
 
 from PySide6.QtCore import QObject, Signal
@@ -45,6 +46,7 @@ class MachineEtats(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._mode = Mode.IDLE
+        self._debut: float | None = None  # time.monotonic() — pas de QTimer ici (cf. elapsed_seconds)
 
     @property
     def mode(self) -> Mode:
@@ -53,6 +55,18 @@ class MachineEtats(QObject):
     @property
     def est_actif(self) -> bool:
         return self._mode != Mode.IDLE
+
+    def elapsed_seconds(self) -> int:
+        """Secondes écoulées depuis le début du mode actif (0 si IDLE).
+
+        Calculé à la demande (horloge monotone), sans QTimer : la mise à jour
+        périodique d'un affichage (chrono) est une responsabilité UI (Étape 7,
+        `RecordingController`/`CaptureActionBar`), pas de la machine à états —
+        un QTimer répétitif ici survivrait à une instance de test non
+        référencée et peut planter en tirant sur un objet déjà détruit."""
+        if self._debut is None:
+            return 0
+        return int(time.monotonic() - self._debut)
 
     def toggle_dictee(self) -> bool:
         return self._transition(Mode.DICTEE)
@@ -67,6 +81,7 @@ class MachineEtats(QObject):
         if self._mode == cible:
             logger.info("Mode %s → IDLE", cible.name)
             self._mode = Mode.IDLE
+            self._debut = None
             self.mode_change.emit(Mode.IDLE)
             return True
 
@@ -78,5 +93,6 @@ class MachineEtats(QObject):
 
         logger.info("IDLE → %s", cible.name)
         self._mode = cible
+        self._debut = time.monotonic()
         self.mode_change.emit(cible)
         return True

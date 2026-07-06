@@ -8,8 +8,10 @@ import numpy as np
 import pytest
 
 from debrief_meet.core.fichiers import (
+    EcrivainJournal,
     EcrivainReunion,
     EnregistreurAudioReunion,
+    apercu_journal,
     chemin_locuteurs,
     chemin_reunion,
     chemins_audio_reunion,
@@ -415,3 +417,30 @@ def test_formater_duree_pile_une_heure():
 
 def test_formater_duree_inconnue():
     assert formater_duree(None) == "—"
+
+
+# ── Aperçu journal (colonne « note », refonte design) ──────────────────────────
+
+def test_apercu_journal_derniere_ligne_utile(tmp_path):
+    md = tmp_path / "2026-07-04.md"
+    EcrivainJournal(tmp_path).ajouter_entree("Première entrée")
+    EcrivainJournal(tmp_path).ajouter_entree("Deuxième entrée")
+    assert apercu_journal(md) == "Deuxième entrée"
+
+
+def test_apercu_journal_tronque(tmp_path):
+    md = tmp_path / "j.md"
+    md.write_text("# Titre\n\n## 10:00\n\n" + "x" * 100 + "\n\n---\n", encoding="utf-8")
+    apercu = apercu_journal(md, longueur=20)
+    assert len(apercu) == 20
+    assert apercu.endswith("…")
+
+
+def test_apercu_journal_fichier_absent(tmp_path):
+    assert apercu_journal(tmp_path / "absent.md") == ""
+
+
+def test_apercu_journal_vide(tmp_path):
+    md = tmp_path / "j.md"
+    md.write_text("# Titre\n\n---\n", encoding="utf-8")
+    assert apercu_journal(md) == ""

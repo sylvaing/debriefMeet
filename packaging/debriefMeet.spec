@@ -22,7 +22,7 @@ VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', _init).group(1)
 
 BUNDLE_ID = "com.sylvaingarcia.debriefmeet"
 ASSETS = os.path.join(SRC, "debrief_meet", "ui", "assets")
-ICONE = os.path.join(ASSETS, "AppIcon.icns")
+ICONE = os.path.join(ASSETS, "icons", "debriefMeet.icns")  # refonte design (handoff)
 HELPER = os.path.join(ROOT, "helpers", "macos", "sck-audio", "SCKAudioCapture")
 
 # ── Ressources embarquées ─────────────────────────────────────────────────────

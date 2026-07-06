@@ -1,0 +1,55 @@
+/* ---------- Base ---------- */
+QWidget { font-family: "IBM Plex Sans"; font-size: 13px; color: #1A1D23; }
+QMainWindow, QDialog { background: #FFFFFF; }
+
+/* ---------- Champs ---------- */
+QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QAbstractSpinBox {
+  background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px;
+  padding: 10px 13px; font-size: 14px; color: #1A1D23; selection-background-color: #EEF1FE;
+}
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus { border-color: #3B5BDB; }
+QComboBox::drop-down { border: none; width: 24px; }
+QPlainTextEdit#promptEditor { font-family: "IBM Plex Mono"; font-size: 12.5px; }
+
+/* ---------- Boutons ---------- */
+QPushButton { font-size: 13.5px; font-weight: 600; border-radius: 9px; padding: 10px 18px; }
+QPushButton#primary   { background: #3B5BDB; color: #fff; border: none; }
+QPushButton#primary:hover { background: #2A46B8; }
+QPushButton#secondary { background: #fff; color: #344054; border: 1px solid #D6D9DE; }
+QPushButton#secondary:hover { border-color: #3B5BDB; color: #2A46B8; }
+QPushButton#danger    { background: #FF3B30; color: #fff; border: none; padding: 10px 20px; }
+QPushButton#danger:hover { background: #E0342A; }
+QPushButton#destructive { background: #fff; color: #B42318; border: 1px solid #F4C9C7; }
+QPushButton#destructive:hover { background: #FEF3F2; }
+
+/* ---------- Onglets de navigation (toolbar) ---------- */
+QToolButton#navTab { background: transparent; border: none; padding: 0 8px;
+  font-size: 14px; font-weight: 600; color: #7A828F; }
+QToolButton#navTab:checked { color: #2A46B8; border-bottom: 2px solid #3B5BDB; }
+
+/* ---------- Bouton engrenage Préférences (toolbar) ---------- */
+QToolButton#gearBtn { background: transparent; border: none; border-radius: 8px; padding: 0; }
+QToolButton#gearBtn:checked { background: #EEF1FE; }
+
+/* ---------- En-tête de tableau ---------- */
+QHeaderView::section { background: #FBFBFC; color: #98A2B3; font-family: "IBM Plex Mono";
+  font-size: 10px; text-transform: uppercase; border: none; padding: 9px 0; }
+QTableView { background: #fff; border: none; gridline-color: transparent;
+  selection-background-color: #EEF1FE; selection-color: #1A1D23; }
+
+/* ---------- Sous-nav des préférences ---------- */
+QListWidget#prefNav { background: #FBFBFC; border: none; border-right: 1px solid #EFF1F4; }
+QListWidget#prefNav::item { padding: 8px 11px; border-radius: 8px; margin: 1px 8px;
+  color: #667085; font-size: 13.5px; font-weight: 600; }
+QListWidget#prefNav::item:selected { background: #EEF1FE; color: #2A46B8; }
+
+/* ---------- Cases à cocher ---------- */
+QCheckBox { font-size: 13.5px; spacing: 10px; }
+QCheckBox::indicator { width: 19px; height: 19px; border-radius: 5px;
+  border: 1.5px solid #CDD2DA; background: #fff; }
+QCheckBox::indicator:checked { background: #3B5BDB; border-color: #3B5BDB;
+  image: url(__CHECK_WHITE__); }
+
+/* ---------- Barre auto-save (préférences) ---------- */
+QLabel#autosaveBar { background: #FBFBFC; border-top: 1px solid #E7E9EE;
+  color: #667085; font-size: 12.5px; padding: 10px 20px; }

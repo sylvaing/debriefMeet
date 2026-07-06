@@ -136,7 +136,13 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from debrief_meet.core.modes import MachineEtats
     from debrief_meet.ipc import ServeurIPC
     from debrief_meet.ui.icones import icone_application
+    from debrief_meet.ui.polices import charger_polices
+    from debrief_meet.ui.theme import charger_theme
     from debrief_meet.ui.tray import IconeTray
+
+    # Polices + thème (refonte design) — avant toute création de widget.
+    charger_polices(app)
+    charger_theme(app)
 
     # Icône d'application (Dock / barre des tâches) : sans elle, macOS affiche l'icône
     # générique du lanceur Python dès qu'une fenêtre (Historique, Préférences) s'ouvre.
@@ -266,10 +272,25 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
     gestionnaire_diar = GestionnaireDiarization(adaptateurs.moteur, config)
 
+    # Fenêtre principale (refonte design) — coquille unique Historique/Préférences/
+    # Enregistrement, remplace les anciens dialogues indépendants.
+    from debrief_meet.ui.fenetre_principale import FenetrePrincipale
+
+    def _reappliquer_et_rafraichir_tray() -> list[str]:
+        # `tray` n'existe pas encore à la définition de cette fermeture (construit
+        # juste après `fenetre`, qui en a besoin) — capturé par closure, résolu au
+        # premier appel réel (édition d'un raccourci dans les Préférences).
+        echecs = reappliquer_raccourcis()
+        tray.rafraichir_raccourcis()
+        return echecs
+
+    fenetre = FenetrePrincipale(
+        machine, config, demarrage_auto=adaptateurs.demarrage_auto,
+        presse_papiers=adaptateurs.presse_papiers, gestionnaire=gestionnaire_diar,
+        moteur=adaptateurs.moteur, reappliquer_raccourcis=_reappliquer_et_rafraichir_tray)
+
     # Tray
-    tray = IconeTray(machine, config, demarrage_auto=adaptateurs.demarrage_auto,
-                     presse_papiers=adaptateurs.presse_papiers, gestionnaire=gestionnaire_diar,
-                     moteur=adaptateurs.moteur, reappliquer_raccourcis=reappliquer_raccourcis)
+    tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar)
     tray.show()
 
     echecs_raccourcis = reappliquer_raccourcis()
@@ -279,6 +300,9 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     orch_dictee.etat_visuel_change.connect(tray.definir_etat_visuel)
     orch_reunion.etat_visuel_change.connect(tray.definir_etat_visuel)
     orch_journal.etat_visuel_change.connect(tray.definir_etat_visuel)
+    orch_dictee.etat_visuel_change.connect(fenetre.definir_etat_visuel)
+    orch_reunion.etat_visuel_change.connect(fenetre.definir_etat_visuel)
+    orch_journal.etat_visuel_change.connect(fenetre.definir_etat_visuel)
     orch_reunion.micro_perdu.connect(tray.notifier_micro_perdu)
     orch_reunion.micro_retabli.connect(tray.notifier_micro_retabli)
     orch_dictee.rien_entendu.connect(tray.notifier_rien_entendu)

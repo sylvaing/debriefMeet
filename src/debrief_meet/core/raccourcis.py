@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import MachineEtats
@@ -9,12 +10,35 @@ from debrief_meet.platform.interfaces import RaccourcisGlobaux
 
 logger = logging.getLogger(__name__)
 
+# `sys.platform` est un test stdlib, autorisé dans `core/` (docs/31 §3.1) — cf.
+# config.py. Mêmes défauts que `config._DEFAUTS` (décision D3 : pas de Meta/touche
+# Windows dans les défauts Windows, réservée par l'OS pour beaucoup de combos).
+_WINDOWS = sys.platform == "win32"
+
 # (clé config, valeur par défaut, nom de l'action pour messages)
 ACTIONS = (
-    ("raccourci_dictee", "Meta+Alt+Ctrl+D", "Dictée"),
-    ("raccourci_reunion", "Meta+Alt+Ctrl+R", "Réunion"),
-    ("raccourci_journal", "Meta+Alt+Ctrl+J", "Journal"),
+    ("raccourci_dictee", "Ctrl+Alt+D" if _WINDOWS else "Meta+Alt+Ctrl+D", "Dictée"),
+    ("raccourci_reunion", "Ctrl+Alt+R" if _WINDOWS else "Meta+Alt+Ctrl+R", "Réunion"),
+    ("raccourci_journal", "Ctrl+Alt+J" if _WINDOWS else "Meta+Alt+Ctrl+J", "Journal"),
 )
+
+# Libellé natif d'un modificateur seul (portable → affiché), pour les messages qui
+# énumèrent les modificateurs acceptés plutôt qu'une combinaison complète (cf.
+# `libelle_modificateurs`). Ne jamais coder en dur les glyphes macOS ailleurs.
+_GLYPHES_MAC = {"Ctrl": "⌃", "Alt": "⌥", "Meta": "⌘", "Shift": "⇧"}
+_LIBELLES_AUTRES = {"Ctrl": "Ctrl", "Alt": "Alt", "Meta": "Win", "Shift": "Maj"}
+
+
+def libelle_modificateur(nom_portable: str) -> str:
+    """Libellé natif d'un modificateur (« Ctrl »/« Alt »/« Meta »/« Shift »)."""
+    table = _GLYPHES_MAC if sys.platform == "darwin" else _LIBELLES_AUTRES
+    return table.get(nom_portable, nom_portable)
+
+
+def libelle_modificateurs(noms_portables: tuple[str, ...]) -> str:
+    """Énumération de modificateurs pour un message (« ⌘/⌃/⌥ » sur macOS,
+    « Win/Ctrl/Alt » ailleurs)."""
+    return "/".join(libelle_modificateur(n) for n in noms_portables)
 
 
 def appliquer_raccourcis(raccourcis: RaccourcisGlobaux, config: Config, machine: MachineEtats) -> list[str]:

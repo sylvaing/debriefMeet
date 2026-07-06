@@ -85,7 +85,7 @@ Dans `packaging/` :
   - `datas` : dossier `ui/assets` + binaire `SCKAudioCapture`.
   - `collect_all` enveloppé par paquet pour les deps ML (mlx, mlx_whisper, pyannote(.audio), lightning, pytorch_lightning, asteroid_filterbanks, julius, torch_pitch_shift, torch_audiomentations, pytorch_metric_learning, speechbrain, livekit, huggingface_hub, tiktoken, transformers). torch/torchaudio/sounddevice/sklearn/numba via hooks contrib.
   - `excludes` : tkinter, pytest, matplotlib.
-  - `BUNDLE` : `LSUIElement=True` (app barre de menus, pas de Dock), `bundle_identifier=com.sylvaingarcia.debriefmeet`, `LSMinimumSystemVersion=14.4`, `CFBundleShortVersionString`/`Version` lus depuis `__init__.py`, icône `AppIcon.icns`, `NSMicrophoneUsageDescription` + `NSAudioCaptureUsageDescription`.
+  - `BUNDLE` : `LSUIElement=True` (app barre de menus, pas de Dock), `bundle_identifier=com.sylvaingarcia.debriefmeet`, `LSMinimumSystemVersion=14.4`, `CFBundleShortVersionString`/`Version` lus depuis `__init__.py`, icône `ui/assets/icons/debriefMeet.icns` (refonte design, handoff — remplace l'ancien `AppIcon.icns` généré par `scripts/generer_icone.py`), `NSMicrophoneUsageDescription` + `NSAudioCaptureUsageDescription`.
 - **`creer_certificat.sh`** — crée **une fois** l'identité de signature locale stable
   « debriefMeet Local » (clé RSA + cert auto-signé EKU codeSigning, importé au
   trousseau de session). **Idempotent** : ne régénère pas si présente (sinon les
