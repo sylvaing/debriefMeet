@@ -95,6 +95,7 @@ class CaptureActionBar(QWidget):
         self._recherche: QLineEdit | None = None
         if avec_recherche:
             self._recherche = QLineEdit(self)
+            self._recherche.setObjectName("searchField")
             self._recherche.setPlaceholderText(placeholder_recherche)
             self._recherche.setFixedWidth(260)
             self._recherche.textChanged.connect(self.recherche_change.emit)

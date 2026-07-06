@@ -269,25 +269,55 @@ class PreferencesView(QWidget):
         self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
         form.addRow("Rétention audio :", self._check_retention)
 
-        self._label_diarization = QLabel()
-        self._maj_etat_diarization()
-        form.addRow("Diarization :", self._label_diarization)
-        btn_diar = QPushButton("Configurer la diarization…")
+        form.addRow("Diarization :", self._construire_ligne_diarization())
+
+        return w
+
+    def _construire_ligne_diarization(self) -> QWidget:
+        """Pastille badge (état) + bouton secondaire discret sur la même ligne
+        (CHANGELOG_v2 correctif #9) — remplace la case à cocher + gros bouton
+        pleine largeur de la version précédente."""
+        ligne = QWidget()
+        lay = QHBoxLayout(ligne)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        self._badge_diarization = QWidget()
+        lay_badge = QHBoxLayout(self._badge_diarization)
+        lay_badge.setContentsMargins(11, 6, 11, 6)
+        lay_badge.setSpacing(6)
+        self._badge_diarization_icone = QLabel()
+        self._badge_diarization_texte = QLabel()
+        self._badge_diarization_texte.setFont(QFont(SANS, 12.5, QFont.Weight.DemiBold))
+        lay_badge.addWidget(self._badge_diarization_icone)
+        lay_badge.addWidget(self._badge_diarization_texte)
+        lay.addWidget(self._badge_diarization)
+
+        btn_diar = QPushButton("Configurer…")
         btn_diar.setObjectName("secondary")
         btn_diar.setToolTip(
             "Activer « qui a parlé » : téléchargement guidé du modèle (compte Hugging "
             "Face + licence gratuite). Le token n'est jamais enregistré."
         )
         btn_diar.clicked.connect(self._ouvrir_assistant_diarization)
-        form.addRow("", btn_diar)
+        lay.addWidget(btn_diar)
+        lay.addStretch()
 
-        return w
+        self._maj_etat_diarization()
+        return ligne
 
     def _maj_etat_diarization(self) -> None:
         from debrief_meet.core import diarization
         ok = diarization.configuree()
-        self._label_diarization.setText("✅ configurée" if ok else "non configurée")
-        self._label_diarization.setStyleSheet("" if ok else f"color: {C.INK400};")
+        if ok:
+            icone, texte, fg, bg = "check-circle", "Diarization configurée", C.SUCCESS, C.SUCCESS_BG
+        else:
+            icone, texte, fg, bg = "warning-circle", "Diarization non configurée", C.INK400, C.NEUTRAL_BG
+        self._badge_diarization_icone.setPixmap(
+            icone_svg_teintee(icone_phosphor(icone), fg, 15).pixmap(15, 15))
+        self._badge_diarization_texte.setText(texte)
+        self._badge_diarization_texte.setStyleSheet(f"color: {fg};")
+        self._badge_diarization.setStyleSheet(f"background: {bg}; border-radius: 7px;")
 
     def _ouvrir_assistant_diarization(self) -> None:
         from debrief_meet.ui.assistant_diarization import AssistantDiarization

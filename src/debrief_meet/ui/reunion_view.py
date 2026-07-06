@@ -13,14 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QModelIndex, QRectF, QSortFilterProxyModel, Qt, QTimer
-from PySide6.QtGui import QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QFileSystemWatcher, QModelIndex, QSortFilterProxyModel, Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QMessageBox,
-    QStyle,
-    QStyledItemDelegate,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -34,8 +32,9 @@ from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_TITRE_REUNION, CaptureModel
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
+from debrief_meet.ui.icon_delegate import IconeColonneDelegate
 from debrief_meet.ui.status_pill import StatusPillDelegate
-from debrief_meet.ui.theme import C, M, color
+from debrief_meet.ui.theme import M
 
 _ICONE_COPIER = "copy"
 _ICONE_TRANSCRIRE = "file-text"
@@ -45,20 +44,6 @@ _ICONE_OUVRIR = "arrow-square-out"
 _ICONE_REVELER = "folder"
 _ICONE_SUPPR_AUDIO = "microphone-slash"
 _ICONE_TOUT_SUPPR = "trash"
-
-
-class _BarreAccentDelegate(QStyledItemDelegate):
-    """Colonne 0 : rendu standard (icône type) + barre d'accent 3px si sélectionnée."""
-
-    LARGEUR = 3
-
-    def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
-        super().paint(painter, option, index)
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.save()
-            rect = QRectF(option.rect.left(), option.rect.top(), self.LARGEUR, option.rect.height())
-            painter.fillRect(rect, color(C.ACCENT))
-            painter.restore()
 
 
 class ReunionView(QWidget):
@@ -106,7 +91,7 @@ class ReunionView(QWidget):
         )
         table.setMouseTracking(True)
 
-        table.setItemDelegateForColumn(0, _BarreAccentDelegate(table))
+        table.setItemDelegateForColumn(0, IconeColonneDelegate(table))
         table.setItemDelegateForColumn(
             COL_ACTIONS_REUNION, ActionsDelegate(self._actions_pour_index, table))
         table.setItemDelegateForColumn(4, StatusPillDelegate(table))

@@ -8,8 +8,25 @@ QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QAbstractSpinBox {
   padding: 10px 13px; font-size: 14px; color: #1A1D23; selection-background-color: #EEF1FE;
 }
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QAbstractSpinBox:focus { border-color: #3B5BDB; }
-QComboBox::drop-down { border: none; width: 24px; }
 QPlainTextEdit#promptEditor { font-family: "IBM Plex Mono"; font-size: 12.5px; }
+
+/* Champ de recherche (barre d'action de capture) — pas de focus ring (correctif #6) */
+QLineEdit#searchField:focus { border: 1px solid #E7E9EE; outline: none; }
+
+/* Combobox (correctif #8) : chevron custom, pas les flèches système */
+QComboBox { font-size: 13.5px; color: #1A1D23; }
+QComboBox::drop-down { border: none; width: 28px; }
+QComboBox::down-arrow { image: url(__CARET_UP_DOWN__); width: 14px; height: 14px; }
+
+/* QSpinBox (correctif #10) : valeur mono, chevrons custom empilés */
+QSpinBox { font-family: "IBM Plex Mono"; font-size: 13.5px; color: #1A1D23; padding: 8px 13px; }
+QSpinBox::up-button, QSpinBox::down-button {
+  border: none; background: transparent; width: 16px; subcontrol-origin: border;
+}
+QSpinBox::up-button { subcontrol-position: top right; }
+QSpinBox::down-button { subcontrol-position: bottom right; }
+QSpinBox::up-arrow { image: url(__CARET_UP__); width: 10px; height: 10px; }
+QSpinBox::down-arrow { image: url(__CARET_DOWN__); width: 10px; height: 10px; }
 
 /* ---------- Boutons ---------- */
 QPushButton { font-size: 13.5px; font-weight: 600; border-radius: 9px; padding: 10px 18px; }
@@ -22,6 +39,9 @@ QPushButton#danger:hover { background: #E0342A; }
 QPushButton#destructive { background: #fff; color: #B42318; border: 1px solid #F4C9C7; }
 QPushButton#destructive:hover { background: #FEF3F2; }
 
+/* ---------- Toolbar : icônes nues, jamais de cadre natif (correctif #2) ---------- */
+QToolButton { border: none; background: transparent; }
+
 /* ---------- Onglets de navigation (toolbar) ---------- */
 QToolButton#navTab { background: transparent; border: none; padding: 0 8px;
   font-size: 14px; font-weight: 600; color: #7A828F; }
@@ -31,11 +51,15 @@ QToolButton#navTab:checked { color: #2A46B8; border-bottom: 2px solid #3B5BDB; }
 QToolButton#gearBtn { background: transparent; border: none; border-radius: 8px; padding: 0; }
 QToolButton#gearBtn:checked { background: #EEF1FE; }
 
-/* ---------- En-tête de tableau ---------- */
+/* ---------- Tableau : en-tête + lignes (correctifs #3 et #4) ---------- */
 QHeaderView::section { background: #FBFBFC; color: #98A2B3; font-family: "IBM Plex Mono";
-  font-size: 10px; text-transform: uppercase; border: none; padding: 9px 0; }
+  font-size: 10px; text-transform: uppercase; border: none; border-bottom: 1px solid #EFF1F4;
+  padding: 9px 0; }
+QHeaderView::section:first { padding-left: 20px; }
+QHeaderView::section:last { padding-right: 20px; }
 QTableView { background: #fff; border: none; gridline-color: transparent;
   selection-background-color: #EEF1FE; selection-color: #1A1D23; }
+QTableView::item { border: none; border-bottom: 1px solid #F1F2F5; }
 
 /* ---------- Sous-nav des préférences ---------- */
 QListWidget#prefNav { background: #FBFBFC; border: none; border-right: 1px solid #EFF1F4; }
@@ -49,6 +73,16 @@ QCheckBox::indicator { width: 19px; height: 19px; border-radius: 5px;
   border: 1.5px solid #CDD2DA; background: #fff; }
 QCheckBox::indicator:checked { background: #3B5BDB; border-color: #3B5BDB;
   image: url(__CHECK_WHITE__); }
+
+/* ---------- Menu du tray (correctif #5) ---------- */
+QMenu#trayMenu { background: rgba(255,255,255,0.98); border: 1px solid rgba(16,24,40,0.09);
+  border-radius: 11px; padding: 6px; }
+QMenu#trayMenu::item { padding: 7px 10px; border-radius: 7px; font-size: 13px;
+  color: #1A1D23; icon-size: 15px 15px; }
+QMenu#trayMenu::item:selected { background: #F6F7F9; }
+QMenu#trayMenu::item:disabled { color: #B0B7C0; }
+QMenu#trayMenu::separator { height: 1px; background: rgba(16,24,40,0.08); margin: 5px 8px; }
+QMenu#trayMenu::item:default { background: #EEF1FE; color: #2A46B8; font-weight: 600; }
 
 /* ---------- Barre auto-save (préférences) ---------- */
 QLabel#autosaveBar { background: #FBFBFC; border-top: 1px solid #E7E9EE;

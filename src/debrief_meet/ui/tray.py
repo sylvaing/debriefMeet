@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtGui import QAction, QCursor, QKeySequence
+from PySide6.QtGui import QAction, QCursor, QIcon, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from debrief_meet.core.config import Config
@@ -11,8 +11,16 @@ from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
 from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.fenetre_principale import FenetrePrincipale
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
+from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
+from debrief_meet.ui.theme import C
 
 logger = logging.getLogger(__name__)
+
+_TAILLE_ICONE_MENU = 15
+
+
+def _icone_menu(nom: str, hex_color: str) -> QIcon:
+    return icone_svg_teintee(icone_phosphor(nom), hex_color, _TAILLE_ICONE_MENU)
 
 
 class IconeTray(QSystemTrayIcon):
@@ -53,38 +61,46 @@ class IconeTray(QSystemTrayIcon):
         # gauche ET droit (limite Qt documentée, cf. IMPLEMENTATION_SPEC §8). Le
         # menu est affiché manuellement sur clic droit (`_on_activation`).
         menu = QMenu()
+        menu.setObjectName("trayMenu")
         self._menu = menu
 
-        self._action_dictee = QAction("Démarrer Dictée", menu)
+        self._action_dictee = QAction(_icone_menu("microphone", C.INK500), "Démarrer Dictée", menu)
         self._action_dictee.triggered.connect(self._machine.toggle_dictee)
         menu.addAction(self._action_dictee)
 
-        self._action_reunion = QAction("Démarrer Réunion", menu)
+        self._action_reunion = QAction(_icone_menu("users-three", C.INK500), "Démarrer Réunion", menu)
         self._action_reunion.triggered.connect(self._machine.toggle_reunion)
         menu.addAction(self._action_reunion)
 
-        self._action_journal = QAction("Démarrer Journal", menu)
+        self._action_journal = QAction(_icone_menu("notebook", C.INK500), "Démarrer Journal", menu)
         self._action_journal.triggered.connect(self._machine.toggle_journal)
         menu.addAction(self._action_journal)
 
+        # Qt masque par défaut les raccourcis dans les menus contextuels
+        # (`shortcutVisibleInContextMenu`) — notre QMenu s'affiche via popup()
+        # comme un menu contextuel, donc invisible sans ce forçage explicite.
+        for action in (self._action_dictee, self._action_reunion, self._action_journal):
+            action.setShortcutVisibleInContextMenu(True)
+
         menu.addSeparator()
 
-        action_ouvrir = QAction("Ouvrir debriefMeet", menu)
+        action_ouvrir = QAction(
+            _icone_menu("arrow-square-out", C.ACCENT_INK), "Ouvrir debriefMeet", menu)
         action_ouvrir.triggered.connect(self._afficher_fenetre_principale)
         menu.addAction(action_ouvrir)
         menu.setDefaultAction(action_ouvrir)  # mis en avant (ordre spec §8)
 
-        action_prefs = QAction("Préférences…", menu)
+        action_prefs = QAction(_icone_menu("gear", C.INK500), "Préférences…", menu)
         action_prefs.triggered.connect(self._ouvrir_preferences)
         menu.addAction(action_prefs)
 
-        action_diagnostic = QAction("Exporter le diagnostic…", menu)
+        action_diagnostic = QAction(_icone_menu("bug", C.INK500), "Exporter le diagnostic…", menu)
         action_diagnostic.triggered.connect(self._exporter_diagnostic)
         menu.addAction(action_diagnostic)
 
         menu.addSeparator()
 
-        action_quitter = QAction("Quitter", menu)
+        action_quitter = QAction(_icone_menu("sign-out", C.DANGER), "Quitter", menu)
         action_quitter.triggered.connect(QApplication.quit)
         menu.addAction(action_quitter)
 

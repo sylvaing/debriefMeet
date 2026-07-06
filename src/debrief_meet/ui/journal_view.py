@@ -28,6 +28,7 @@ from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import COL_ACTIONS_JOURNAL, COL_FICHIER_JOURNAL, CaptureModel
+from debrief_meet.ui.icon_delegate import IconeColonneDelegate
 from debrief_meet.ui.theme import M
 
 _ICONE_COPIER = "copy"
@@ -75,6 +76,7 @@ class JournalView(QWidget):
         table.verticalHeader().setDefaultSectionSize(M.ROW_H)
         table.setMouseTracking(True)
 
+        table.setItemDelegateForColumn(0, IconeColonneDelegate(table))
         table.setItemDelegateForColumn(
             COL_ACTIONS_JOURNAL, ActionsDelegate(self._actions_pour_index, table))
 

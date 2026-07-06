@@ -11,6 +11,9 @@ from debrief_meet.ui.polices import MONO, SANS  # noqa: F401  (ré-exportés)
 
 _QSS_PATH = Path(__file__).parent / "assets" / "theme.qss"
 _CHECK_WHITE = ICON_DIR / "check-white.svg"
+_CARET_UP = ICON_DIR / "caret-up-ink300.svg"
+_CARET_DOWN = ICON_DIR / "caret-down-ink300.svg"
+_CARET_UP_DOWN = ICON_DIR / "caret-up-down-ink300.svg"
 
 
 class C:  # ----- Couleurs (hex) -----
@@ -56,4 +59,7 @@ def charger_theme(app: QApplication) -> None:
     """
     qss = _QSS_PATH.read_text(encoding="utf-8")
     qss = qss.replace("__CHECK_WHITE__", _CHECK_WHITE.as_posix())
+    qss = qss.replace("__CARET_UP__", _CARET_UP.as_posix())
+    qss = qss.replace("__CARET_DOWN__", _CARET_DOWN.as_posix())
+    qss = qss.replace("__CARET_UP_DOWN__", _CARET_UP_DOWN.as_posix())
     app.setStyleSheet(qss)
