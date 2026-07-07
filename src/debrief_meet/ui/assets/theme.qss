@@ -49,10 +49,16 @@ QPushButton#destructive:hover { background: #FEF3F2; }
 /* ---------- Toolbar : icônes nues, jamais de cadre natif (correctif #2) ---------- */
 QToolButton { border: none; background: transparent; }
 
+/* Fond + filet du bas portés par le sélecteur d'objet (pas de setStyleSheet local
+   sur le QWidget de la toolbar) : une feuille de style locale sur un ancêtre casse
+   la résolution des pseudo-états (:checked) des enfants navTab/gearBtn ci-dessous
+   sous le style natif macOS — repro isolée avant ce correctif. */
+QWidget#toolbar { background: #FFFFFF; border-bottom: 1px solid #E7E9EE; }
+
 /* ---------- Onglets de navigation (toolbar) ---------- */
-QToolButton#navTab { background: transparent; border: none; padding: 0 8px;
-  font-size: 14px; font-weight: 600; color: #7A828F; }
-QToolButton#navTab:checked { color: #2A46B8; border-bottom: 2px solid #3B5BDB; }
+QToolButton#navTab { background: transparent; border: none; border-bottom: 2px solid transparent;
+  padding: 0 8px; font-size: 14px; font-weight: 600; color: #7A828F; }
+QToolButton#navTab:checked { color: #2A46B8; border-bottom-color: #3B5BDB; }
 
 /* ---------- Bouton engrenage Préférences (toolbar) ---------- */
 QToolButton#gearBtn { background: transparent; border: none; border-radius: 8px; padding: 0; }

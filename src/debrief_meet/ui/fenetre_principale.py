@@ -90,8 +90,8 @@ class FenetrePrincipale(QMainWindow):
 
     def _construire_toolbar(self) -> QWidget:
         barre = QWidget(self)
+        barre.setObjectName("toolbar")
         barre.setFixedHeight(M.TOOLBAR_H)
-        barre.setStyleSheet(f"background: {C.SURFACE}; border-bottom: 1px solid {C.BORDER};")
         lay = QHBoxLayout(barre)
         lay.setContentsMargins(20, 0, 20, 0)
         lay.setSpacing(10)
@@ -108,7 +108,7 @@ class FenetrePrincipale(QMainWindow):
         version.setStyleSheet(
             f"color: {C.INK300}; border: 1px solid {C.BORDER}; border-radius: 5px; padding: 1px 5px;"
             f" font-family: '{MONO}'; font-size: 10.5px;")
-        lay.addWidget(version)
+        lay.addWidget(version, 0, Qt.AlignmentFlag.AlignVCenter)
 
         lay.addSpacing(16)
 
@@ -153,6 +153,7 @@ class FenetrePrincipale(QMainWindow):
         bouton.setText(label)
         bouton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         bouton.setAutoRaise(True)
+        bouton.setFixedHeight(M.TOOLBAR_H)
         bouton.setIconSize(QSize(16, 16))
         bouton.setIcon(icone_bascule(icone, C.INK400, C.ACCENT_INK, 16))
         bouton.setCheckable(True)
