@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QCursor, QIcon, QKeySequence
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+    QWidget,
+    QWidgetAction,
+)
 
 from debrief_meet.core.config import Config
 from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
@@ -16,11 +26,81 @@ from debrief_meet.ui.theme import C
 
 logger = logging.getLogger(__name__)
 
-_TAILLE_ICONE_MENU = 15
+_TAILLE_ICONE_MENU = 14
+
+# Couleurs des lignes du menu tray (§8.8 debriefMeet-C) : exception à la palette
+# maison, alignée sur les libellés système macOS (texte #1D1D1F, pas ink-900).
+_TRAY_TEXT = "#1D1D1F"
+_TRAY_HOVER_FG = "#FFFFFF"
+_TRAY_HOVER_BG = "#0A6CFF"
 
 
-def _icone_menu(nom: str, hex_color: str) -> QIcon:
-    return icone_svg_teintee(icone_phosphor(nom), hex_color, _TAILLE_ICONE_MENU)
+def _icone_menu(nom: str, hex_color: str = _TRAY_TEXT) -> QIcon:
+    """Icône de ligne de menu tray — blanche au survol via `QIcon.Mode.Selected`,
+    que Qt applique automatiquement à l'item actif d'un `QMenu` stylé en QSS
+    (§8.8 : plus de couleurs d'icônes variées, tout suit le texte de la ligne)."""
+    chemin = icone_phosphor(nom)
+    icone = QIcon()
+    icone.addPixmap(
+        icone_svg_teintee(chemin, hex_color, _TAILLE_ICONE_MENU).pixmap(_TAILLE_ICONE_MENU, _TAILLE_ICONE_MENU),
+        QIcon.Mode.Normal)
+    icone.addPixmap(
+        icone_svg_teintee(chemin, _TRAY_HOVER_FG, _TAILLE_ICONE_MENU).pixmap(_TAILLE_ICONE_MENU, _TAILLE_ICONE_MENU),
+        QIcon.Mode.Selected)
+    return icone
+
+
+class _LigneQuitter(QWidget):
+    """Ligne « Quitter » en rouge permanent (`#FF3B30`, convention macOS) — un
+    `QAction` standard ne peut pas recevoir une couleur de texte statique via
+    `QMenu::item` en QSS (le sélecteur ne cible pas un item précis), d'où ce
+    `QWidgetAction` custom plutôt qu'une action classique."""
+
+    cliquee = Signal()
+
+    _QSS_REPOS = "QWidget#trayQuitRow { background: transparent; border-radius: 5px; }"
+    _QSS_SURVOL = f"QWidget#trayQuitRow {{ background: {_TRAY_HOVER_BG}; border-radius: 5px; }}"
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("trayQuitRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(self._QSS_REPOS)
+
+        self._pixmap_repos = icone_svg_teintee(
+            icone_phosphor("sign-out"), C.REC, _TAILLE_ICONE_MENU).pixmap(_TAILLE_ICONE_MENU, _TAILLE_ICONE_MENU)
+        self._pixmap_survol = icone_svg_teintee(
+            icone_phosphor("sign-out"), _TRAY_HOVER_FG, _TAILLE_ICONE_MENU).pixmap(_TAILLE_ICONE_MENU, _TAILLE_ICONE_MENU)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(9, 5, 9, 5)
+        lay.setSpacing(9)
+        self._icone = QLabel(self)
+        self._icone.setPixmap(self._pixmap_repos)
+        lay.addWidget(self._icone)
+        self._label = QLabel("Quitter", self)
+        self._label.setObjectName("trayQuitLabel")
+        self._label.setStyleSheet(f"color: {C.REC};")
+        lay.addWidget(self._label)
+        lay.addStretch()
+
+    def enterEvent(self, event) -> None:
+        self.setStyleSheet(self._QSS_SURVOL)
+        self._icone.setPixmap(self._pixmap_survol)
+        self._label.setStyleSheet(f"color: {_TRAY_HOVER_FG};")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.setStyleSheet(self._QSS_REPOS)
+        self._icone.setPixmap(self._pixmap_repos)
+        self._label.setStyleSheet(f"color: {C.REC};")
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.pos()):
+            self.cliquee.emit()
+        super().mouseReleaseEvent(event)
 
 
 class IconeTray(QSystemTrayIcon):
@@ -64,15 +144,15 @@ class IconeTray(QSystemTrayIcon):
         menu.setObjectName("trayMenu")
         self._menu = menu
 
-        self._action_dictee = QAction(_icone_menu("microphone", C.INK500), "Démarrer Dictée", menu)
+        self._action_dictee = QAction(_icone_menu("microphone"), "Démarrer Dictée", menu)
         self._action_dictee.triggered.connect(self._machine.toggle_dictee)
         menu.addAction(self._action_dictee)
 
-        self._action_reunion = QAction(_icone_menu("users-three", C.INK500), "Démarrer Réunion", menu)
+        self._action_reunion = QAction(_icone_menu("users-three"), "Démarrer Réunion", menu)
         self._action_reunion.triggered.connect(self._machine.toggle_reunion)
         menu.addAction(self._action_reunion)
 
-        self._action_journal = QAction(_icone_menu("notebook", C.INK500), "Démarrer Journal", menu)
+        self._action_journal = QAction(_icone_menu("notebook"), "Démarrer Journal", menu)
         self._action_journal.triggered.connect(self._machine.toggle_journal)
         menu.addAction(self._action_journal)
 
@@ -84,24 +164,27 @@ class IconeTray(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        action_ouvrir = QAction(
-            _icone_menu("arrow-square-out", C.ACCENT_INK), "Ouvrir debriefMeet", menu)
+        action_ouvrir = QAction(_icone_menu("arrow-square-out"), "Ouvrir debriefMeet", menu)
         action_ouvrir.triggered.connect(self._afficher_fenetre_principale)
         menu.addAction(action_ouvrir)
-        menu.setDefaultAction(action_ouvrir)  # mis en avant (ordre spec §8)
+        menu.setDefaultAction(action_ouvrir)  # mis en avant (ordre spec §8) : gras, plus de fond permanent
 
-        action_prefs = QAction(_icone_menu("gear", C.INK500), "Préférences…", menu)
+        action_prefs = QAction(_icone_menu("gear"), "Préférences…", menu)
         action_prefs.triggered.connect(self._ouvrir_preferences)
         menu.addAction(action_prefs)
 
-        action_diagnostic = QAction(_icone_menu("bug", C.INK500), "Exporter le diagnostic…", menu)
+        action_diagnostic = QAction(_icone_menu("bug"), "Exporter le diagnostic…", menu)
         action_diagnostic.triggered.connect(self._exporter_diagnostic)
         menu.addAction(action_diagnostic)
 
         menu.addSeparator()
 
-        action_quitter = QAction(_icone_menu("sign-out", C.DANGER), "Quitter", menu)
-        action_quitter.triggered.connect(QApplication.quit)
+        ligne_quitter = _LigneQuitter(menu)
+        ligne_quitter.cliquee.connect(menu.close)
+        ligne_quitter.cliquee.connect(QApplication.quit)
+        action_quitter = QWidgetAction(menu)
+        action_quitter.setText("Quitter")  # gardé pour les tests/accessibilité ; rendu via le widget custom
+        action_quitter.setDefaultWidget(ligne_quitter)
         menu.addAction(action_quitter)
 
     def _on_mode_change(self, mode: Mode) -> None:

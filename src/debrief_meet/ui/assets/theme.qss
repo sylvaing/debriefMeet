@@ -87,15 +87,35 @@ QCheckBox::indicator { width: 19px; height: 19px; border-radius: 5px;
 QCheckBox::indicator:checked { background: #3B5BDB; border-color: #3B5BDB;
   image: url(__CHECK_WHITE__); }
 
-/* ---------- Menu du tray (correctif #5) ---------- */
-QMenu#trayMenu { background: rgba(255,255,255,0.98); border: 1px solid rgba(16,24,40,0.09);
-  border-radius: 11px; padding: 6px; }
-QMenu#trayMenu::item { padding: 7px 10px; border-radius: 7px; font-size: 13px;
-  color: #1A1D23; icon-size: 15px 15px; }
-QMenu#trayMenu::item:selected { background: #F6F7F9; }
-QMenu#trayMenu::item:disabled { color: #B0B7C0; }
-QMenu#trayMenu::separator { height: 1px; background: rgba(16,24,40,0.08); margin: 5px 8px; }
-QMenu#trayMenu::item:default { background: #EEF1FE; color: #2A46B8; font-weight: 600; }
+/* ---------- Menu du tray (§8.8 debriefMeet-C) : exception à la police maison —
+   convention système macOS, pas IBM Plex. ".AppleSystemUIFont" est le nom de
+   famille que Qt résout réellement vers SF Pro sur macOS (vérifié via
+   QFontInfo.exactMatch) ; Segoe UI/sans-serif en repli Windows/Linux.
+   Fond « vibrancy » en best-effort : QSS n'a pas d'équivalent à
+   `backdrop-filter`, donc pas de flou réel derrière le menu, seule la
+   translucidité est reproduite. Bordure demandée à .5px : QSS n'accepte que
+   des largeurs entières, arrondie à 1px. ---------- */
+QMenu#trayMenu { background: rgba(238,238,240,.78); border: 1px solid rgba(0,0,0,.14);
+  border-radius: 9px; padding: 4px; }
+QMenu#trayMenu::item { font-family: ".AppleSystemUIFont", "Segoe UI", sans-serif;
+  padding: 5px 9px; border-radius: 5px; font-size: 13px; font-weight: 400;
+  color: #1D1D1F; icon-size: 14px 14px; }
+QMenu#trayMenu::item:selected { background: #0A6CFF; color: #fff; }
+QMenu#trayMenu::item:disabled { color: rgba(29,29,31,.35); }
+QMenu#trayMenu::separator { height: 1px; background: rgba(0,0,0,.1); margin: 4px 0; }
+QMenu#trayMenu::item:default { background: transparent; color: #1D1D1F; font-weight: 600; }
+QMenu#trayMenu::item:default:selected { background: #0A6CFF; color: #fff; }
+
+/* Ligne « Quitter » : `QMenu::item` en QSS ne peut pas cibler un item précis
+   pour lui donner une couleur de texte statique (rouge) hors survol — rendu
+   via un `QWidgetAction` custom (tray.py) plutôt qu'un `QAction` standard.
+   Fond et couleur du libellé pilotés entièrement en Python (`_LigneQuitter`),
+   pas ici : le pseudo-état `:hover` d'un `QWidget` composite (enfants dans un
+   layout) ne se réévalue pas de façon fiable pour ses propres propriétés ni
+   celles de ses enfants sous Qt (repro isolée avant ce choix — cf. §8.8). */
+QWidget#trayQuitRow { border-radius: 5px; }
+QLabel#trayQuitLabel { font-family: ".AppleSystemUIFont", "Segoe UI", sans-serif;
+  font-size: 13px; font-weight: 400; }
 
 /* ---------- Barre auto-save (préférences) ---------- */
 QLabel#autosaveBar { background: #FBFBFC; border-top: 1px solid #E7E9EE;

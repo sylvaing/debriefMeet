@@ -10,7 +10,7 @@ Ce document est la source de vérité pour les couleurs, la typographie, l'espac
 ## 1. Principes
 
 1. **Neutre et professionnel, avec une identité.** Chrome sobre, une seule couleur d'accent, hiérarchie portée par la typo et l'espacement — pas par des aplats de couleur.
-2. **Une seule fenêtre.** Historique et Préférences cohabitent ; on navigue entre eux sans repasser par le tray.
+2. **Une seule fenêtre, navigation par type.** Trois onglets de type (**Réunion · Dictée · Journal**) + un bouton **Préférences** (engrenage) à droite de la barre. Il n'y a **pas** d'onglet « Historique » global : chaque type affiche **son propre historique** (sauf Dictée, sans historique), précédé d'un bouton **Démarrer / Arrêter** l'enregistrement. On navigue entre tout sans repasser par le tray.
 3. **La couleur encode l'état, pas la décoration.** Rouge = enregistrement, vert = transcrit, etc. On n'utilise jamais ces couleurs comme ornement.
 4. **Cross-platform maison.** Look identique sur les trois OS, avec quelques concessions aux conventions système (voir §10).
 5. **Densité maîtrisée.** Lignes de tableau à hauteur fixe, marges régulières, monospace pour toute donnée technique (dates, durées, chemins, raccourcis).
@@ -177,23 +177,35 @@ L'icône du **Dock** reste le carré accent rempli (elle n'encode pas l'état).
 
 ### Comportements du clic
 - **Clic gauche** → ouvre / met au premier plan la fenêtre debriefMeet.
-- **Clic droit** → menu contextuel d'actions (Démarrer Dictée / Réunion / Journal, Ouvrir, Historique…, Préférences…, Quitter).
+- **Clic droit** → menu contextuel d'actions (Démarrer Dictée / Réunion / Journal, Ouvrir debriefMeet, Préférences…, Quitter). *(plus d'entrée « Historique… » : l'historique vit dans chaque onglet de type.)*
 
 ---
 
 ## 8. Composants
 
 ### 8.1 Barre d'outils (haut de fenêtre)
-Hauteur 58 px, fond `surface`, bordure basse `border`. De gauche à droite : WaveMark (26 px) + wordmark + badge version mono ; onglets de navigation ; *(spacer)* ; groupe de démarrage segmenté ; icône d'état (WaveMark 24 px).
+Hauteur 58 px, fond `surface`, bordure basse `border`. De gauche à droite : WaveMark (26 px) + wordmark + badge version mono ; **3 onglets de navigation** (Réunion · Dictée · Journal) ; *(spacer)* ; **bouton engrenage** (Préférences, icône seule) ; icône d'état (WaveMark 24 px).
 
-**Onglet de navigation :** texte 14 px/600, `ink-400` au repos, `accent-ink` + soulignement `2px accent` à l'actif.
+**Onglet de navigation :** icône Phosphor 16 px + label 14 px/600. `ink-400` au repos, `accent-ink` + soulignement `2px accent` à l'actif. *(Les onglets ne portent aucun indicateur d'enregistrement ; l'état est signalé par l'icône d'état de la barre + le bouton Arrêter de la section.)*
 
-### 8.2 Groupe de démarrage (Dictée / Réunion / Journal)
-Trois boutons accolés dans un conteneur bordé (rayon 9 px, séparateurs `border`).
-- **Au repos :** icône `accent` + label `ink-700`, fond blanc. Survol : fond `accent-soft`.
-- **En enregistrement (ce type) :** fond `#FFECEA`, texte `#FF3B30`, **point pulsant** rouge à la place de l'icône + **chronomètre mono** à droite du label.
-- **Désactivé (un autre type enregistre) :** `opacity: .55`, curseur par défaut. *(un seul enregistrement à la fois)*
-- **Re-clic sur le bouton actif :** ré-affiche l'écran d'enregistrement, **sans relancer**.
+**Préférences :** un simple bouton **icône engrenage** (`ph-gear`, 18 px, tuile 34×34, rayon 8 px) placé à droite du spacer — pas de gros bouton ni de label. Actif : fond `accent-soft`, icône `accent-ink` ; repos : icône `ink-400`.
+
+> ⚠ Changement d'IA : l'ancien onglet « Historique » et l'ancien « groupe de démarrage segmenté » à droite de la barre sont **supprimés**. Le démarrage se fait désormais **dans chaque section** (§8.2).
+
+### 8.2 Section de capture (Dictée / Réunion / Journal)
+Chaque onglet de type ouvre une section construite de la même façon :
+
+1. **Barre d'action** (haut de section, filet bas `border-soft`) : à gauche le bouton **Démarrer / Arrêter** ; pendant la capture, **à côté du bouton Arrêter** : un **point pulsant** rouge + le **chronomètre mono** (`#FF3B30`, 15 px). À droite : le champ de recherche (§8.4).
+2. **Historique du type** — tableau des captures (§8.6) pour **Réunion**, liste de fichiers pour **Journal**, directement sous la barre d'action. Pendant un enregistrement de réunion, une **ligne « Réunion en cours »** (badge *En cours*, §9) est insérée **en tête** du tableau, sa durée affichant le chronomètre live ; elle bascule vers son état final à l'arrêt.
+
+> **Cas Dictée :** la dictée **copie le texte transcrit dans le presse-papiers** — elle **n'a ni recherche ni historique**. La section affiche seulement le bouton **Démarrer la dictée** + un **état explicatif centré** (tuile micro `accent-soft`, titre « Dictée vocale », rappel du raccourci `⌃⌥⌘D`).
+
+**Bouton Démarrer / Arrêter** (bascule) :
+- **Au repos → Démarrer :** bouton **primaire** (`accent`, texte blanc, rayon 9 px), icône du type + libellé « Démarrer la dictée / réunion / journal ».
+- **En cours (ce type) → Arrêter :** fond `#FF3B30`, texte blanc, icône `ph-stop-fill` ; suivi (hors bouton) du point pulsant + chronomètre décrits ci-dessus.
+- **Un autre type enregistre :** bouton grisé (`surface-sunken`, texte `ink-300`, curseur par défaut) + mention « Un enregistrement est déjà en cours. » *(un seul enregistrement à la fois)*.
+
+> Il n'y a **pas** de fenêtre / bandeau « enregistrement en cours » (waveform, gros chrono, transcription live) : pendant la capture, seuls l'état de la barre, le bouton Arrêter et son chrono le signalent ; l'historique du type reste affiché.
 
 ### 8.3 Boutons
 | Type | Fond | Texte | Bordure |
@@ -211,7 +223,7 @@ Fond `surface-sunken`, bordure `border`, rayon 8 px, padding `10–11px 13–14p
 ### 8.5 Cases à cocher
 Carré 19 px, rayon 5 px. Coché : fond `accent` + `ph-check` blanc 12 px. Décoché : fond blanc, bordure 1.5 px `#CDD2DA`.
 
-### 8.6 Ligne de tableau (Historique — Réunions)
+### 8.6 Ligne de tableau (historique d'un type — Dictée / Réunion)
 Grille : `40px | 1fr | 150px | 74px | 116px | 210px`, `column-gap: 12px`, hauteur 52 px, filet bas `divider`.
 Colonnes : icône de type · **Titre** (600) · **Date** (mono) · **Durée** (mono) · **État** (badge, §9) · **Actions** (alignées à droite, révélées au survol).
 - **Ligne sélectionnée :** fond `accent-soft` + barre latérale gauche `3px accent`.
@@ -222,7 +234,9 @@ En-tête de colonnes : `surface-header`, libellés mono 10.5 px MAJUSCULES `ink-
 `display:inline-flex; gap:6px; padding:3px 9px 3px 7px; border-radius:20px; font:600 12px`. Icône 13 px + label. Couleur texte/icône et fond selon §9.
 
 ### 8.8 Menu du tray (popover)
-Fond `rgba(255,255,255,.95)`, bordure `rgba(16,24,40,.09)`, rayon 11 px, ombre popover. Items : `padding:7px 10px; radius:7px`, icône 15 px + label 13 px + raccourci mono à droite. Item mis en avant (« Ouvrir debriefMeet ») : fond `accent-soft`, texte `accent-ink`. Séparateurs `rgba(16,24,40,.08)`. « Quitter » en `#B42318`.
+**Exception à la règle typo maison (§4/§10) : ce menu suit la convention système, pas IBM Plex.** Police `-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif` (rendu SF Pro natif sur macOS). L'horloge de la barre au-dessus est en police système avec `font-variant-numeric: tabular-nums` (plus de mono).
+
+Fond translucide façon vibrancy : `rgba(238,238,240,.78)` + `backdrop-filter: blur(26px) saturate(190%)`, bordure `.5px solid rgba(0,0,0,.14)`, rayon 9 px, padding conteneur 4 px. Items : `padding:5px 9px; radius:5px`, icône 14 px + label 13 px/400 + raccourci à droite (opacité .55, plus de mono). Texte `#1D1D1F` par défaut ; « Ouvrir debriefMeet » en `font-weight:600` (pas de fond permanent) ; « Quitter » en `#FF3B30`. Séparateurs `rgba(0,0,0,.1)`. **Survol : fond bleu système `#0A6CFF`, tout le contenu de la ligne (texte, icône, raccourci) passe en blanc** — comportement standard des menus macOS.
 
 ### 8.9 Barre d'auto-enregistrement (Préférences)
 Remplace les boutons OK/Annuler modaux. Bas de panneau, fond `surface-header`, filet haut `border` : `ph-check-circle` vert + « Modifications enregistrées automatiquement » (`ink-500`, 12.5 px).
@@ -250,7 +264,7 @@ Chaque ligne porte **un** état, rendu en badge (§8.7). L'état décrit le rés
 - **Titlebar :** chrome neutre. Sur macOS, feux tricolores natifs à gauche ; sur Windows/Linux, boutons système à droite. Le titre reste centré et discret (`ink-600`, 12.5 px/600).
 - **Icône tray :** fournir une variante **template monochrome** (repos) pour l'auto-inversion clair/sombre de la barre de menus macOS ; sur Windows (barre des tâches) et Linux (`StatusNotifier`), fournir la version colorée selon l'état.
 - **Raccourcis :** afficher les libellés natifs — `⌃⌥⌘` sur macOS, `Ctrl+Alt+…` sur Windows/Linux. Ne jamais coder en dur les glyphes mac dans les autres builds.
-- **Polices :** embarquer IBM Plex Sans/Mono dans le bundle Qt (ne pas dépendre des polices système) pour un rendu identique partout.
+- **Polices :** embarquer IBM Plex Sans/Mono dans le bundle Qt (ne pas dépendre des polices système) pour un rendu identique partout. **Exception : le menu du tray (§8.8) utilise la police système native** (SF Pro sur macOS, Segoe UI sur Windows, etc.) et un fond vibrancy/translucide, pour se fondre dans les menus contextuels de l'OS plutôt que d'imposer le look maison.
 - **Densité :** conserver les hauteurs de ligne (52 px) et cibles tactiles ≥ 44 px là où c'est cliquable.
 
 ---
@@ -263,9 +277,9 @@ Mapping indicatif entre les composants du design et l'implémentation Qt Widgets
 |---|---|
 | Fenêtre unifiée | `QMainWindow` (sans `QStatusBar` natif ; barre auto-save custom) |
 | Barre d'outils | `QToolBar` non déplaçable, ou `QWidget` custom en `setMenuWidget` |
-| Navigation Historique/Préférences | `QStackedWidget` piloté par les onglets de la toolbar |
-| Groupe de démarrage segmenté | 3 `QToolButton` dans un `QFrame` bordé |
-| Tableau d'historique | `QTableView` + `QAbstractTableModel` ; badge d'état via un `QStyledItemDelegate` (`paint()`) |
+| Navigation 3 onglets (Dictée/Réunion/Journal) + engrenage Préférences | `QStackedWidget` piloté par 3 `QToolButton` checkable exclusifs + un `QToolButton` icône (Préférences) à droite de la toolbar |
+| Bouton Démarrer/Arrêter de section | `QPushButton` bascule (`#primary` → `#danger`) en tête de chaque page de capture ; chrono + puce pulsante en `QLabel` adjacents pendant la capture |
+| Tableau d'historique (par type) | `QTableView` + `QAbstractTableModel` (un modèle par type) ; badge d'état via un `QStyledItemDelegate` (`paint()`) |
 | Sous-nav des préférences | `QListWidget` (icône + texte) pilotant un `QStackedWidget` |
 | Champs | `QLineEdit`, `QComboBox`, `QPlainTextEdit`, `QSpinBox` |
 | Cases à cocher | `QCheckBox` restylé en QSS |
