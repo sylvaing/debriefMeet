@@ -91,18 +91,20 @@ QCheckBox::indicator:checked { background: #3B5BDB; border-color: #3B5BDB;
    convention système macOS, pas IBM Plex. ".AppleSystemUIFont" est le nom de
    famille que Qt résout réellement vers SF Pro sur macOS (vérifié via
    QFontInfo.exactMatch) ; Segoe UI/sans-serif en repli Windows/Linux.
-   Fond « vibrancy » en best-effort : QSS n'a pas d'équivalent à
-   `backdrop-filter`, donc pas de flou réel derrière le menu, seule la
-   translucidité est reproduite. Bordure demandée à .5px : QSS n'accepte que
-   des largeurs entières, arrondie à 1px. ---------- */
-QMenu#trayMenu { background: rgba(238,238,240,.78); border: 1px solid rgba(0,0,0,.14);
+   Fond « vibrancy » quasi blanc (CHANGELOG_v2 §correctif 11 : la 1re passe
+   était trop grise/foncée par rapport aux menus système) en best-effort :
+   QSS n'a pas d'équivalent à `backdrop-filter: blur(40px) saturate(150%)`,
+   donc pas de flou réel derrière le menu, seule la translucidité est
+   reproduite. Bordure demandée à .5px : QSS n'accepte que des largeurs
+   entières, arrondie à 1px. ---------- */
+QMenu#trayMenu { background: rgba(247,248,250,.93); border: 1px solid rgba(0,0,0,.09);
   border-radius: 9px; padding: 4px; }
 QMenu#trayMenu::item { font-family: ".AppleSystemUIFont", "Segoe UI", sans-serif;
   padding: 5px 9px; border-radius: 5px; font-size: 13px; font-weight: 400;
   color: #1D1D1F; icon-size: 14px 14px; }
 QMenu#trayMenu::item:selected { background: #0A6CFF; color: #fff; }
 QMenu#trayMenu::item:disabled { color: rgba(29,29,31,.35); }
-QMenu#trayMenu::separator { height: 1px; background: rgba(0,0,0,.1); margin: 4px 0; }
+QMenu#trayMenu::separator { height: 1px; background: rgba(0,0,0,.08); margin: 4px 0; }
 QMenu#trayMenu::item:default { background: transparent; color: #1D1D1F; font-weight: 600; }
 QMenu#trayMenu::item:default:selected { background: #0A6CFF; color: #fff; }
 
