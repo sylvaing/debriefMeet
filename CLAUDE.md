@@ -165,3 +165,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Phase 5 — livraison, notice utilisateur, analyse des diagnostics | `docs/35` |
 | Phase 5 — fumée automatisée du setup via SSH (VM) | `docs/37` ✅ (`scripts/fumee_setup_vm.sh`) |
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
+| **Interco BlueMind (calendrier, invités, notifications) — 📝 spec à implémenter** | `docs/40` |
