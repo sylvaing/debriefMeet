@@ -202,9 +202,14 @@ def convertir_openvino_turbo(dest: Path) -> None:
     # tokenizer lent WhisperTokenizer exige vocab.json + merges.txt, absents de
     # l'export. Les autres repos OpenVINO/whisper-*-int8-ov les fournissent ; le
     # turbo étant le seul converti localement était le seul incomplet (doc 39 §1).
-    from transformers import WhisperFeatureExtractor, WhisperTokenizer
-    WhisperTokenizer.from_pretrained(OV_TURBO_MODEL_ID).save_pretrained(dest)      # vocab.json + merges.txt
-    WhisperFeatureExtractor.from_pretrained(OV_TURBO_MODEL_ID).save_pretrained(dest)  # preprocessor_config.json
+    # Passer par WhisperTokenizer.from_pretrained(...).save_pretrained(dest) ne
+    # suffit plus : transformers >=5 a unifié la sérialisation même pour la classe
+    # "lente" et ne réécrit plus vocab.json/merges.txt (vérifié transformers 5.0.0,
+    # doc 39 §1 corrigé en session). Le repo source les publie tels quels → on les
+    # télécharge directement, indépendamment de la version de transformers installée.
+    from huggingface_hub import hf_hub_download
+    for nom in ("vocab.json", "merges.txt"):
+        hf_hub_download(OV_TURBO_MODEL_ID, nom, local_dir=dest)
 
 
 def _backend_actif(nom: str, backends: list[str] | None) -> bool:

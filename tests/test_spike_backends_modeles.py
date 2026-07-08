@@ -99,37 +99,24 @@ def test_whisper_cli_manquants_vide_si_complet(tmp_path):
 
 
 def test_convertir_openvino_turbo_complete_le_tokenizer_lent(monkeypatch, tmp_path):
-    """§1.4 doc 39 — après l'export optimum-cli, vocab.json/merges.txt/preprocessor_config.json
-    doivent être ajoutés (tokenizer lent, exigé par use_fast=False dans moteur_openvino.py)."""
+    """§1.4 doc 39 — après l'export optimum-cli, vocab.json/merges.txt doivent être
+    ajoutés (tokenizer lent, exigé par use_fast=False dans moteur_openvino.py).
+
+    Téléchargés directement depuis le repo source (hf_hub_download), pas via
+    WhisperTokenizer.save_pretrained() : transformers >=5 ne réécrit plus ces
+    fichiers pour la classe "lente" (vérifié transformers 5.0.0 en session)."""
     from spike.backends_windows import assembler
 
-    appels: list[str] = []
+    appels: list[tuple[str, str]] = []
 
-    class FauxTokenizer:
-        @staticmethod
-        def from_pretrained(model_id):
-            assert model_id == assembler.OV_TURBO_MODEL_ID
-            return FauxTokenizer()
+    def faux_hf_hub_download(repo_id, filename, local_dir):
+        assert repo_id == assembler.OV_TURBO_MODEL_ID
+        appels.append((repo_id, filename))
+        Path(local_dir, filename).write_text("{}" if filename.endswith(".json") else "", encoding="utf-8")
 
-        def save_pretrained(self, dest):
-            appels.append("tokenizer")
-            Path(dest, "vocab.json").write_text("{}", encoding="utf-8")
-            Path(dest, "merges.txt").write_text("", encoding="utf-8")
-
-    class FauxFeatureExtractor:
-        @staticmethod
-        def from_pretrained(model_id):
-            assert model_id == assembler.OV_TURBO_MODEL_ID
-            return FauxFeatureExtractor()
-
-        def save_pretrained(self, dest):
-            appels.append("feature_extractor")
-            Path(dest, "preprocessor_config.json").write_text("{}", encoding="utf-8")
-
-    faux_transformers = types.ModuleType("transformers")
-    faux_transformers.WhisperTokenizer = FauxTokenizer
-    faux_transformers.WhisperFeatureExtractor = FauxFeatureExtractor
-    monkeypatch.setitem(sys.modules, "transformers", faux_transformers)
+    faux_hf = types.ModuleType("huggingface_hub")
+    faux_hf.hf_hub_download = faux_hf_hub_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", faux_hf)
     monkeypatch.setattr(assembler.subprocess, "run", lambda *a, **k: None)
 
     dest = tmp_path / "openvino-whisper-large-v3-turbo"
@@ -137,8 +124,10 @@ def test_convertir_openvino_turbo_complete_le_tokenizer_lent(monkeypatch, tmp_pa
 
     assert (dest / "vocab.json").is_file()
     assert (dest / "merges.txt").is_file()
-    assert (dest / "preprocessor_config.json").is_file()
-    assert appels == ["tokenizer", "feature_extractor"]
+    assert appels == [
+        (assembler.OV_TURBO_MODEL_ID, "vocab.json"),
+        (assembler.OV_TURBO_MODEL_ID, "merges.txt"),
+    ]
 
 
 def test_telecharger_whisper_cli_rejette_mauvaise_empreinte(monkeypatch, tmp_path):
