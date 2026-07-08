@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import json
 import shutil
 import subprocess
 import sys
@@ -210,6 +211,29 @@ def convertir_openvino_turbo(dest: Path) -> None:
     from huggingface_hub import hf_hub_download
     for nom in ("vocab.json", "merges.txt"):
         hf_hub_download(OV_TURBO_MODEL_ID, nom, local_dir=dest)
+    _corriger_extra_special_tokens(dest / "tokenizer_config.json")
+
+
+def _corriger_extra_special_tokens(tokenizer_config: Path) -> None:
+    """Retire tokenizer_config["extra_special_tokens"] quand c'est une LISTE.
+
+    openai/whisper-large-v3-turbo publie cette clé comme une liste de tokens de
+    langue (ancien format). transformers >=4.57 a introduit une fonctionnalité
+    générique du même nom qui attend un dict (name -> token) et fait
+    `.keys()` dessus sans vérifier le type → AttributeError: 'list' object has
+    no attribute 'keys' au chargement, MÊME avec use_fast=False (le crash est
+    dans PreTrainedTokenizerBase.__init__, partagé par les classes lente et
+    rapide — vérifié en conditions réelles sur la VM Proxmox avec les wheels
+    win_amd64 du bundle, transformers 4.57.6, doc 39 §1 re-corrigé en session).
+    Sans risque : WhisperTokenizer reconstruit les tokens de langue depuis son
+    propre dict LANGUAGES codé en dur, pas depuis cette clé de config.
+    """
+    if not tokenizer_config.is_file():
+        return
+    config = json.loads(tokenizer_config.read_text(encoding="utf-8"))
+    if isinstance(config.get("extra_special_tokens"), list):
+        del config["extra_special_tokens"]
+        tokenizer_config.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _backend_actif(nom: str, backends: list[str] | None) -> bool:

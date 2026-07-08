@@ -130,6 +130,48 @@ def test_convertir_openvino_turbo_complete_le_tokenizer_lent(monkeypatch, tmp_pa
     ]
 
 
+def test_corriger_extra_special_tokens_retire_la_liste(tmp_path):
+    """§1 doc 39 (re-corrigé) — extra_special_tokens en LISTE (format du repo
+    openai/whisper-large-v3-turbo) fait planter transformers >=4.57
+    (PreTrainedTokenizerBase.__init__ appelle .keys() dessus sans vérifier le
+    type) — vérifié en conditions réelles sur la VM avec les wheels du bundle."""
+    import json as json_module
+
+    from spike.backends_windows import assembler
+
+    config = tmp_path / "tokenizer_config.json"
+    config.write_text(json_module.dumps({
+        "bos_token": "<|endoftext|>",
+        "extra_special_tokens": ["<|startoftranscript|>", "<|en|>", "<|fr|>"],
+    }), encoding="utf-8")
+
+    assembler._corriger_extra_special_tokens(config)
+
+    contenu = json_module.loads(config.read_text(encoding="utf-8"))
+    assert "extra_special_tokens" not in contenu
+    assert contenu["bos_token"] == "<|endoftext|>"
+
+
+def test_corriger_extra_special_tokens_laisse_un_dict_intact(tmp_path):
+    """Un dict (nouveau format transformers attendu) ne doit pas être touché."""
+    import json as json_module
+
+    from spike.backends_windows import assembler
+
+    config = tmp_path / "tokenizer_config.json"
+    config.write_text(json_module.dumps({"extra_special_tokens": {"boi_token": "<|im|>"}}), encoding="utf-8")
+
+    assembler._corriger_extra_special_tokens(config)
+
+    contenu = json_module.loads(config.read_text(encoding="utf-8"))
+    assert contenu["extra_special_tokens"] == {"boi_token": "<|im|>"}
+
+
+def test_corriger_extra_special_tokens_absent_ne_leve_pas(tmp_path):
+    from spike.backends_windows import assembler
+    assembler._corriger_extra_special_tokens(tmp_path / "inexistant.json")
+
+
 def test_telecharger_whisper_cli_rejette_mauvaise_empreinte(monkeypatch, tmp_path):
     """§13.6 — un zip altéré (empreinte SHA256 différente) doit être rejeté, pas installé silencieusement."""
     import io
