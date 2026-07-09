@@ -89,6 +89,7 @@ class OrchestrateurReunion(QObject):
     etat_visuel_change = Signal(object)
     micro_perdu = Signal(str)
     micro_retabli = Signal(str)
+    reunion_demarree = Signal(object)  # Path du .md créé (docs/40 §8 — démarrage pré-associé)
 
     def __init__(
         self,
@@ -200,6 +201,7 @@ class OrchestrateurReunion(QObject):
 
             self._timer.start(self._config.get("intervalle_reunion") * 1000)
             self.etat_visuel_change.emit(EtatVisuel.ENREGISTREMENT)
+            self.reunion_demarree.emit(fichier)
         except Exception as exc:
             logger.error("Démarrage de la réunion impossible (%s) — annulation", exc, exc_info=True)
             self._annuler_demarrage(str(exc))

@@ -355,3 +355,84 @@ def test_ligne_en_cours_absente_pour_autre_type(qapp, machine, tmp_path):
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     vue.definir_etat_enregistrement(Mode.DICTEE, 5)
     assert vue._modele.rowCount() == 0
+
+
+# ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
+
+def _store_avec_evenement(tmp_path, debut_ms, fin_ms, titre="Point projet X"):
+    from debrief_meet.core.bluemind.store import Evenement, StoreCalendrier
+    store = StoreCalendrier(tmp_path / "bm.sqlite3")
+    store.upsert_evenements([Evenement(
+        uid="evt-1", cal_uid="cal:Default:u1", debut_ms=debut_ms, fin_ms=fin_ms,
+        journee_entiere=False, titre=titre, lieu="",
+        organisateur={"nom": "Sylvain Garcia", "email": "sylvain@ex.com"},
+        invites=[{"nom": "Jean Dupont", "email": "jean@ex.com", "part_status": "Accepted"}],
+    )])
+    return store
+
+
+def test_sans_store_bluemind_pas_daction(qapp, machine, tmp_path):
+    from datetime import datetime
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    debut = datetime(2026, 1, 1, 10, 0)
+    _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())  # pas de store_bluemind
+    icones = [a.icone for a in _actions(vue)]
+    assert rv_module._ICONE_BLUEMIND_ASSOCIER not in icones
+
+
+def test_action_associer_presente_si_correspondance(qapp, machine, tmp_path):
+    from datetime import datetime
+    nom = "2026-01-01_10-00"
+    _reunion_avec_audio(tmp_path, nom=nom)
+    debut = datetime(2026, 1, 1, 10, 0)
+    store = _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    spec = _spec(_actions(vue), rv_module._ICONE_BLUEMIND_ASSOCIER)
+    assert spec.actif is True
+
+
+def test_action_absente_sans_correspondance(qapp, machine, tmp_path):
+    from datetime import datetime
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    debut = datetime(2026, 6, 1, 10, 0)  # loin de la réunion
+    store = _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    icones = [a.icone for a in _actions(vue)]
+    assert rv_module._ICONE_BLUEMIND_ASSOCIER not in icones
+
+
+def test_nommer_locuteurs_present_si_locuteurs_md(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    chemin_locuteurs(md).write_text("# X\n\n**Moi** [00:00] bonjour\n", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    spec = _spec(_actions(vue), rv_module._ICONE_NOMMER_LOCUTEURS)
+    assert spec.actif is True
+
+
+def test_nommer_locuteurs_absent_sans_locuteurs_md(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    icones = [a.icone for a in _actions(vue)]
+    assert rv_module._ICONE_NOMMER_LOCUTEURS not in icones
+
+
+def test_nommer_locuteurs_disponible_sans_store_bluemind(qapp, machine, tmp_path):
+    """F2 n'est pas gatée par la config BlueMind (§7) — utilisable en saisie libre."""
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    chemin_locuteurs(md).write_text("# X\n\n**Moi** [00:00] bonjour\n", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())  # store_bluemind=None
+    icones = [a.icone for a in _actions(vue)]
+    assert rv_module._ICONE_NOMMER_LOCUTEURS in icones
+
+
+def test_action_indique_deja_associe(qapp, machine, tmp_path):
+    from debrief_meet.core.bluemind.association import Association, ecrire
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    ecrire(md, Association(event_uid="e1", cal_uid="cal", titre="Point projet X",
+                            debut="2026-01-01T10:00:00", invites=[]))
+    store = _store_avec_evenement(tmp_path, 0, 1)  # peu importe, déjà associé
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    spec = _spec(_actions(vue), rv_module._ICONE_BLUEMIND_ASSOCIE)
+    assert spec.actif is False
+    assert "Point projet X" in spec.tooltip

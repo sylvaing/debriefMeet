@@ -48,6 +48,19 @@ _DEFAUTS: dict[str, Any] = {
     # retombe toujours sur faster-whisper CPU ; valeurs futures : "openvino"/"directml"/
     # "vulkan" une fois le rapport spike docs/18 disponible.
     "backend": "auto",
+    # Interco BlueMind (docs/40) — "bluemind_url" vide = interco désactivée (invisible).
+    "bluemind_url": "",
+    "bluemind_token": "",
+    "bluemind_email": "",
+    "bluemind_verifier_tls": True,
+    "bluemind_sync_minutes": 15,
+    "bluemind_fenetre_passe_jours": 90,
+    "bluemind_fenetre_futur_jours": 30,
+    "bluemind_notif_reunions": True,
+    "bluemind_notif_avance_min": 5,
+    "bluemind_notif_inclure_solo": False,
+    "bluemind_notif_inclure_refuses": False,
+    "bluemind_notif_inclure_journee": False,
 }
 
 

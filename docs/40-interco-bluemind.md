@@ -1,6 +1,8 @@
 # Interco BlueMind — calendrier, invités, notifications de réunion
 
-> **Statut : 📝 spécification, à implémenter.**
+> **Statut : 🔄 implémentée (2026-07-09, Sonnet) — code + tests unitaires verts sans
+> réseau (889 passed). Restent : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et
+> validation manuelle avec Sylvain sur serveur réel (§10).**
 > Rédigée le 2026-07-08 (cadrage Sylvain + Fable).
 > Ce document est conçu pour être donné tel quel à une session IA d'implémentation (Sonnet).
 > **Périmètre : brique commune (config, client REST, synchro calendrier offline) + 3

@@ -47,6 +47,7 @@ from debrief_meet.core.raccourcis import libelle_modificateurs
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription
 from debrief_meet.ui.chargeur_modele import ChargeurModele
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
+from debrief_meet.ui.testeur_connexion_bluemind import TesteurConnexionBlueMind
 from debrief_meet.ui.theme import C, M, MONO, SANS, color
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ _SECTIONS = (
     ("Prompts", "chat-text"),
     ("Général", "sliders-horizontal"),
     ("Raccourcis", "keyboard"),
+    ("BlueMind", "list"),
     ("Journalisation", "bug"),
 )
 
@@ -149,6 +151,8 @@ class PreferencesView(QWidget):
         demarrage_auto: DemarrageAuto | None = None,
         moteur: MoteurTranscription | None = None,
         reappliquer_raccourcis: Callable[[], list[str]] | None = None,
+        bluemind_reinitialiser_sync: Callable[[], None] | None = None,
+        bluemind_declencher_sync: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -156,9 +160,13 @@ class PreferencesView(QWidget):
         self._demarrage_auto = demarrage_auto
         self._moteur = moteur
         self._reappliquer_raccourcis = reappliquer_raccourcis
+        self._bluemind_reinitialiser_sync = bluemind_reinitialiser_sync
+        self._bluemind_declencher_sync = bluemind_declencher_sync
         self._chargeur: ChargeurModele | None = None
         self._thread_modele: QThread | None = None
         self._dlg_modele: QProgressDialog | None = None
+        self._thread_test_bm: QThread | None = None
+        self._testeur_bm: TesteurConnexionBlueMind | None = None
 
         self._timer_autosave = QTimer(self)
         self._timer_autosave.setSingleShot(True)
@@ -206,7 +214,7 @@ class PreferencesView(QWidget):
         constructeurs = (
             self._section_modele, self._section_audio, self._section_dossiers,
             self._section_prompts, self._section_general, self._section_raccourcis,
-            self._section_logs,
+            self._section_bluemind, self._section_logs,
         )
         for construire in constructeurs:
             self._pages.addWidget(self._enrober_scroll(construire()))
@@ -786,6 +794,178 @@ class PreferencesView(QWidget):
                     "raccourci_journal": self._edit_raccourci_journal}[cle]
             edit.setKeySequence(QKeySequence.fromString(defaut))
             self._appliquer_raccourci(cle, defaut)
+
+    # ── Section BlueMind (interco calendrier, docs/40 §4) ───────────────────────
+
+    def _section_bluemind(self) -> QWidget:
+        w = QWidget()
+        w.setMaximumWidth(560)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(20)
+
+        bloc_url = QVBoxLayout()
+        bloc_url.setSpacing(6)
+        bloc_url.addWidget(_libelle_champ("URL du serveur"))
+        self._edit_bm_url = QLineEdit(self._config.get("bluemind_url"))
+        self._edit_bm_url.setPlaceholderText("https://bm.exemple.com/api")
+        self._edit_bm_url.setFont(QFont(MONO, 12.5))
+        self._edit_bm_url.editingFinished.connect(self._sur_bluemind_url_edite)
+        bloc_url.addWidget(self._edit_bm_url)
+        lay.addLayout(bloc_url)
+
+        bloc_email = QVBoxLayout()
+        bloc_email.setSpacing(6)
+        bloc_email.addWidget(_libelle_champ("Votre adresse email"))
+        self._edit_bm_email = QLineEdit(self._config.get("bluemind_email"))
+        self._edit_bm_email.editingFinished.connect(self._sur_bluemind_email_edite)
+        bloc_email.addWidget(self._edit_bm_email)
+        lay.addLayout(bloc_email)
+
+        bloc_token = QVBoxLayout()
+        bloc_token.setSpacing(6)
+        bloc_token.addWidget(_libelle_champ("Clé API personnelle"))
+        self._edit_bm_token = QLineEdit(self._config.get("bluemind_token"))
+        self._edit_bm_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self._edit_bm_token.editingFinished.connect(
+            lambda: self._definir("bluemind_token", self._edit_bm_token.text().strip()))
+        bloc_token.addWidget(self._edit_bm_token)
+        lay.addLayout(bloc_token)
+
+        self._check_bm_tls = QCheckBox("Vérifier le certificat TLS du serveur")
+        self._check_bm_tls.setChecked(bool(self._config.get("bluemind_verifier_tls")))
+        self._check_bm_tls.toggled.connect(lambda c: self._definir("bluemind_verifier_tls", c))
+        lay.addWidget(self._check_bm_tls)
+
+        ligne_test = QHBoxLayout()
+        ligne_test.setSpacing(12)
+        btn_test = QPushButton("Tester la connexion")
+        btn_test.setObjectName("secondary")
+        btn_test.clicked.connect(self._tester_connexion_bluemind)
+        ligne_test.addWidget(btn_test)
+        self._label_bm_statut = QLabel("")
+        ligne_test.addWidget(self._label_bm_statut, 1)
+        lay.addLayout(ligne_test)
+
+        lay.addWidget(_note(
+            "URL vide = interco désactivée : aucun bouton, aucune requête réseau, aucun "
+            "message ailleurs dans l'app. La synchronisation du calendrier se fait "
+            "entièrement en tâche de fond, jamais bloquante."))
+
+        lay.addSpacing(4)
+        lay.addWidget(_libelle_champ("Notifications de début de réunion"))
+
+        self._check_bm_notif = QCheckBox("Notifier avant le début d'une réunion")
+        self._check_bm_notif.setChecked(bool(self._config.get("bluemind_notif_reunions")))
+        self._check_bm_notif.toggled.connect(lambda c: self._definir("bluemind_notif_reunions", c))
+        lay.addWidget(self._check_bm_notif)
+
+        bloc_avance = QHBoxLayout()
+        bloc_avance.setSpacing(10)
+        bloc_avance.addWidget(QLabel("Prévenir"))
+        self._spin_bm_avance = QSpinBox()
+        self._spin_bm_avance.setRange(1, 60)
+        self._spin_bm_avance.setSuffix(" min avant")
+        self._spin_bm_avance.setValue(int(self._config.get("bluemind_notif_avance_min") or 5))
+        self._spin_bm_avance.valueChanged.connect(lambda v: self._definir("bluemind_notif_avance_min", v))
+        bloc_avance.addWidget(self._spin_bm_avance)
+        bloc_avance.addStretch()
+        lay.addLayout(bloc_avance)
+
+        self._check_bm_solo = QCheckBox("Inclure les réunions sans autre invité")
+        self._check_bm_solo.setChecked(bool(self._config.get("bluemind_notif_inclure_solo")))
+        self._check_bm_solo.toggled.connect(lambda c: self._definir("bluemind_notif_inclure_solo", c))
+        lay.addWidget(self._check_bm_solo)
+
+        self._check_bm_refuses = QCheckBox("Inclure les réunions que j'ai refusées")
+        self._check_bm_refuses.setChecked(bool(self._config.get("bluemind_notif_inclure_refuses")))
+        self._check_bm_refuses.toggled.connect(lambda c: self._definir("bluemind_notif_inclure_refuses", c))
+        lay.addWidget(self._check_bm_refuses)
+
+        self._check_bm_journee = QCheckBox("Inclure les événements « journée entière »")
+        self._check_bm_journee.setChecked(bool(self._config.get("bluemind_notif_inclure_journee")))
+        self._check_bm_journee.toggled.connect(lambda c: self._definir("bluemind_notif_inclure_journee", c))
+        lay.addWidget(self._check_bm_journee)
+
+        lay.addSpacing(4)
+        btn_reset = QPushButton("Réinitialiser la synchronisation")
+        btn_reset.setObjectName("destructive")
+        btn_reset.clicked.connect(self._reinitialiser_sync_bluemind)
+        lay.addWidget(btn_reset, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        lay.addStretch()
+        return w
+
+    def _sur_bluemind_url_edite(self) -> None:
+        ancien = self._config.get("bluemind_url")
+        nouveau = self._edit_bm_url.text().strip()
+        if nouveau == ancien:
+            return
+        self._definir("bluemind_url", nouveau)
+        self._declencher_reset_sync_si_necessaire()
+
+    def _sur_bluemind_email_edite(self) -> None:
+        ancien = self._config.get("bluemind_email")
+        nouveau = self._edit_bm_email.text().strip()
+        if nouveau == ancien:
+            return
+        self._definir("bluemind_email", nouveau)
+        self._declencher_reset_sync_si_necessaire()
+
+    def _declencher_reset_sync_si_necessaire(self) -> None:
+        """Changement d'URL ou d'email → réplique + identité en cache invalides par
+        construction (docs/40 §5.1, point 2) — un simple renouvellement de clé API
+        ne déclenche PAS ce reset (cf. `_edit_bm_token`, aucun appel ici)."""
+        if self._bluemind_reinitialiser_sync is not None:
+            self._bluemind_reinitialiser_sync()
+
+    def _tester_connexion_bluemind(self) -> None:
+        url = self._edit_bm_url.text().strip()
+        email = self._edit_bm_email.text().strip()
+        token = self._edit_bm_token.text().strip()
+        if not url or not email or not token:
+            self._label_bm_statut.setText("URL, email et clé API sont requis.")
+            self._label_bm_statut.setStyleSheet(f"color: {C.INK400};")
+            return
+
+        self._label_bm_statut.setText("Connexion en cours…")
+        self._label_bm_statut.setStyleSheet(f"color: {C.INK400};")
+
+        self._thread_test_bm = QThread()
+        self._testeur_bm = TesteurConnexionBlueMind(
+            url, token, email, bool(self._check_bm_tls.isChecked()))
+        proteger_thread(self._thread_test_bm, self._testeur_bm)
+        self._testeur_bm.moveToThread(self._thread_test_bm)
+        self._thread_test_bm.started.connect(self._testeur_bm.executer)
+        self._testeur_bm.reussi.connect(self._thread_test_bm.quit)
+        self._testeur_bm.echec.connect(self._thread_test_bm.quit)
+        self._thread_test_bm.finished.connect(self._testeur_bm.deleteLater)
+        self._testeur_bm.reussi.connect(self._sur_test_bluemind_reussi)
+        self._testeur_bm.echec.connect(self._sur_test_bluemind_echec)
+        self._thread_test_bm.start()
+
+    @Slot(str, str)
+    def _sur_test_bluemind_reussi(self, nom_affiche: str, email: str) -> None:
+        self._label_bm_statut.setText(f"✓ Connecté : {nom_affiche} <{email}>")
+        self._label_bm_statut.setStyleSheet(f"color: {C.SUCCESS};")
+        if self._bluemind_declencher_sync is not None:
+            self._bluemind_declencher_sync()
+
+    @Slot(str)
+    def _sur_test_bluemind_echec(self, message: str) -> None:
+        self._label_bm_statut.setText(f"Échec : {message}")
+        self._label_bm_statut.setStyleSheet(f"color: {C.REC};")
+
+    def _reinitialiser_sync_bluemind(self) -> None:
+        rep = QMessageBox.question(
+            self, "Réinitialiser la synchronisation",
+            "La réplique locale du calendrier sera effacée puis resynchronisée.\n"
+            "Les transcriptions et associations existantes ne sont pas modifiées.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        if rep != QMessageBox.StandardButton.Yes:
+            return
+        if self._bluemind_reinitialiser_sync is not None:
+            self._bluemind_reinitialiser_sync()
 
     # ── Section Journalisation ─────────────────────────────────────────────────
 

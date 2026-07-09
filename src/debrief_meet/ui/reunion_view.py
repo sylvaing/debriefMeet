@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QModelIndex, QSortFilterProxyModel, Qt, QTimer
@@ -23,8 +24,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from debrief_meet.core.bluemind import association as bluemind_association
+from debrief_meet.core.bluemind.matching import evenements_correspondants
+from debrief_meet.core.bluemind.store import StoreCalendrier
 from debrief_meet.core.config import Config
-from debrief_meet.core.fichiers import chemin_locuteurs, pistes_audio_existantes
+from debrief_meet.core.fichiers import chemin_locuteurs, date_heure_reunion, duree_reunion, pistes_audio_existantes
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
@@ -45,6 +49,9 @@ _ICONE_OUVRIR = "arrow-square-out"
 _ICONE_REVELER = "folder"
 _ICONE_SUPPR_AUDIO = "microphone-slash"
 _ICONE_TOUT_SUPPR = "trash"
+_ICONE_BLUEMIND_ASSOCIER = "list"
+_ICONE_BLUEMIND_ASSOCIE = "check-circle"
+_ICONE_NOMMER_LOCUTEURS = "chat-text"
 
 
 class ReunionView(QWidget):
@@ -54,12 +61,14 @@ class ReunionView(QWidget):
         machine: MachineEtats,
         presse_papiers: PressePapiers | None = None,
         gestionnaire: GestionnaireDiarization | None = None,
+        store_bluemind: StoreCalendrier | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
         self._presse_papiers = presse_papiers
         self._gestionnaire = gestionnaire
+        self._store_bluemind = store_bluemind
 
         self._modele = CaptureModel(self._dossier(), est_reunion=True, parent=self)
         self._proxy = QSortFilterProxyModel(self)
@@ -106,7 +115,12 @@ class ReunionView(QWidget):
         table.setColumnWidth(2, 190)  # date + heure ("JJ/MM/AAAA · HH:MM") — 150px les tronque en mono
         table.setColumnWidth(3, 74)
         table.setColumnWidth(4, 116)
-        table.setColumnWidth(5, 210)
+        # 8 icônes au maximum désormais (copier, transcrire/générer, nommer les
+        # locuteurs, ouvrir, révéler, suppr. audio, tout suppr., BlueMind associer/
+        # associé) — largeur fixe et uniforme sur toutes les lignes (ActionsDelegate
+        # ne clippe pas au rect de la colonne : sous-dimensionner fait chevaucher
+        # ÉTAT, même sur les lignes sans icône BlueMind). Cf. ActionsDelegate.sizeHint.
+        table.setColumnWidth(5, 274)
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -195,6 +209,11 @@ class ReunionView(QWidget):
                 actions.append(ActionSpec(_ICONE_GENERER, tooltip, actif,
                                           lambda c=chemin: self._generer(c)))
 
+        if ligne.locuteurs:
+            actions.append(ActionSpec(
+                _ICONE_NOMMER_LOCUTEURS, "Nommer les locuteurs", True,
+                lambda c=chemin: self._nommer_locuteurs(c)))
+
         actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir la transcription", True,
                                   lambda c=chemin: self._ouvrir(c)))
         actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le Finder", True,
@@ -205,7 +224,57 @@ class ReunionView(QWidget):
         actions.append(ActionSpec(
             _ICONE_TOUT_SUPPR, "Tout supprimer (transcription + locuteurs + audio)", True,
             lambda c=chemin: self._tout_supprimer_un(c)))
+
+        action_bluemind = self._action_bluemind(chemin)
+        if action_bluemind is not None:
+            actions.append(action_bluemind)
         return actions
+
+    # ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
+
+    def _action_bluemind(self, chemin: Path) -> ActionSpec | None:
+        """Détection **automatique et locale** (réplique) — aucun réseau sur ce
+        chemin (§6.2). None si BlueMind n'est pas configuré (interco invisible)."""
+        if self._store_bluemind is None:
+            return None
+        if bluemind_association.existe(chemin):
+            asso = bluemind_association.lire(chemin)
+            titre = asso.titre if asso else chemin.stem
+            return ActionSpec(_ICONE_BLUEMIND_ASSOCIE, f"Associé à « {titre} »", False, lambda: None)
+
+        debut = date_heure_reunion(chemin)
+        if debut is None:
+            return None
+        marge = timedelta(hours=6)
+        debut_ms = int((debut - marge).timestamp() * 1000)
+        fin_ms = int((debut + marge).timestamp() * 1000)
+        candidats = self._store_bluemind.evenements_dans_plage(debut_ms, fin_ms)
+        correspondances = evenements_correspondants(candidats, debut, duree_reunion(chemin))
+        if not correspondances:
+            return None
+        return ActionSpec(
+            _ICONE_BLUEMIND_ASSOCIER, "Associer à la réunion", True,
+            lambda c=chemin, evts=correspondances: self._associer_bluemind(c, evts))
+
+    def _associer_bluemind(self, chemin: Path, evenements) -> None:
+        from debrief_meet.ui.bluemind_association import DialogAssociationBluemind
+        dlg = DialogAssociationBluemind(chemin, evenements, self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            self._modele.recharger()
+
+    # ── Interco BlueMind — F2 (docs/40 §7) ──────────────────────────────────────
+
+    def _nommer_locuteurs(self, chemin: Path) -> None:
+        """Disponible même sans BlueMind configuré — le mapping reste utilisable en
+        saisie libre seule (§7)."""
+        loc = chemin_locuteurs(chemin)
+        if not loc.exists():
+            return
+        from debrief_meet.ui.bluemind_mapping import DialogMappingLocuteurs
+        email_moi = self._config.get("bluemind_email") or ""
+        dlg = DialogMappingLocuteurs(chemin, loc, email_moi, self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            self._modele.recharger()
 
     # ── Sélection ──────────────────────────────────────────────────────────────
 

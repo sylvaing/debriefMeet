@@ -133,7 +133,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
 
     from debrief_meet.core.config import Config
     from debrief_meet.core.logs import configurer_logs, installer_traces_crash, journaliser_entete_session
-    from debrief_meet.core.modes import MachineEtats
+    from debrief_meet.core.modes import MachineEtats, Mode
     from debrief_meet.ipc import ServeurIPC
     from debrief_meet.ui.icones import icone_application
     from debrief_meet.ui.polices import charger_polices
@@ -272,6 +272,31 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
     gestionnaire_diar = GestionnaireDiarization(adaptateurs.moteur, config)
 
+    # Interco BlueMind (docs/40) — no-op tant que non configurée (URL vide, §1.1).
+    from debrief_meet.core.bluemind.sync import SynchroCalendrier
+    synchro_bluemind = SynchroCalendrier(config)
+
+    def _sur_mode_change_bluemind(mode: Mode) -> None:
+        if mode is Mode.REUNION:
+            synchro_bluemind.synchroniser_si_necessaire()
+
+    machine.mode_change.connect(_sur_mode_change_bluemind)
+
+    minutes_sync = int(config.get("bluemind_sync_minutes") or 0)
+    timer_bluemind = None
+    if minutes_sync > 0:
+        from PySide6.QtCore import QTimer
+        timer_bluemind = QTimer()
+        timer_bluemind.setInterval(minutes_sync * 60_000)
+        timer_bluemind.timeout.connect(synchro_bluemind.synchroniser_si_necessaire)
+        timer_bluemind.start()
+
+    # F3 — notification de début de réunion (docs/40 §8). Lit uniquement la réplique
+    # locale (jamais de réseau au tick) : no-op tant que le store est vide.
+    from debrief_meet.core.planificateur_reunions import PlanificateurReunions
+    planificateur_bluemind = PlanificateurReunions(config, synchro_bluemind.store)
+    planificateur_bluemind.demarrer()
+
     # Fenêtre principale (refonte design) — coquille unique Historique/Préférences/
     # Enregistrement, remplace les anciens dialogues indépendants.
     from debrief_meet.ui.fenetre_principale import FenetrePrincipale
@@ -287,11 +312,19 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     fenetre = FenetrePrincipale(
         machine, config, demarrage_auto=adaptateurs.demarrage_auto,
         presse_papiers=adaptateurs.presse_papiers, gestionnaire=gestionnaire_diar,
-        moteur=adaptateurs.moteur, reappliquer_raccourcis=_reappliquer_et_rafraichir_tray)
+        moteur=adaptateurs.moteur, reappliquer_raccourcis=_reappliquer_et_rafraichir_tray,
+        bluemind_reinitialiser_sync=synchro_bluemind.reinitialiser,
+        bluemind_declencher_sync=synchro_bluemind.synchroniser_si_necessaire,
+        bluemind_sur_ouverture=synchro_bluemind.synchroniser_si_necessaire,
+        bluemind_store=synchro_bluemind.store)
 
     # Tray
     tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar)
     tray.show()
+
+    # F3 (suite) — notification + démarrage pré-associé en un clic (§8).
+    planificateur_bluemind.reunion_due.connect(tray.notifier_reunion_due)
+    orch_reunion.reunion_demarree.connect(tray._sur_reunion_demarree)
 
     echecs_raccourcis = reappliquer_raccourcis()
     if echecs_raccourcis:
@@ -323,6 +356,8 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     app.aboutToQuit.connect(orch_journal.terminer)
     app.aboutToQuit.connect(orch_dictee.terminer)
     app.aboutToQuit.connect(gestionnaire_diar.terminer)  # attend le job avant de tuer le moteur
+    app.aboutToQuit.connect(synchro_bluemind.terminer)
+    app.aboutToQuit.connect(planificateur_bluemind.arreter)
     app.aboutToQuit.connect(adaptateurs.micro.terminer)
     app.aboutToQuit.connect(adaptateurs.systeme.terminer)
     app.aboutToQuit.connect(adaptateurs.moteur.terminer)

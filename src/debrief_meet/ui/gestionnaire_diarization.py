@@ -170,7 +170,34 @@ class GestionnaireDiarization(QObject):
         self._type_job = None
         self._dernier_termine = md
         logger.info("Job %s terminé : %s", type_job, sortie)
-        self.termine.emit(md, Path(str(sortie)))
+        sortie_chemin = Path(str(sortie))
+        if type_job == "diarization":
+            self._inserer_bloc_invites_si_associe(md, sortie_chemin)
+        self.termine.emit(md, sortie_chemin)
+
+    def _inserer_bloc_invites_si_associe(self, md: Path, locuteurs_md: Path) -> None:
+        """docs/40 §6.3 point 2 — si la réunion était déjà associée à un événement
+        BlueMind avant que `_locuteurs.md` existe, le bloc invités est inséré dès sa
+        génération plutôt qu'à la prochaine validation manuelle de F1."""
+        from debrief_meet.core.bluemind import association, participants
+        from debrief_meet.core.fichiers import titre_reunion
+
+        asso = association.lire(md)
+        if asso is None:
+            return
+        invites = [
+            {"nom": i.nom, "email": i.email, "organisateur": i.organisateur, "part_status": i.part_status}
+            for i in asso.invites if i.coche
+        ]
+        if not invites:
+            return
+        titre = titre_reunion(md) or asso.titre or md.stem
+        try:
+            debut_texte = asso.debut.split("T")[0] + " " + asso.debut.split("T")[1][:5]
+        except IndexError:
+            debut_texte = asso.debut
+        bloc = participants.construire_bloc(titre, debut_texte, invites)
+        participants.inserer_dans_fichier(locuteurs_md, bloc)
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:

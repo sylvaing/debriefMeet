@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from debrief_meet import __version__
+from debrief_meet.core.bluemind.store import StoreCalendrier
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import EtatVisuel, MachineEtats
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription, PressePapiers
@@ -50,18 +51,25 @@ class FenetrePrincipale(QMainWindow):
         gestionnaire: GestionnaireDiarization | None = None,
         moteur: MoteurTranscription | None = None,
         reappliquer_raccourcis: Callable[[], list[str]] | None = None,
+        bluemind_reinitialiser_sync: Callable[[], None] | None = None,
+        bluemind_declencher_sync: Callable[[], None] | None = None,
+        bluemind_sur_ouverture: Callable[[], None] | None = None,
+        bluemind_store: StoreCalendrier | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._machine = machine
+        self._bluemind_sur_ouverture = bluemind_sur_ouverture
         self.setWindowTitle("debriefMeet")
         self.resize(1000, 660)
 
-        self._reunion_view = ReunionView(config, machine, presse_papiers, gestionnaire, self)
+        self._reunion_view = ReunionView(
+            config, machine, presse_papiers, gestionnaire, bluemind_store, self)
         self._dictee_view = DicteeView(config, machine, self)
         self._journal_view = JournalView(config, machine, presse_papiers, self)
         self._preferences_view = PreferencesView(
-            config, demarrage_auto, moteur, reappliquer_raccourcis, self)
+            config, demarrage_auto, moteur, reappliquer_raccourcis,
+            bluemind_reinitialiser_sync, bluemind_declencher_sync, self)
 
         self._pages = QStackedWidget(self)
         self._pages.addWidget(self._reunion_view)       # PAGE_REUNION
@@ -177,6 +185,13 @@ class FenetrePrincipale(QMainWindow):
         Réunion et sélectionne la ligne visée."""
         self.afficher_reunion()
         self._reunion_view.selectionner_reunion(chemin_md)
+
+    def showEvent(self, event) -> None:
+        # Déclencheur de sync BlueMind « ouverture de la fenêtre » (docs/40 §5) —
+        # no-op si l'interco n'est pas configurée ou si une sync tourne déjà.
+        if self._bluemind_sur_ouverture is not None:
+            self._bluemind_sur_ouverture()
+        super().showEvent(event)
 
     # ── État visuel (icône toolbar) ──────────────────────────────────────────────
 

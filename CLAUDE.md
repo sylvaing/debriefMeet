@@ -29,7 +29,10 @@ make build-helpers  # recompiler le helper Swift SCKAudioCapture
 make run            # lancer l'app
 ```
 
-Suite attendue : **589 passed** (au 2026-07-03).
+Suite attendue : **889 passed** en environnement dev partiel — sans les extras
+`macos` (mlx-whisper, pyannote.audio) ni le helper Swift compilé — après l'interco
+BlueMind (docs/40, 2026-07-09). Avec ces extras installés, 14 tests supplémentaires
+passent (`test_diarization.py`, `test_moteur_faster_whisper.py`, `test_build.py`).
 
 ## Environnements Python — ne pas confondre
 
@@ -67,6 +70,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Raccourcis globaux paramétrables (docs/28)** | ✅ TERMINÉ + validé manuellement (2026-07-02, 573 passed) |
 | **Fix diarization pyannote 4.x (docs/29)** | ✅ TERMINÉ + validé manuellement (2026-07-02, 576 passed) — offline via `HF_HUB_OFFLINE`, `local_files_only` supprimé |
 | **Fix crash QThread à l'arrêt (docs/26)** | ✅ TERMINÉ (2026-07-03, 589 passed) — registre workers MLX + kill forcé, helper `arreter_thread`/`proteger_thread` |
+| **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10) |
 
 ## Packaging macOS (Phase 4) — pièges
 
@@ -165,4 +169,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Phase 5 — livraison, notice utilisateur, analyse des diagnostics | `docs/35` |
 | Phase 5 — fumée automatisée du setup via SSH (VM) | `docs/37` ✅ (`scripts/fumee_setup_vm.sh`) |
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
-| **Interco BlueMind (calendrier, invités, notifications) — 📝 spec à implémenter** | `docs/40` |
+| **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits, intégration/validation manuelle restantes** | `docs/40` |

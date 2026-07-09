@@ -94,6 +94,18 @@ def test_demarrer_cree_le_fichier(qapp, tmp_path):
     assert len(fichiers_md) == 1
 
 
+def test_demarrer_emet_reunion_demarree_avec_le_chemin(qapp, tmp_path):
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path)
+    recus = []
+    orch.reunion_demarree.connect(recus.append)
+
+    machine.toggle_reunion()
+
+    fichiers_md = list(tmp_path.glob("*.md"))
+    assert recus == fichiers_md
+
+
 def test_arreter_reunion_emet_termine(qapp, qtbot, tmp_path):
     machine = MachineEtats()
     etats = []

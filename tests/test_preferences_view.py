@@ -24,10 +24,10 @@ def _flush(vue: PreferencesView) -> None:
 
 # ── Sections & navigation ────────────────────────────────────────────────────
 
-def test_sept_sections(qapp, tmp_path):
+def test_huit_sections(qapp, tmp_path):
     vue = PreferencesView(_config(tmp_path))
-    assert vue._pages.count() == 7
-    assert vue._nav.count() == 7
+    assert vue._pages.count() == 8
+    assert vue._nav.count() == 8
 
 
 def test_navigation_change_la_page_active(qapp, tmp_path):
@@ -221,3 +221,127 @@ def test_case_debug_persiste(qapp, tmp_path):
     relu = Config(chemin=tmp_path / "config.json")
     relu.charger()
     assert relu.get("logs_debug") is True
+
+
+# ── BlueMind (docs/40 §4) ────────────────────────────────────────────────────
+
+def test_champs_bluemind_persistent(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    vue._edit_bm_url.setText("https://bm.exemple.com/api")
+    vue._edit_bm_url.editingFinished.emit()
+    vue._edit_bm_email.setText("sylvain@exemple.com")
+    vue._edit_bm_email.editingFinished.emit()
+    vue._edit_bm_token.setText("s3cr3t")
+    vue._edit_bm_token.editingFinished.emit()
+    vue._check_bm_tls.setChecked(False)
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("bluemind_url") == "https://bm.exemple.com/api"
+    assert relu.get("bluemind_email") == "sylvain@exemple.com"
+    assert relu.get("bluemind_token") == "s3cr3t"
+    assert relu.get("bluemind_verifier_tls") is False
+
+
+def test_notifications_bluemind_persistent(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    vue._check_bm_notif.setChecked(False)
+    vue._spin_bm_avance.setValue(10)
+    vue._check_bm_solo.setChecked(True)
+    vue._check_bm_refuses.setChecked(True)
+    vue._check_bm_journee.setChecked(True)
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("bluemind_notif_reunions") is False
+    assert relu.get("bluemind_notif_avance_min") == 10
+    assert relu.get("bluemind_notif_inclure_solo") is True
+    assert relu.get("bluemind_notif_inclure_refuses") is True
+    assert relu.get("bluemind_notif_inclure_journee") is True
+
+
+def test_changement_url_declenche_reset_sync(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    appels = []
+    vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
+    vue._edit_bm_url.setText("https://bm.exemple.com/api")
+    vue._edit_bm_url.editingFinished.emit()
+    assert appels == [1]
+
+
+def test_changement_email_declenche_reset_sync(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    appels = []
+    vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
+    vue._edit_bm_email.setText("autre@exemple.com")
+    vue._edit_bm_email.editingFinished.emit()
+    assert appels == [1]
+
+
+def test_changement_token_ne_declenche_pas_reset_sync(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    appels = []
+    vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
+    vue._edit_bm_token.setText("nouvelle-cle")
+    vue._edit_bm_token.editingFinished.emit()
+    assert appels == []
+
+
+def test_meme_valeur_url_ne_redeclenche_pas_reset(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("bluemind_url", "https://bm.exemple.com/api")
+    appels = []
+    vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
+    vue._edit_bm_url.setText("https://bm.exemple.com/api")
+    vue._edit_bm_url.editingFinished.emit()
+    assert appels == []
+
+
+def test_bouton_reset_demande_confirmation(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    cfg = _config(tmp_path)
+    appels = []
+    vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    vue._reinitialiser_sync_bluemind()
+    assert appels == []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    vue._reinitialiser_sync_bluemind()
+    assert appels == [1]
+
+
+def test_tester_connexion_reussie(qapp, tmp_path, qtbot, respx_mock):
+    import httpx
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    vue._edit_bm_url.setText("https://bm.exemple.com/api")
+    vue._edit_bm_email.setText("sylvain@exemple.com")
+    vue._edit_bm_token.setText("token")
+    respx_mock.get("https://bm.exemple.com/api/users/exemple.com/byEmail/sylvain@exemple.com").mock(
+        return_value=httpx.Response(200, json={"uid": "u1", "value": {"displayName": "Sylvain Garcia"}}))
+    vue._tester_connexion_bluemind()
+    qtbot.waitUntil(lambda: "Connecté" in vue._label_bm_statut.text(), timeout=3000)
+    assert "Sylvain Garcia" in vue._label_bm_statut.text()
+
+
+def test_tester_connexion_echec(qapp, tmp_path, qtbot, respx_mock):
+    import httpx
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    vue._edit_bm_url.setText("https://bm.exemple.com/api")
+    vue._edit_bm_email.setText("sylvain@exemple.com")
+    vue._edit_bm_token.setText("mauvaise-cle")
+    respx_mock.get("https://bm.exemple.com/api/users/exemple.com/byEmail/sylvain@exemple.com").mock(
+        return_value=httpx.Response(401))
+    respx_mock.post("https://bm.exemple.com/api/directory/exemple.com/_search").mock(
+        return_value=httpx.Response(200, json={"values": []}))
+    vue._tester_connexion_bluemind()
+    qtbot.waitUntil(lambda: "Échec" in vue._label_bm_statut.text(), timeout=3000)
+
+
+def test_tester_connexion_champs_vides_pas_de_reseau(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    vue._tester_connexion_bluemind()
+    assert vue._thread_test_bm is None
+    assert "requis" in vue._label_bm_statut.text()

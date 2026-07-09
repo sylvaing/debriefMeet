@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QCursor, QIcon, QKeySequence
@@ -119,6 +120,11 @@ class IconeTray(QSystemTrayIcon):
         self._gestionnaire = gestionnaire
 
         self._etat_visuel = EtatVisuel.REPOS
+        # (type, payload, expire_epoch_s) — messageClicked n'indique pas quelle
+        # notification a été cliquée (§8) ; on mémorise la dernière émise pour
+        # décider quoi faire au clic. Toute notification écrase la précédente.
+        self._derniere_notif: tuple[str, object, float] | None = None
+        self._evenement_pre_associe = None  # Evenement BlueMind en attente de _sur_reunion_demarree
 
         self._construire_menu()
         self._actualiser_icone(EtatVisuel.REPOS)
@@ -127,12 +133,12 @@ class IconeTray(QSystemTrayIcon):
         machine.mode_change.connect(self._on_mode_change)
         machine.erreur.connect(self._on_erreur)
         self.activated.connect(self._on_activation)
+        self.messageClicked.connect(self._on_notification_cliquee)
 
         # Notification macOS de fin de diarization + clic → ouvre l'Historique (doc 09 §5).
         if gestionnaire is not None:
             gestionnaire.termine.connect(self._on_diar_termine)
             gestionnaire.echoue.connect(self._on_diar_echoue)
-            self.messageClicked.connect(self._on_notification_cliquee)
 
         self.setToolTip("debriefMeet")
 
@@ -257,6 +263,7 @@ class IconeTray(QSystemTrayIcon):
 
     def _on_diar_termine(self, md: object, _sortie: object) -> None:
         nom = getattr(md, "stem", str(md))
+        self._derniere_notif = None
         self.showMessage(
             "Locuteurs générés",
             f"« {nom} » — cliquez pour ouvrir l'Historique.",
@@ -264,6 +271,7 @@ class IconeTray(QSystemTrayIcon):
 
     def _on_diar_echoue(self, md: object, _message: str) -> None:
         nom = getattr(md, "stem", str(md))
+        self._derniere_notif = None
         self.showMessage(
             "Diarization échouée",
             f"La génération des locuteurs de « {nom} » a échoué.",
@@ -274,11 +282,13 @@ class IconeTray(QSystemTrayIcon):
     def notifier_micro_perdu(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
+        self._derniere_notif = None
         self.showMessage("Micro perdu", message, icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
     def notifier_micro_retabli(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
+        self._derniere_notif = None
         self.showMessage("Micro rétabli", message, icone_wavemark_pour_etat(EtatVisuel.TERMINE), 8000)
 
     # ── Notification « rien entendu » (dictée/journal muets, docs/27) ───────────
@@ -286,10 +296,53 @@ class IconeTray(QSystemTrayIcon):
     def notifier_rien_entendu(self, message: str) -> None:
         if not self._config.get("notifications"):
             return
+        self._derniere_notif = None
         self.showMessage("Rien entendu", message, icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
+    # ── Notification F3 — début de réunion (docs/40 §8) ─────────────────────────
+
+    def notifier_reunion_due(self, evt: object) -> None:
+        if not self._config.get("notifications"):
+            return
+        avance = int(self._config.get("bluemind_notif_avance_min") or 5)
+        expire = evt.debut_ms / 1000 + 600  # début + 10 min (§8)
+        self._derniere_notif = ("reunion", evt, expire)
+        self.showMessage(
+            f"« {evt.titre} »",
+            f"Commence dans {avance} min — cliquez pour enregistrer.",
+            icone_wavemark_pour_etat(EtatVisuel.REPOS), 10_000)
+
+    def _sur_reunion_demarree(self, fichier: object) -> None:
+        """Câblée sur `OrchestrateurReunion.reunion_demarree` — pré-associe le
+        fichier tout juste créé si l'enregistrement vient du clic sur une
+        notification F3 (§8)."""
+        evt = self._evenement_pre_associe
+        self._evenement_pre_associe = None
+        if evt is None:
+            return
+        from pathlib import Path
+
+        from debrief_meet.core.bluemind.association import associer_evenement
+        associer_evenement(Path(str(fichier)), evt)
+
     def _on_notification_cliquee(self) -> None:
-        # messageClicked n'indique pas quelle notif → on cible le dernier job terminé.
+        if self._derniere_notif is not None:
+            type_notif, payload, expire = self._derniere_notif
+            if type_notif == "reunion" and time.time() <= expire:
+                self._demarrer_reunion_pre_associee(payload)
+                return
+        # Toute autre notification (ou une notif « reunion » expirée) : comportement
+        # historique — cibler le dernier job de diarization/transcription terminé.
         cible = self._gestionnaire.dernier_termine() if self._gestionnaire else None
         self._fenetre_principale.selectionner_reunion(cible)
         self._afficher_fenetre_principale()
+
+    def _demarrer_reunion_pre_associee(self, evt: object) -> None:
+        if self._machine.est_actif:
+            self.showMessage(
+                "Réunion", "Un enregistrement est déjà en cours.",
+                icone_wavemark_pour_etat(EtatVisuel.ERREUR), 6000)
+            return
+        self._evenement_pre_associe = evt
+        if not self._machine.toggle_reunion():
+            self._evenement_pre_associe = None
