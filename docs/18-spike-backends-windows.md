@@ -701,3 +701,94 @@ traçable) même en faisant une exception pour un tiers.
 - `--verifier-modeles` et `--prebuild-modeles-seulement` vérifient aussi la présence de
   `whisper-cli.exe` + DLLs (pas seulement les modèles) — `build_spike_backends_vm.sh` échoue donc
   avant la connexion SSH si le binaire manque.
+
+---
+
+## 14. Résultats mesurés — Alix (Intel) & décision (2026-07-09)
+
+> Machine : **Alix** — 12th Gen Intel i5-1235U (12 cœurs), 16.8 Go RAM, iGPU
+> **Intel UHD Graphics**, sur secteur. Audio canonique (1800 s, fr).
+> Rapports bruts (gitignore) : `spike/backends_windows/resultats/`
+> — run complet `…Alix_home…20260707-215655.zip`, complément openvino turbo
+> `…Alix_home…20260709-171910.zip`.
+
+### 14.1 Correctifs de harnais appliqués avant ces mesures
+
+Le premier rapport Alix (run cassé) était **incomplet et partiellement
+corrompu**. Trois bugs du harnais (pas du matériel), corrigés depuis :
+
+1. **`qualite.appliquer_wer_relatif`** supprimait le `_texte` de la référence en
+   pleine boucle → `KeyError` → **tout le backend jeté** dès que la référence
+   (large-v3) n'était pas traitée en dernier. Effet : faster-whisper **et**
+   vulkan totalement absents du rapport malgré ~2 h de calcul réel.
+2. **`moteur_openvino`** : tokenizer *fast* buggé sous transformers 4.57
+   (`'list' object has no attribute 'keys'`) → chargé désormais avec
+   `use_fast=False`.
+3. **`moteur_whispercpp`** : flag `--print-special` injectait des marqueurs
+   internes (`[_BEG_]`, `[_TT_nnn]`) dans le texte → WER vulkan gonflé
+   artificiellement (0.42 au lieu de 0.17 réel). Flag retiré.
+
+Puis (docs/39) : le modèle **OpenVINO turbo** ne chargeait pas
+(`vocab_file is None` — `vocab.json`/`merges.txt` absents de la conversion
+`optimum-cli`, requis par le tokenizer lent) ; complété côté prebuild Mac, puis
+re-testé via un **bundle minimal ciblé** (openvino turbo seul, construit sur le
+Mac). C'est ce qui donne la ligne openvino turbo ci-dessous.
+
+### 14.2 Matrice complète Intel — RTF soutenu / ratio_répétition
+
+RTF soutenu = `max(rtf_moyen, rtf_fin)` (conservateur, < 1.0 = temps réel).
+WER **relatif** à openvino large-v3 (réf. commune ; les trois large-v3
+s'accordent à ~0.17 → tous fiables). ⚠️ = dégradation (répétition élevée).
+
+| Modèle | faster-whisper (CPU) | openvino (GPU Intel) | vulkan (whisper.cpp, UHD) |
+|---|---|---|---|
+| small | 0.674 · rep 0.016 | 0.257 · **rep 0.118 ⚠️** | 0.243 · rep 0.018 |
+| medium | 1.656 ✗ · rep 0.019 | 0.488 · **rep 0.152 ⚠️** | 0.542 · rep 0.024 |
+| large-v3 | 2.546 ✗ · rep 0.014 | **0.694** · rep 0.038 | 0.919 · rep 0.012 |
+| large-v3-turbo | 1.570 ✗ · rep 0.020 | **0.287** · **rep 0.129 ⚠️** | 0.447 · rep 0.021 |
+
+WER vs openvino large-v3 (proxy qualité) : faster small/med/lg3/turbo =
+0.272 / 0.242 / 0.166 / 0.256 ; vulkan = 0.300 / 0.266 / 0.170 / 0.263 ;
+openvino small/med/turbo = 0.414 / 0.476 / 0.295. RAM au pic : vulkan ~2.0–2.5 Go
+(constant), openvino large-v3 **7.4 Go**, openvino turbo 3.1 Go.
+
+### 14.3 Constats
+
+- **faster-whisper CPU** : propre partout, mais **trop lent au-delà de `small`**
+  sur cet Intel (medium 1.7×, large 2.5×, turbo 1.6× le temps réel). Confirme
+  « CPU seul = repli, pas la cible ».
+- **openvino** : **seul large-v3 est propre** (rep 0.038). small/medium/**turbo**
+  dégradent tous (rep 0.12–0.15 — partiellement répétitifs), signature
+  systématique de la conversion openvino sur iGPU (déjà notée doc 17). openvino
+  large-v3 est le plus rapide des large-v3 (0.694) **mais** coûte 7.4 Go de RAM.
+- **vulkan** : **tout propre** (rep ≤ 0.024), tout viable (large-v3 juste serré à
+  0.919), RAM ~2 Go quelle que soit la taille. Backend le plus robuste sur toute
+  la gamme. **vulkan large-v3-turbo (0.447)** = meilleur compromis
+  vitesse/qualité/RAM/marge batterie.
+- **openvino turbo (0.287)** est le plus rapide du spike, mais dégradé
+  (rep 0.129) → **écarté** malgré le verdict auto « VIABLE » (le moteur de
+  verdict ne pondère pas la répétition — limite connue).
+
+### 14.4 Décision Intel (Alix-classe)
+
+- **Défaut recommandé : vulkan `large-v3-turbo`** — propre, RTF 0.447 (marge
+  confortable, y compris batterie), RAM ~2 Go, disponible sur iGPU Intel **et**
+  AMD (un seul chemin pour les deux profils).
+- **Option qualité max : openvino `large-v3`** (0.694, propre) si l'on privilégie
+  la qualité et que la RAM (7.4 Go) est acceptable.
+- **À proscrire sur Intel** : openvino small/medium/turbo (répétition), et
+  faster-whisper au-delà de `small` (trop lent).
+
+→ **La règle de cadrage « Intel → OpenVINO GPU » est à réviser** : openvino n'est
+gagnant qu'au large-v3 pleine qualité et reste lourd en RAM. **vulkan est un
+candidat sérieux comme backend primaire sur Intel aussi**, pas seulement sur AMD
+— à confirmer/arbitrer avec le run **Bastien (AMD)**, seul trou restant.
+
+### 14.5 Reste à faire
+
+- ⏳ **Run Bastien (AMD)** — valider empiriquement la branche « AMD → Vulkan »
+  (vulkan impeccable sur l'UHD Intel : bon présage).
+- Éventuel **run batterie** sur Alix (openvino large-v3 à 0.694 sur secteur
+  pourrait franchir 1.0 sous throttle ; vulkan turbo à 0.447 garde la marge).
+- Empaquetage openvino turbo : ✅ corrigé (docs/39) — utile seulement si l'on
+  garde openvino ; vulkan turbo couvre déjà le besoin « turbo » sur Intel.
