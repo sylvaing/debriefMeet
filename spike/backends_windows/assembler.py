@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import json
 import shutil
 import subprocess
 import sys
@@ -197,69 +198,150 @@ def convertir_openvino_turbo(dest: Path) -> None:
         "--weight-format", "int8",
         str(dest),
     ], check=True)
+    # optimum-cli n'écrit que le tokenizer *fast* (tokenizer.json), mais le moteur
+    # charge le processeur avec use_fast=False (correctif commit 30ddbcb) — le
+    # tokenizer lent WhisperTokenizer exige vocab.json + merges.txt, absents de
+    # l'export. Les autres repos OpenVINO/whisper-*-int8-ov les fournissent ; le
+    # turbo étant le seul converti localement était le seul incomplet (doc 39 §1).
+    # Passer par WhisperTokenizer.from_pretrained(...).save_pretrained(dest) ne
+    # suffit plus : transformers >=5 a unifié la sérialisation même pour la classe
+    # "lente" et ne réécrit plus vocab.json/merges.txt (vérifié transformers 5.0.0,
+    # doc 39 §1 corrigé en session). Le repo source les publie tels quels → on les
+    # télécharge directement, indépendamment de la version de transformers installée.
+    from huggingface_hub import hf_hub_download
+    for nom in ("vocab.json", "merges.txt"):
+        hf_hub_download(OV_TURBO_MODEL_ID, nom, local_dir=dest)
+    _corriger_extra_special_tokens(dest / "tokenizer_config.json")
 
 
-def telecharger_modeles(models_dir: Path, tailles: list[str]) -> None:
+def _corriger_extra_special_tokens(tokenizer_config: Path) -> None:
+    """Retire tokenizer_config["extra_special_tokens"] quand c'est une LISTE.
+
+    openai/whisper-large-v3-turbo publie cette clé comme une liste de tokens de
+    langue (ancien format). transformers >=4.57 a introduit une fonctionnalité
+    générique du même nom qui attend un dict (name -> token) et fait
+    `.keys()` dessus sans vérifier le type → AttributeError: 'list' object has
+    no attribute 'keys' au chargement, MÊME avec use_fast=False (le crash est
+    dans PreTrainedTokenizerBase.__init__, partagé par les classes lente et
+    rapide — vérifié en conditions réelles sur la VM Proxmox avec les wheels
+    win_amd64 du bundle, transformers 4.57.6, doc 39 §1 re-corrigé en session).
+    Sans risque : WhisperTokenizer reconstruit les tokens de langue depuis son
+    propre dict LANGUAGES codé en dur, pas depuis cette clé de config.
+    """
+    if not tokenizer_config.is_file():
+        return
+    config = json.loads(tokenizer_config.read_text(encoding="utf-8"))
+    if isinstance(config.get("extra_special_tokens"), list):
+        del config["extra_special_tokens"]
+        tokenizer_config.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _backend_actif(nom: str, backends: list[str] | None) -> bool:
+    """backends=None → comportement historique (tous les backends)."""
+    return backends is None or nom in backends
+
+
+def telecharger_modeles(models_dir: Path, tailles: list[str], backends: list[str] | None = None) -> None:
     from huggingface_hub import snapshot_download
     models_dir.mkdir(parents=True, exist_ok=True)
 
+    if _backend_actif("faster-whisper", backends):
+        for taille in tailles:
+            if taille in REPOS_FASTER_WHISPER:
+                dest = models_dir / f"faster-whisper-{taille}"
+                if dest.exists():
+                    print(f"  faster-whisper {taille} : déjà présent ({dest})")
+                    continue
+                repo = REPOS_FASTER_WHISPER[taille]
+                print(f"  faster-whisper {taille} ← {repo}")
+                snapshot_download(repo, local_dir=dest)
+
+    if _backend_actif("openvino", backends):
+        for taille in tailles:
+            if taille in REPOS_OPENVINO:
+                dest = models_dir / f"openvino-whisper-{taille}"
+                if dest.exists():
+                    print(f"  openvino {taille} : déjà présent ({dest})")
+                    continue
+                repo = REPOS_OPENVINO[taille]
+                print(f"  openvino {taille} ← {repo}")
+                snapshot_download(repo, local_dir=dest)
+
+        if "large-v3-turbo" in tailles:
+            convertir_openvino_turbo(models_dir / "openvino-whisper-large-v3-turbo")
+
+    if _backend_actif("directml", backends):
+        for taille in tailles:
+            if taille in REPOS_DIRECTML_ONNX:
+                dest = models_dir / f"directml-whisper-{taille}"
+                if not dest.exists():
+                    repo = REPOS_DIRECTML_ONNX[taille]
+                    print(f"  directml {taille} ← {repo} (ONNX fp16 seulement)")
+                    try:
+                        snapshot_download(repo, local_dir=dest,
+                                           allow_patterns=mdl.DIRECTML_ALLOW_PATTERNS)
+                    except Exception as exc:
+                        print(f"  ⚠ directml {taille} : téléchargement échoué ({exc.__class__.__name__}: {exc})")
+                        print(f"    → taille sautée ; vérifier le repo {repo!r} ou définir HF_TOKEN")
+                        if dest.exists():
+                            shutil.rmtree(dest, ignore_errors=True)
+                else:
+                    print(f"  directml {taille} : déjà présent ({dest})")
+
+    if _backend_actif("vulkan", backends):
+        ggml_dir = models_dir / "ggml"
+        ggml_dir.mkdir(exist_ok=True)
+        for taille in tailles:
+            if taille in GGML_FICHIERS:
+                nom = GGML_FICHIERS[taille]
+                dest = ggml_dir / nom
+                if not dest.exists():
+                    url = f"{GGML_BASE_URL}/{nom}"
+                    print(f"  ggml {taille} ← {url}")
+                    with urllib.request.urlopen(url) as resp:  # noqa: S310
+                        dest.write_bytes(resp.read())
+                else:
+                    print(f"  ggml {taille} : déjà présent")
+
+
+def _copier_si_absent(src: Path, dest: Path, fichier: bool = False) -> None:
+    if dest.exists() or not src.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if fichier:
+        shutil.copy2(src, dest)
+    else:
+        shutil.copytree(src, dest)
+    print(f"  {dest.name} ← copié depuis le prebuild ({src})")
+
+
+def _copier_modeles_deja_prets(source: Path, models_dir: Path, tailles: list[str],
+                                backends: list[str]) -> None:
+    """Copie (sans déplacer) les artefacts déjà présents dans le cache prebuild.
+
+    Contrairement au déplacement complet (backends=None), on ne prend que les
+    artefacts des backends filtrés : le cache reste intact pour les prochains
+    builds (complets ou filtrés), et le bundle réduit ne récupère pas ce qui ne
+    sert pas (doc 39 §2.2).
+    """
     for taille in tailles:
-        if taille in REPOS_FASTER_WHISPER:
-            dest = models_dir / f"faster-whisper-{taille}"
-            if dest.exists():
-                print(f"  faster-whisper {taille} : déjà présent ({dest})")
-                continue
-            repo = REPOS_FASTER_WHISPER[taille]
-            print(f"  faster-whisper {taille} ← {repo}")
-            snapshot_download(repo, local_dir=dest)
-
-    for taille in tailles:
-        if taille in REPOS_OPENVINO:
-            dest = models_dir / f"openvino-whisper-{taille}"
-            if dest.exists():
-                print(f"  openvino {taille} : déjà présent ({dest})")
-                continue
-            repo = REPOS_OPENVINO[taille]
-            print(f"  openvino {taille} ← {repo}")
-            snapshot_download(repo, local_dir=dest)
-
-    if "large-v3-turbo" in tailles:
-        convertir_openvino_turbo(models_dir / "openvino-whisper-large-v3-turbo")
-
-    for taille in tailles:
-        if taille in REPOS_DIRECTML_ONNX:
-            dest = models_dir / f"directml-whisper-{taille}"
-            if not dest.exists():
-                repo = REPOS_DIRECTML_ONNX[taille]
-                print(f"  directml {taille} ← {repo} (ONNX fp16 seulement)")
-                try:
-                    snapshot_download(repo, local_dir=dest,
-                                       allow_patterns=mdl.DIRECTML_ALLOW_PATTERNS)
-                except Exception as exc:
-                    print(f"  ⚠ directml {taille} : téléchargement échoué ({exc.__class__.__name__}: {exc})")
-                    print(f"    → taille sautée ; vérifier le repo {repo!r} ou définir HF_TOKEN")
-                    if dest.exists():
-                        import shutil as _shutil
-                        _shutil.rmtree(dest, ignore_errors=True)
-            else:
-                print(f"  directml {taille} : déjà présent ({dest})")
-
-    ggml_dir = models_dir / "ggml"
-    ggml_dir.mkdir(exist_ok=True)
-    for taille in tailles:
-        if taille in GGML_FICHIERS:
-            nom = GGML_FICHIERS[taille]
-            dest = ggml_dir / nom
-            if not dest.exists():
-                url = f"{GGML_BASE_URL}/{nom}"
-                print(f"  ggml {taille} ← {url}")
-                with urllib.request.urlopen(url) as resp:  # noqa: S310
-                    dest.write_bytes(resp.read())
-            else:
-                print(f"  ggml {taille} : déjà présent")
+        if "faster-whisper" in backends and taille in REPOS_FASTER_WHISPER:
+            nom = f"faster-whisper-{taille}"
+            _copier_si_absent(source / nom, models_dir / nom)
+        if "openvino" in backends and (taille in REPOS_OPENVINO or taille == "large-v3-turbo"):
+            nom = f"openvino-whisper-{taille}"
+            _copier_si_absent(source / nom, models_dir / nom)
+        if "directml" in backends and taille in REPOS_DIRECTML_ONNX:
+            nom = f"directml-whisper-{taille}"
+            _copier_si_absent(source / nom, models_dir / nom)
+    if "vulkan" in backends:
+        for taille in tailles:
+            nom = GGML_FICHIERS.get(taille)
+            if nom:
+                _copier_si_absent(source / "ggml" / nom, models_dir / "ggml" / nom, fichier=True)
 
 
-def preparer_modeles(models_dir: Path, tailles: list[str]) -> None:
+def preparer_modeles(models_dir: Path, tailles: list[str], backends: list[str] | None = None) -> None:
     """Copie les modèles prébuild (Mac) dans le bundle, sinon les télécharge.
 
     Le build --natif sur la VM n'a pas torch/optimum dans son venv (spike_build.cmd
@@ -267,16 +349,24 @@ def preparer_modeles(models_dir: Path, tailles: list[str]) -> None:
     OpenVINO turbo à la volée. Les modèles sont déjà synchronisés depuis le prebuild
     Mac (scripts/prebuild_spike_modeles.sh) dans chemins.dossier_modeles() ; on les
     copie tels quels plutôt que de refaire un telecharger_modeles vers models_dir.
+
+    Avec un filtre `backends` (bundle réduit, doc 39 §2.2), le cache prebuild n'est
+    JAMAIS déplacé en bloc (il contient tous les backends, pas seulement ceux
+    demandés) : on copie sélectivement ce qui existe déjà, puis on télécharge le
+    reste avec le même filtre.
     """
     source = chemins.dossier_modeles()
-    if source.resolve() != models_dir.resolve() and source.is_dir() and not modeles_prets(source, tailles):
-        # move plutôt que copie : évite de doubler ~20 Go sur un disque VM à l'étroit —
-        # source est un simple cache de sync Mac->VM, retélécharger via tar au prochain build.
-        models_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(source), str(models_dir))
-        print(f"  modèles ← déplacés depuis le prebuild ({source})")
-        return
-    telecharger_modeles(models_dir, tailles)
+    if backends is None:
+        if source.resolve() != models_dir.resolve() and source.is_dir() and not modeles_prets(source, tailles):
+            # move plutôt que copie : évite de doubler ~20 Go sur un disque VM à l'étroit —
+            # source est un simple cache de sync Mac->VM, retélécharger via tar au prochain build.
+            models_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(models_dir))
+            print(f"  modèles ← déplacés depuis le prebuild ({source})")
+            return
+    elif source.resolve() != models_dir.resolve() and source.is_dir():
+        _copier_modeles_deja_prets(source, models_dir, tailles, backends)
+    telecharger_modeles(models_dir, tailles, backends=backends)
 
 
 def modeles_prets(models_dir: Path, tailles: list[str]) -> list[str]:
@@ -297,7 +387,13 @@ def modeles_prets(models_dir: Path, tailles: list[str]) -> list[str]:
     return manquants
 
 
-def generer_lanceur() -> str:
+def generer_lanceur(args: str = "") -> str:
+    """`args` (p. ex. "--backends openvino --modeles large-v3-turbo") est injecté
+    avant `%*`, qui reste disponible pour une surcharge manuelle (doc 39 §2.2)."""
+    ligne_commande = '"%BASE%python\\python.exe" -m spike.backends_windows'
+    if args:
+        ligne_commande += f" {args}"
+    ligne_commande += " %*\r\n"
     return (
         "@echo off\r\n"
         "REM Lanceur spike backends Windows — aucune installation.\r\n"
@@ -309,7 +405,7 @@ def generer_lanceur() -> str:
         'set SPIKE_MODELS=%BASE%libs\\spike\\backends_windows\\assets\\models\r\n'
         'set SPIKE_AUDIO=%BASE%libs\\spike\\backends_windows\\assets\\audio_canonique.wav\r\n'
         'set SPIKE_WHISPER_CLI=%BASE%libs\\spike\\backends_windows\\assets\\whisper-cli.exe\r\n'
-        '"%BASE%python\\python.exe" -m spike.backends_windows %*\r\n'
+        + ligne_commande +
         "echo.\r\n"
         "pause\r\n"
     )
@@ -361,9 +457,30 @@ def verifier_wheels(paquets: list[str] | None = None) -> dict:
     return resultats
 
 
-def assembler(sortie: Path, tailles: list[str] | None = None, natif: bool = False) -> Path:
+def _suffixe_bundle(backends: list[str] | None, tailles: list[str]) -> str:
+    """Suffixe vide par défaut (rétrocompatible, cf. scripts/build_spike_backends_vm.sh
+    qui attend `spike-backends-windows.zip`) ; sinon dérivé des backends/tailles
+    filtrés pour ne pas écraser le bundle complet (doc 39 §2.2.3)."""
+    morceaux = list(backends) if backends else []
+    if tailles != mdl.SWEEP:
+        morceaux += list(tailles)
+    return f"-{'-'.join(morceaux)}" if morceaux else ""
+
+
+def _args_lanceur(backends: list[str] | None, tailles: list[str]) -> str:
+    parties = []
+    if backends:
+        parties.append("--backends " + " ".join(backends))
+    if tailles != mdl.SWEEP:
+        parties.append("--modeles " + " ".join(tailles))
+    return " ".join(parties)
+
+
+def assembler(sortie: Path, tailles: list[str] | None = None, natif: bool = False,
+              backends: list[str] | None = None) -> Path:
     tailles = tailles or mdl.SWEEP
-    bundle = sortie / "spike-backends-windows"
+    nom_bundle = "spike-backends-windows" + _suffixe_bundle(backends, tailles)
+    bundle = sortie / nom_bundle
     libs = bundle / "libs"
     bundle.mkdir(parents=True, exist_ok=True)
 
@@ -371,18 +488,21 @@ def assembler(sortie: Path, tailles: list[str] | None = None, natif: bool = Fals
     telecharger_wheels(libs, natif=natif)
     print("[2/7] Sources spike + debrief_meet")
     copier_sources(libs)
-    print("[3/7] Modèles (4 backends × 4 tailles)")
-    preparer_modeles(libs / "spike" / "backends_windows" / "assets" / "models", tailles)
-    print("[4/7] whisper-cli.exe (Vulkan)")
-    copier_whisper_cli(libs)
+    print(f"[3/7] Modèles ({backends or '4 backends'} × {tailles})")
+    preparer_modeles(libs / "spike" / "backends_windows" / "assets" / "models", tailles, backends=backends)
+    if backends is None or "vulkan" in backends:
+        print("[4/7] whisper-cli.exe (Vulkan)")
+        copier_whisper_cli(libs)
+    else:
+        print("[4/7] whisper-cli.exe (Vulkan) : sauté (backend vulkan non demandé)")
     print("[5/7] Audio canonique")
     copier_audio(libs)
     print("[6/7] Python embeddable")
     telecharger_python_embeddable(bundle)
     print("[7/7] Lanceur + zip")
     lanceur = bundle / "lancer.bat"
-    lanceur.write_text(generer_lanceur(), encoding="utf-8")
-    archive = sortie / "spike-backends-windows.zip"
+    lanceur.write_text(generer_lanceur(_args_lanceur(backends, tailles)), encoding="utf-8")
+    archive = sortie / f"{nom_bundle}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in sorted(bundle.rglob("*")):
             if f.is_file():
@@ -406,6 +526,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--natif", action="store_true",
                     help="Résolution native (build SUR la VM : même OS/arch/Python 3.11).")
     ap.add_argument("--modeles", nargs="+", default=None)
+    ap.add_argument("--backends", nargs="+", default=None,
+                    help="Filtrer les backends inclus dans le bundle (défaut : tous — "
+                         "faster-whisper/openvino/directml/vulkan).")
     ap.add_argument("--prebuild-modeles-seulement", action="store_true",
                     help="Télécharge/convertit les modèles en local (Mac) sans assembler le bundle.")
     ap.add_argument("--verifier-modeles", action="store_true",
@@ -447,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
         print("✓ Toutes les dépendances ont une wheel windows.")
         return 0
 
-    assembler(args.sortie, tailles=args.modeles, natif=args.natif)
+    assembler(args.sortie, tailles=args.modeles, natif=args.natif, backends=args.backends)
     return 0
 
 
