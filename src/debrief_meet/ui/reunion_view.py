@@ -49,7 +49,7 @@ _ICONE_OUVRIR = "arrow-square-out"
 _ICONE_REVELER = "folder"
 _ICONE_SUPPR_AUDIO = "microphone-slash"
 _ICONE_TOUT_SUPPR = "trash"
-_ICONE_BLUEMIND_ASSOCIER = "list"
+_ICONE_BLUEMIND_ASSOCIER = "calendar-check"
 _ICONE_BLUEMIND_ASSOCIE = "check-circle"
 _ICONE_NOMMER_LOCUTEURS = "chat-text"
 
