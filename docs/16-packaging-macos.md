@@ -1,9 +1,13 @@
 # Phase 4 — Packaging macOS (`.app` + `.dmg`)
 
-> **Statut au 2026-06-30 :** 🟡 **en cours** — fondations code + outillage faits et
-> testés (suite dev **481 passed**) ; **build PyInstaller non encore validé**
-> (mis en pause). Ce document est autoporteur : une autre session doit pouvoir
-> reprendre à partir d'ici sans contexte supplémentaire.
+> **Statut au 2026-07-12 :** 🟡 **en cours** — fondations code + outillage faits et
+> testés ; **build PyInstaller non encore validé** (mis en pause le 2026-06-30).
+> Préparation d'un run autonome faite le 2026-07-12 : **certificat créé et validé**
+> (§4, aucune interaction requise), **décision ffmpeg tranchée** (§5.5, option b —
+> build LGPL minimal compilé par nous, bundlé), **item notifications ajouté** à la
+> checklist (§6.8). Ce document est autoporteur :
+> une autre session doit pouvoir reprendre à partir d'ici sans contexte
+> supplémentaire — seul §6 (validation TCC) reste manuel, par conception.
 >
 > Références : [`03-phases-implementation.md`](03-phases-implementation.md) §Phase 4.
 
@@ -89,8 +93,21 @@ Dans `packaging/` :
 - **`creer_certificat.sh`** — crée **une fois** l'identité de signature locale stable
   « debriefMeet Local » (clé RSA + cert auto-signé EKU codeSigning, importé au
   trousseau de session). **Idempotent** : ne régénère pas si présente (sinon les
-  permissions seraient perdues). Premier `codesign` ensuite → macOS demande
-  d'autoriser l'accès au trousseau (**Toujours autoriser**, une seule fois).
+  permissions seraient perdues).
+
+  **✅ Exécuté et validé le 2026-07-12** — identité en trousseau, leaf hash
+  `95fa8aa3da22a3ff5900164ae7f254fa3dbb31b2`, **identique entre deux signatures**
+  (vérifié via `codesign -d -r-` : le requirement désigné épingle
+  `certificate leaf = H"…"` — c'est ce que TCC compare). **Aucune popup
+  trousseau** : l'ACL posée par `security import -T /usr/bin/codesign` suffit,
+  codesign signe sans interaction. Trois pièges corrigés au passage dans le script :
+  1. `security import` **refuse un p12 à mot de passe vide** (« MAC verification
+     failed ») → mot de passe jetable (`uuidgen`), utilisé le temps de l'import ;
+  2. utiliser `/usr/bin/openssl` (LibreSSL), pas l'openssl Homebrew ;
+  3. le check d'idempotence ne doit **pas** utiliser `find-identity -v` : un cert
+     auto-signé est `CSSMERR_TP_NOT_TRUSTED` donc exclu des identités « valides »
+     → le script régénérait un cert à chaque run (= perte TCC). Sans `-v`, OK.
+     (codesign signe très bien avec une identité non « trusted ».)
 
 ---
 
@@ -156,17 +173,71 @@ ffmpeg est installé via brew*. Conséquences :
    dev, où ffmpeg était dans le PATH) → transcription différée / diarization en
    échec avec un `FileNotFoundError` cryptique (`core/audio.py`, `_decoder_ffmpeg`).
 
-**À trancher pendant la validation du build (§5.1), trois options :**
+**✅ Tranché (utilisateur, 2026-07-12) : option (b) — bundler ffmpeg dans la `.app`.**
 
-- **(a) Étendre la résolution** : chercher ffmpeg aussi dans les emplacements connus
-  (`/opt/homebrew/bin`, `/usr/local/bin`) au lieu du seul PATH — le moins cher,
-  garde la dépendance implicite à brew ;
-- **(b) Bundler ffmpeg** dans le `.app` (+ ~25 Mo, licence LGPL à vérifier selon le build) ;
-- **(c) Assumer le WAV** dans l'app packagée et documenter.
+L'app packagée est ainsi **autonome** (Opus garanti, `.opus` historiques toujours
+relisibles), sans dépendance à un brew de la machine cible (Bastien/Alix n'auront
+pas brew).
 
-Dans tous les cas : remplacer le `FileNotFoundError` brut à la **relecture** d'un
-`.opus` par une erreur typée avec message explicite (« ffmpeg requis pour relire
-l'audio Opus »).
+1. **Binaire à embarquer : ffmpeg minimal LGPL, compilé par nous** (arm64,
+   liaison statique de libopus, libs système en dynamique — normal sur macOS).
+   Pas de prébuild communautaire : ils sont quasi tous « full GPL »
+   (`--enable-gpl`), et le binaire brew est inutilisable (dylibs `/opt/homebrew`
+   non portables). Ce que le code utilise réellement (cf. `core/fichiers.py`
+   encodage `-f s16le … -c:a libopus` → `.opus`, et `core/audio.py` décodage
+   `.opus`/autres → PCM 16k mono) tient entièrement dans le périmètre LGPL :
+   configure de départ —
+   `--disable-gpl --disable-nonfree --disable-everything --disable-doc
+   --disable-ffplay --disable-ffprobe --enable-libopus` + activation sélective
+   (protocols `file,pipe` ; demuxers `s16le,ogg,wav` ; muxers `opus,ogg,wav,s16le` ;
+   decoders `pcm_s16le,opus,libopus` ; encoders `pcm_s16le,libopus` ; filters
+   `aresample,aformat,anull`) — **itérer avec les tests réels ci-dessous comme
+   oracle** plutôt que de sur-raffiner la liste a priori.
+   Validation obligatoire du binaire produit :
+   - `otool -L ffmpeg` → uniquement `/usr/lib` + frameworks système (pas de
+     `/opt/homebrew`) ;
+   - `./ffmpeg -hide_banner -encoders | grep libopus` → présent ;
+   - `./ffmpeg -version` → configuration **sans** `--enable-gpl` ;
+   - test réel bout-en-bout : encode WAV→`.opus` avec la commande exacte de
+     `core/fichiers.py`, puis décode avec celle de `core/audio.py`, et relire
+     un `.opus` **historique** existant.
+2. **Script de build** : `packaging/build_ffmpeg.sh` — télécharge les sources
+   (ffmpeg + libopus, **versions et checksums SHA-256 épinglés**), compile
+   libopus statique puis ffmpeg, dépose le binaire en `packaging/vendor/ffmpeg`
+   (**git-ignoré**, ~5-10 Mo). Idempotent (ne rebuilde pas si le binaire validé
+   est présent). `build_app.sh` échoue avec un message clair si le binaire
+   manque (→ « lancer packaging/build_ffmpeg.sh »).
+3. **Spec PyInstaller** : ajouter aux `datas` → `Contents/Resources/vendor/ffmpeg`
+   (même motif que le helper SCK).
+4. **Signature** (`build_app.sh`) : signer le binaire avec l'identité stable,
+   comme le helper (pas d'entitlements particuliers), **avant** le re-scellage
+   final de l'app.
+5. **Résolution côté code** : centraliser dans **une** fonction (ex.
+   `core/fichiers.chemin_ffmpeg()`) : si `est_figee()` → binaire embarqué (via
+   `core/ressources.chemin_ressource`), sinon `shutil.which("ffmpeg")` (dev).
+   Remplacer les **deux** invocations `"ffmpeg"` nues (`core/fichiers.py`
+   encodage, `core/audio.py` `_decoder_ffmpeg`). Le repli WAV existant reste
+   pour le dev sans ffmpeg.
+6. **Erreur typée** à la relecture d'un `.opus` sans ffmpeg résolu (« ffmpeg
+   requis pour relire l'audio Opus ») au lieu du `FileNotFoundError` brut,
+   remontée proprement à l'UI (dialogue gabarit §8.9) — cas devenu improbable
+   en bundle mais garde-fou (binaire manquant/corrompu, dev).
+7. **Licence** : le build maison est **LGPL** (aucun composant GPL activé,
+   libopus = BSD). L'app l'invoque en **subprocess** (programme séparé, simple
+   agrégation — aucune contamination du code de l'app). Obligations restantes,
+   légères : embarquer le texte de licence (`Contents/Resources/vendor/
+   LICENSE-ffmpeg.md` : LGPL 2.1 + mention libopus BSD + versions exactes des
+   sources, dont l'URL est déjà épinglée dans `build_ffmpeg.sh`) et le
+   mentionner dans la notice utilisateur.
+
+Options écartées : (a) étendre la résolution aux chemins brew (garde la
+dépendance implicite à brew sur chaque machine cible), (c) assumer le WAV
+(fichiers ~10×, casse la relecture des `.opus` historiques).
+
+Tests attendus : `chemin_ffmpeg()` en mode figé simulé (monkeypatch
+`est_figee`/`chemin_ressource`) et en dev ; erreur typée quand rien n'est
+résolu ; `test_build.py` vérifie la présence de `vendor/ffmpeg` signé dans
+l'app produite.
 
 ### 5.6 Doc & clôture
 
@@ -186,6 +257,15 @@ Checklist à jouer une fois le `.dmg` produit :
 5. Les **3 modes** fonctionnent depuis l'app installée (Dictée, Réunion, Journal).
 6. **Autostart** : activer dans Préférences → vérifier le LaunchAgent (`~/Library/LaunchAgents/com.sylvaingarcia.debriefmeet.plist`) et le redémarrage de session.
 7. **Raccourcis globaux** (`docs/28`) : depuis l'app packagée, ⌃⌥⌘D/R/J basculent bien les 3 modes même sans focus, et un changement dans Préférences → Raccourcis prend effet sans redémarrer.
+8. **Notifications natives** : déclencher une notification (fin de diarization, ou
+   « rien entendu » sur une dictée muette) → macOS affiche la **demande
+   d'autorisation** au premier envoi (Qt la fait via `UNUserNotificationCenter`
+   au premier `showMessage` — ne fonctionne **que** bundlé, jamais en dev
+   `python -m debrief_meet`), **debriefMeet apparaît** dans Réglages Système →
+   Notifications, et la bannière s'affiche. Vérifier aussi que le **clic** sur la
+   notification ouvre l'Historique sur la bonne réunion. Si aucune demande
+   d'autorisation n'apparaît : bug à traiter avant clôture (demander
+   l'autorisation explicitement au premier lancement).
 
 ---
 
