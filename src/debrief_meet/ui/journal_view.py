@@ -16,7 +16,6 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
+from debrief_meet.ui import dialogues
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import COL_ACTIONS_JOURNAL, COL_FICHIER_JOURNAL, CaptureModel
@@ -88,7 +88,7 @@ class JournalView(QWidget):
         table.setColumnWidth(0, 40)
         table.setColumnWidth(1, 200)
         entete.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table.setColumnWidth(3, 150)
+        table.setColumnWidth(3, 82)  # marge 20 + Copier 30 + gap 2 + ⋯ 30 (§8.6.1) — cf. ActionsDelegate.sizeHint
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -103,12 +103,20 @@ class JournalView(QWidget):
 
         self._action_bar = CaptureActionBar(
             Mode.JOURNAL, avec_recherche=True, placeholder_recherche="Rechercher dans le journal…",
-            parent=self)
+            actions_masse=True, avec_ignorer_audio=False, parent=self)
         self._action_bar.demande_bascule.connect(machine.toggle_journal)
         self._action_bar.recherche_change.connect(self._proxy.setFilterFixedString)
+        # Actions en masse (§8.6.4) — Journal : suppression seule (pas d'« Ignorer l'audio »).
+        self._action_bar.demande_supprimer_masse.connect(lambda: self._tout_supprimer(None))
+        self._action_bar.demande_deselection.connect(self._table.clearSelection)
+        self._table.selectionModel().selectionChanged.connect(self._sur_selection_change)
+        self._modele.modelReset.connect(self._sur_selection_change)
         layout.addWidget(self._action_bar)
 
         layout.addWidget(self._table, 1)
+
+    def _sur_selection_change(self, *_args) -> None:
+        self._action_bar.definir_compte_selection(len(self._chemins_selectionnes()))
 
     # ── Machine à états (RecordingController) ───────────────────────────────────
 
@@ -135,8 +143,9 @@ class JournalView(QWidget):
         return [
             ActionSpec(_ICONE_COPIER, "Copier", True, lambda c=chemin: self._copier(c)),
             ActionSpec(_ICONE_OUVRIR, "Ouvrir", True, lambda c=chemin: self._ouvrir(c)),
-            ActionSpec(_ICONE_REVELER, "Révéler dans le Finder", True, lambda c=chemin: self._reveler(c)),
-            ActionSpec(_ICONE_TOUT_SUPPR, "Supprimer", True, lambda c=chemin: self._tout_supprimer_un(c)),
+            ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True, lambda c=chemin: self._reveler(c)),
+            ActionSpec(_ICONE_TOUT_SUPPR, "Supprimer", True, lambda c=chemin: self._tout_supprimer_un(c),
+                      danger=True, separateur_avant=True),
         ]
 
     # ── Sélection ──────────────────────────────────────────────────────────────
@@ -205,11 +214,14 @@ class JournalView(QWidget):
         cibles = self._cibles(chemin)
         if not cibles:
             return
-        rep = QMessageBox.question(
-            self, "Tout supprimer",
-            f"Supprimer définitivement {len(cibles)} enregistrement(s) ?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if rep != QMessageBox.StandardButton.Yes:
+        n = len(cibles)
+        noun = "entrées" if n > 1 else "entrée"
+        verbe = "seront supprimées" if n > 1 else "sera supprimée"
+        confirme = dialogues.confirmer(
+            self, titre=f"Supprimer {n} {noun} ?",
+            description=f"{n} {noun} {verbe} définitivement (notes et audio inclus).",
+            label_action="Supprimer", icone="trash")
+        if not confirme:
             return
         for c in cibles:
             try:

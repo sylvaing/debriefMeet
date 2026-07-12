@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QMessageBox,
     QSystemTrayIcon,
     QWidget,
     QWidgetAction,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
 from debrief_meet.core.config import Config
 from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
+from debrief_meet.ui import dialogues
 from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.fenetre_principale import FenetrePrincipale
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
@@ -250,14 +250,15 @@ class IconeTray(QSystemTrayIcon):
         try:
             from debrief_meet.platform.infos_systeme import collecter_infos_systeme
             chemin = exporter_diagnostic(dossier_diagnostic_par_defaut(), collecter_infos_systeme())
-            QMessageBox.information(
-                None, "Diagnostic exporté",
-                f"Diagnostic exporté sur le Bureau : {chemin.name}\n"
+            dialogues.informer(
+                self._fenetre_principale, titre="Diagnostic exporté",
+                description=f"Diagnostic exporté sur le Bureau : {chemin.name}\n"
                 "Envoyez ce fichier à Sylvain.",
             )
         except Exception as exc:
             logger.error("Export diagnostic impossible (%s)", exc, exc_info=True)
-            QMessageBox.critical(None, "Erreur", f"Impossible d'exporter le diagnostic :\n{exc}")
+            dialogues.avertir(self._fenetre_principale, titre="Erreur",
+                              description=f"Impossible d'exporter le diagnostic :\n{exc}")
 
     # ── Notifications de diarization ────────────────────────────────────────────
 

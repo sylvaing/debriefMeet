@@ -69,3 +69,44 @@ def test_recherche_change_emet_le_texte(qapp, qtbot):
     with qtbot.waitSignal(barre.recherche_change, timeout=1000) as bloqueur:
         barre._recherche.setText("devis")
     assert bloqueur.args == ["devis"]
+
+
+# ── Barre d'actions en masse (§8.6.4) ────────────────────────────────────────
+
+def test_pas_de_bulk_bar_sans_actions_masse(qapp):
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False)
+    assert barre._bulk is None
+    barre.definir_compte_selection(3)  # ne doit pas lever sans bulk bar
+
+
+def test_bulk_bar_apparait_a_partir_de_deux(qapp):
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False, actions_masse=True,
+                             avec_ignorer_audio=True)
+    assert barre._bulk.isHidden()
+    barre.definir_compte_selection(1)
+    assert barre._bulk.isHidden()          # 1 seule ligne → menu ⋯, pas de barre de lot
+    barre.definir_compte_selection(2)
+    assert not barre._bulk.isHidden()
+    barre.definir_compte_selection(0)
+    assert barre._bulk.isHidden()
+
+
+def test_bulk_signaux_relayes(qapp, qtbot):
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False, actions_masse=True,
+                             avec_ignorer_audio=True)
+    with qtbot.waitSignal(barre.demande_supprimer_masse, timeout=1000):
+        barre._bulk.supprimer.emit()
+    with qtbot.waitSignal(barre.demande_ignorer_audio_masse, timeout=1000):
+        barre._bulk.ignorer_audio.emit()
+    with qtbot.waitSignal(barre.demande_deselection, timeout=1000):
+        barre._bulk.deselection.emit()
+
+
+def test_bulk_journal_sans_bouton_ignorer_audio(qapp):
+    from PySide6.QtWidgets import QPushButton
+
+    from debrief_meet.ui.bulk_action_bar import BulkActionBar
+    bulk = BulkActionBar(avec_ignorer_audio=False)
+    libelles = [b.text().strip() for b in bulk.findChildren(QPushButton)]
+    assert "Ignorer l'audio" not in libelles      # variante Journal : suppression seule
+    assert any("Supprimer" in x for x in libelles)

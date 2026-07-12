@@ -70,7 +70,7 @@ def test_precharge_hors_ligne_avertit_et_demarre_quand_meme(qapp, tmp_path, monk
         def telecharger_modele(self, nom, progression=None):
             raise RuntimeError("pas de réseau")
     avertissements = []
-    monkeypatch.setattr(cm.QMessageBox, "warning",
+    monkeypatch.setattr(cm.dialogues, "avertir",
                         lambda *a, **k: avertissements.append(a))
     m = _MoteurKO()
     precharger_au_demarrage(m, _config(tmp_path, modele="medium"))

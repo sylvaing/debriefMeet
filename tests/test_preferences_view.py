@@ -93,7 +93,7 @@ def test_raccourci_valide_persiste(qapp, tmp_path):
 
 
 def test_raccourci_doublon_refuse_et_revert(qapp, tmp_path, monkeypatch):
-    monkeypatch.setattr(pv_module.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(pv_module.dialogues, "avertir", lambda *a, **k: None)
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
     valeur_avant = cfg.get("raccourci_dictee")
@@ -103,7 +103,7 @@ def test_raccourci_doublon_refuse_et_revert(qapp, tmp_path, monkeypatch):
 
 
 def test_raccourci_sans_modificateur_refuse(qapp, tmp_path, monkeypatch):
-    monkeypatch.setattr(pv_module.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(pv_module.dialogues, "avertir", lambda *a, **k: None)
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
     valeur_avant = cfg.get("raccourci_dictee")
@@ -131,7 +131,7 @@ def test_reinitialiser_restaure_les_defauts(qapp, tmp_path):
 def test_appliquer_avertit_si_raccourci_refuse(qapp, tmp_path, monkeypatch):
     cfg = _config(tmp_path)
     appels = []
-    monkeypatch.setattr(pv_module.QMessageBox, "warning", lambda *a, **k: appels.append(a))
+    monkeypatch.setattr(pv_module.dialogues, "avertir", lambda *a, **k: appels.append(a))
     vue = PreferencesView(cfg, reappliquer_raccourcis=lambda: ["Ctrl+Alt+X"])
     vue._edit_raccourci_dictee.setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
     assert appels
@@ -298,14 +298,13 @@ def test_meme_valeur_url_ne_redeclenche_pas_reset(qapp, tmp_path):
 
 
 def test_bouton_reset_demande_confirmation(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
     cfg = _config(tmp_path)
     appels = []
     vue = PreferencesView(cfg, bluemind_reinitialiser_sync=lambda: appels.append(1))
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    monkeypatch.setattr(pv_module.dialogues, "confirmer", lambda *a, **k: False)
     vue._reinitialiser_sync_bluemind()
     assert appels == []
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(pv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._reinitialiser_sync_bluemind()
     assert appels == [1]
 

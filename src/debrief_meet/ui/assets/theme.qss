@@ -122,3 +122,11 @@ QLabel#trayQuitLabel { font-family: ".AppleSystemUIFont", "Segoe UI", sans-serif
 /* ---------- Barre auto-save (préférences) ---------- */
 QLabel#autosaveBar { background: #FBFBFC; border-top: 1px solid #E7E9EE;
   color: #667085; font-size: 12.5px; padding: 10px 20px; }
+
+/* ---------- Popover d'actions (colonne « actions », §8.6.3) ----------
+   Les items sont des QWidgetAction custom (cf. actions_menu.py) — ce QSS ne
+   porte que le cadre du menu, pas les items (survol/couleur gérés en Python,
+   même limite que QMenu#trayMenu pour une couleur de texte statique). */
+QMenu#actionsMenu { background: #FFFFFF; border: 1px solid #E7E9EE;
+  border-radius: 10px; padding: 5px; }
+QMenu#actionsMenu::separator { height: 1px; background: #F0F1F4; margin: 5px 8px; }

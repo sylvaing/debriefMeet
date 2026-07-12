@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtWidgets import QDialogButtonBox
-
 from debrief_meet.core.bluemind import association
 from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT
 from debrief_meet.core.bluemind.store import Evenement
@@ -41,11 +39,11 @@ def test_plusieurs_evenements_affiche_le_choix(qapp, tmp_path):
     dlg = DialogAssociationBluemind(md, [e1, e2])
     assert dlg._page_choix is not None
     assert dlg._evenement_choisi is None
-    assert dlg._boutons.button(QDialogButtonBox.StandardButton.Ok).isEnabled() is False
+    assert dlg.bouton_action().isEnabled() is False
 
     dlg._liste_choix.setCurrentRow(1)
     assert dlg._evenement_choisi is e2
-    assert dlg._boutons.button(QDialogButtonBox.StandardButton.Ok).isEnabled() is True
+    assert dlg.bouton_action().isEnabled() is True
 
 
 def test_validation_ecrit_le_sidecar(qapp, tmp_path):

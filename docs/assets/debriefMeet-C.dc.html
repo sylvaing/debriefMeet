@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#3B5BDB"/><g fill="#ffffff"><rect x="31" y="43" width="7" height="14" rx="3.5"/><rect x="43" y="34" width="7" height="32" rx="3.5"/><rect x="55" y="45" width="7" height="10" rx="3.5"/><rect x="67" y="39" width="7" height="22" rx="3.5"/></g></svg></template>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<style>
+  @keyframes bwave { 0% { transform: scaleY(.12); } 100% { transform: scaleY(1); } }
+  @keyframes bpulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.82); } }
+</style>
+</helmet>
+<div style="display: flex; gap: 40px; align-items: flex-start; font-family: 'IBM Plex Sans', system-ui, sans-serif;">
+
+  <!-- ============ FENÊTRE ============ -->
+  <div style="width: 1000px; flex: none; height: 660px; background: #fff; border-radius: 12px; box-shadow: 0 30px 70px -24px rgba(16,24,40,.42), 0 0 0 1px rgba(16,24,40,.07); overflow: hidden; display: flex; flex-direction: column; position: relative;">
+
+    <!-- Titlebar -->
+    <div style="height: 40px; flex: 0 0 40px; background: #F6F7F9; border-bottom: 1px solid #E7E9EE; display: flex; align-items: center; padding: 0 14px; position: relative;">
+      <div style="display: flex; gap: 8px;">
+        <span style="width: 11px; height: 11px; border-radius: 50%; background: #D6D9DE;"></span>
+        <span style="width: 11px; height: 11px; border-radius: 50%; background: #D6D9DE;"></span>
+        <span style="width: 11px; height: 11px; border-radius: 50%; background: #D6D9DE;"></span>
+      </div>
+      <div style="position: absolute; left: 0; right: 0; text-align: center; font-size: 12.5px; font-weight: 600; color: #667085; pointer-events: none;">debriefMeet</div>
+    </div>
+
+    <!-- Toolbar -->
+    <div style="height: 58px; flex: 0 0 58px; border-bottom: 1px solid #E7E9EE; display: flex; align-items: center; gap: 26px; padding: 0 20px; background: #fff;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <dc-import name="WaveMark" color="#3B5BDB" filled="{{ true }}" size="26" hint-size="26px,26px"></dc-import>
+        <span style="font-size: 15px; font-weight: 700; color: #1A1D23; letter-spacing: -.01em;">debriefMeet</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #98A2B3; border: 1px solid #E7E9EE; border-radius: 5px; padding: 1px 5px;">0.2.0</span>
+      </div>
+      <div style="display: flex; gap: 6px; height: 100%;">
+        <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="3">
+          <button onClick="{{ nav.onClick }}" style="{{ nav.style }}">
+            <i class="ph {{ nav.icon }}" style="font-size: 16px;"></i>
+            <span>{{ nav.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="flex: 1;"></div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <button onClick="{{ openPrefs }}" title="Préférences" style="{{ prefsBtnStyle }}"><i class="ph ph-gear" style="font-size: 18px;"></i></button>
+        <dc-import name="WaveMark" color="{{ stateColor }}" filled="{{ stateFilled }}" size="24" hint-size="24px,24px"></dc-import>
+      </div>
+    </div>
+
+    <!-- ===== SECTION DE CAPTURE (Dictée / Réunion / Journal) ===== -->
+    <sc-if value="{{ isCapture }}" hint-placeholder-val="{{ true }}">
+    <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+
+      <!-- barre d'action de section : Démarrer/Arrêter + recherche -->
+      <div style="display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid #EFF1F4;">
+        <button onClick="{{ startBtn.onClick }}" style="{{ startBtn.style }}">
+          <sc-if value="{{ startBtn.isStop }}" hint-placeholder-val="{{ false }}"><i class="ph ph-stop-fill" style="font-size: 14px;"></i></sc-if>
+          <sc-if value="{{ startBtn.isStart }}" hint-placeholder-val="{{ true }}"><i class="ph {{ startBtn.icon }}" style="font-size: 16px;"></i></sc-if>
+          <span>{{ startBtn.label }}</span>
+        </button>
+        <sc-if value="{{ recNow }}" hint-placeholder-val="{{ false }}"><div style="display: flex; align-items: center; gap: 8px;"><span style="width: 9px; height: 9px; border-radius: 50%; background: #FF3B30; animation: bpulse 1.4s ease-in-out infinite;"></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 500; color: #FF3B30;">{{ elapsedFmt }}</span></div></sc-if>
+        <sc-if value="{{ otherRec }}" hint-placeholder-val="{{ false }}"><span style="font-size: 12px; color: #98A2B3;">Un enregistrement est déjà en cours.</span></sc-if>
+        <sc-if value="{{ bulkActive }}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="width: 1px; height: 22px; background: #E7E9EE; margin: 0 4px;"></div>
+          <span style="font-size: 12.5px; font-weight: 600; color: #475467; white-space: nowrap;"><b style="color: #1A1D23;">{{ bulkCount }}</b> sélectionnés</span>
+          <sc-if value="{{ bulkShowAudio }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ bulkIgnoreAudio }}" title="Ignorer l'audio des éléments sélectionnés" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 8px; border: 1px solid #D6D9DE; background: #fff; color: #344054; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600; transition: all .12s;" style-hover="border-color: #3B5BDB; color: #2A46B8;"><i class="ph ph-microphone-slash" style="font-size: 15px;"></i><span>Ignorer l'audio</span></button>
+          </sc-if>
+          <button onClick="{{ bulkDelete }}" title="Supprimer les éléments sélectionnés" style="display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 8px; border: 1px solid #F4C9C7; background: #fff; color: #B42318; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600; transition: all .12s;" style-hover="background: #FEF3F2;"><i class="ph ph-trash" style="font-size: 15px;"></i><span>Supprimer</span></button>
+          <button onClick="{{ bulkClear }}" title="Désélectionner" style="width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: #98A2B3; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #F2F4F7; color: #475467;"><i class="ph ph-x" style="font-size: 15px;"></i></button>
+        </div>
+        </sc-if>
+        <div style="flex: 1;"></div>
+        <sc-if value="{{ showSearch }}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; align-items: center; gap: 8px; width: 260px; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 7px 11px;">
+          <i class="ph ph-magnifying-glass" style="font-size: 15px; color: #98A2B3;"></i>
+          <input placeholder="{{ searchPlaceholder }}" style="border: none; background: transparent; font-family: inherit; font-size: 13px; color: #1A1D23; width: 100%; outline: none;">
+        </div>
+        </sc-if>
+      </div>
+
+      <!-- état dictée (pas d'historique) -->
+      <sc-if value="{{ isDictee }}" hint-placeholder-val="{{ false }}">
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 30px; text-align: center;">
+        <div style="width: 60px; height: 60px; border-radius: 16px; background: #EEF1FE; display: flex; align-items: center; justify-content: center;"><i class="ph ph-microphone" style="font-size: 28px; color: #2A46B8;"></i></div>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 380px;">
+          <span style="font-size: 16px; font-weight: 700; color: #1A1D23;">Dictée vocale</span>
+          <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #8A919E;">Le texte transcrit est copié dans le presse-papiers. Cliquez sur <b style="color: #475467;">Démarrer la dictée</b> ou utilisez le raccourci <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #475467;">⌃⌥⌘D</span>.</p>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- table réunion -->
+      <sc-if value="{{ isTable }}" hint-placeholder-val="{{ true }}">
+      <div style="flex: 1; overflow-y: auto;">
+        <div style="display: grid; grid-template-columns: 40px minmax(0,1fr) 150px 74px 116px 34px 68px; column-gap: 12px; align-items: center; padding: 9px 20px; border-bottom: 1px solid #EFF1F4; position: sticky; top: 0; background: #FBFBFC; z-index: 1;">
+          <span></span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">TITRE</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">DATE</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">DURÉE</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">ÉTAT</span>
+          <span></span>
+          <span></span>
+        </div>
+        <sc-for list="{{ captureRows }}" as="m" hint-placeholder-count="7">
+          <div onClick="{{ m.onClick }}" style="position: relative; display: grid; grid-template-columns: 40px minmax(0,1fr) 150px 74px 116px 34px 68px; column-gap: 12px; align-items: center; padding: 0 20px; height: 52px; border-bottom: 1px solid #F1F2F5; cursor: pointer;" style-hover="background: #FAFAFB;">
+            <sc-if value="{{ m.sel }}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; inset: 0; background: #EEF1FE;"></div>
+              <div style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: #3B5BDB;"></div>
+            </sc-if>
+            <div style="position: relative; color: #667085;"><i class="ph {{ m.typeIcon }}" style="font-size: 17px;"></i></div>
+            <div style="position: relative; min-width: 0; padding-right: 12px;"><span style="font-size: 13.5px; font-weight: 600; color: #1A1D23; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">{{ m.title }}</span></div>
+            <span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #667085;">{{ m.date }}</span>
+            <span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #667085;">{{ m.dur }}</span>
+            <div style="position: relative;"><span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: {{ m.statusColor }}; background: {{ m.statusBg }}; padding: 3px 9px 3px 7px; border-radius: 20px;"><i class="ph {{ m.statusIcon }}" style="font-size: 13px;"></i>{{ m.status }}</span></div>
+            <div style="position: relative; display: flex; align-items: center; justify-content: flex-end;">
+              <sc-if value="{{ m.bmLinked }}" hint-placeholder-val="{{ false }}">
+                <span title="{{ m.bmTip }}" style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: #1F9D6B;"><i class="ph ph-calendar-check" style="font-size: 17px;"></i></span>
+              </sc-if>
+              <sc-if value="{{ m.bmMatch }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ m.onAssocier }}" title="Un événement du calendrier BlueMind correspond — associer" style="width: 28px; height: 28px; border-radius: 7px; border: none; background: transparent; color: #2A46B8; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #EEF1FE;"><i class="ph ph-calendar-plus" style="font-size: 17px;"></i></button>
+              </sc-if>
+            </div>
+            <div data-menu-root style="position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 2px;">
+              <sc-if value="{{ m.canCopy }}" hint-placeholder-val="{{ true }}">
+                <button onClick="{{ m.onCopy }}" title="Copier la transcription" style="width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: #98A2B3; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #fff; color: #2A46B8; box-shadow: 0 1px 3px rgba(16,24,40,.14);"><i class="ph ph-copy" style="font-size: 16px;"></i></button>
+              </sc-if>
+              <sc-if value="{{ m.hasMenu }}" hint-placeholder-val="{{ true }}">
+                <button onClick="{{ m.onToggleMenu }}" title="Actions" style="width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: #98A2B3; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #fff; color: #2A46B8; box-shadow: 0 1px 3px rgba(16,24,40,.14);"><i class="ph ph-dots-three-vertical" style="font-size: 18px;"></i></button>
+              </sc-if>
+              <sc-if value="{{ m.menuOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="{{ m.menuStyle }}">
+                  <sc-for list="{{ m.menu }}" as="mi" hint-placeholder-count="6">
+                    <sc-if value="{{ mi.divider }}" hint-placeholder-val="{{ false }}"><div style="height: 1px; background: #F0F1F4; margin: 5px 8px;"></div></sc-if>
+                    <sc-if value="{{ mi.item }}" hint-placeholder-val="{{ true }}">
+                      <button onClick="{{ mi.onClick }}" style="{{ mi.style }}" style-hover="{{ mi.styleHover }}"><i class="ph {{ mi.icon }}" style="font-size: 16px; width: 18px; color: {{ mi.iconColor }};"></i><span>{{ mi.label }}</span></button>
+                    </sc-if>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+
+      <!-- table journal -->
+      <sc-if value="{{ isJournal }}" hint-placeholder-val="{{ false }}">
+      <div style="flex: 1; overflow-y: auto;">
+        <div style="display: grid; grid-template-columns: 40px minmax(0,1fr) 130px 92px; align-items: center; padding: 9px 20px; border-bottom: 1px solid #EFF1F4; background: #FBFBFC;">
+          <span></span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">FICHIER</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">NOTES</span>
+          <span></span>
+        </div>
+        <sc-for list="{{ journal }}" as="j" hint-placeholder-count="3">
+          <div onClick="{{ j.onClick }}" style="position: relative; display: grid; grid-template-columns: 40px minmax(0,1fr) 130px 92px; align-items: center; padding: 0 20px; height: 52px; border-bottom: 1px solid #F1F2F5; cursor: pointer;" style-hover="background: #FAFAFB;">
+            <sc-if value="{{ j.sel }}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; inset: 0; background: #EEF1FE;"></div>
+              <div style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: #3B5BDB;"></div>
+            </sc-if>
+            <div style="position: relative; color: #667085;"><i class="ph ph-notebook" style="font-size: 17px;"></i></div>
+            <span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; color: #1A1D23;">{{ j.name }}</span>
+            <span style="position: relative; font-size: 12.5px; color: #667085;">{{ j.note }}</span>
+            <div data-menu-root style="position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 2px;">
+              <button onClick="{{ j.onCopy }}" title="Copier" style="width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: #98A2B3; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #fff; color: #2A46B8; box-shadow: 0 1px 3px rgba(16,24,40,.14);"><i class="ph ph-copy" style="font-size: 16px;"></i></button>
+              <button onClick="{{ j.onToggleMenu }}" title="Actions" style="width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: #98A2B3; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .12s;" style-hover="background: #fff; color: #2A46B8; box-shadow: 0 1px 3px rgba(16,24,40,.14);"><i class="ph ph-dots-three-vertical" style="font-size: 18px;"></i></button>
+              <sc-if value="{{ j.menuOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="{{ j.menuStyle }}">
+                  <sc-for list="{{ j.menu }}" as="mi" hint-placeholder-count="4">
+                    <sc-if value="{{ mi.divider }}" hint-placeholder-val="{{ false }}"><div style="height: 1px; background: #F0F1F4; margin: 5px 8px;"></div></sc-if>
+                    <sc-if value="{{ mi.item }}" hint-placeholder-val="{{ true }}">
+                      <button onClick="{{ mi.onClick }}" style="{{ mi.style }}" style-hover="{{ mi.styleHover }}"><i class="ph {{ mi.icon }}" style="font-size: 16px; width: 18px; color: {{ mi.iconColor }};"></i><span>{{ mi.label }}</span></button>
+                    </sc-if>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ===== PRÉFÉRENCES ===== -->
+    <sc-if value="{{ isPrefs }}" hint-placeholder-val="{{ false }}">
+    <div style="flex: 1; display: flex; min-height: 0;">
+      <!-- sous-nav verticale -->
+      <div style="width: 208px; flex: 0 0 208px; border-right: 1px solid #EFF1F4; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; background: #FBFBFC;">
+        <sc-for list="{{ prefTabs }}" as="pt" hint-placeholder-count="7">
+          <button onClick="{{ pt.onClick }}" style="{{ pt.style }}"><i class="ph {{ pt.icon }}" style="font-size: 16px;"></i>{{ pt.label }}</button>
+        </sc-for>
+      </div>
+      <!-- pane -->
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+        <div style="flex: 1; overflow-y: auto; padding: 26px 30px;">
+          <sc-if value="{{ pModele }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 6px; max-width: 540px;">
+              <label style="font-size: 12.5px; font-weight: 600; color: #344054;">Modèle Whisper</label>
+              <div style="display: flex; align-items: center; justify-content: space-between; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 10px 13px; cursor: pointer;"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; color: #1A1D23;">large-v3-turbo</span><i class="ph ph-caret-up-down" style="font-size: 14px; color: #98A2B3;"></i></div>
+              <p style="font-size: 12px; line-height: 1.7; color: #8A919E; margin: 10px 0 0;">tiny et small sont rapides mais moins précis.<br>large-v3-turbo : meilleur rapport qualité/vitesse (≈ 1,6 Go) — recommandé.<br>large-v3 : qualité maximale (≈ 3 Go).<br>Le modèle est téléchargé au premier usage.</p>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pAudio }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 20px; max-width: 600px;">
+              <div style="display: flex; flex-direction: column; gap: 6px;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">Microphone</label><div style="display: flex; align-items: center; justify-content: space-between; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 10px 13px; cursor: pointer;"><span style="font-size: 13.5px; color: #1A1D23;">Périphérique par défaut</span><i class="ph ph-caret-up-down" style="font-size: 14px; color: #98A2B3;"></i></div></div>
+              <div style="display: flex; flex-direction: column; gap: 6px; max-width: 180px;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">Intervalle réunion</label><div style="display: flex; align-items: center; justify-content: space-between; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 8px 13px;"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; color: #1A1D23;">30 s</span><div style="display: flex; flex-direction: column; color: #98A2B3;"><i class="ph ph-caret-up" style="font-size: 10px;"></i><i class="ph ph-caret-down" style="font-size: 10px;"></i></div></div></div>
+              <div style="display: flex; flex-direction: column; gap: 11px;">
+                <sc-for list="{{ audioChecks }}" as="c" hint-placeholder-count="3">
+                  <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #3B5BDB; display: flex; align-items: center; justify-content: center;"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></span><span style="font-size: 13.5px; color: #1A1D23;">{{ c }}</span></label>
+                </sc-for>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; padding-top: 2px;">
+                <span style="display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #1F9D6B; background: #E7F6EF; padding: 6px 11px; border-radius: 7px;"><i class="ph ph-check-circle" style="font-size: 15px;"></i>Diarization configurée</span>
+                <button style="font-size: 12.5px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 7px; padding: 6px 12px; cursor: pointer;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Configurer…</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pDossiers }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 20px; max-width: 620px;">
+              <sc-for list="{{ folders }}" as="f" hint-placeholder-count="2">
+                <div style="display: flex; flex-direction: column; gap: 6px;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">{{ f.label }}</label><div style="display: flex; gap: 8px;"><div style="flex: 1; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 10px 13px; overflow: hidden;"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #475467; white-space: nowrap;">{{ f.path }}</span></div><button style="font-size: 12.5px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 7px; padding: 0 15px; cursor: pointer;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Choisir…</button></div></div>
+              </sc-for>
+              <p style="font-size: 12px; color: #8A919E; margin: 0;">Changer un dossier ne déplace pas les fichiers déjà produits.</p>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pPrompts }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; gap: 20px; height: 100%;">
+              <div style="width: 200px; flex: 0 0 200px; display: flex; flex-direction: column; gap: 10px;">
+                <div style="border: 1px solid #E7E9EE; border-radius: 8px; overflow: hidden;">
+                  <sc-for list="{{ prompts }}" as="p" hint-placeholder-count="2">
+                    <div onClick="{{ p.onClick }}" style="{{ p.style }}"><span>{{ p.title }}</span><sc-if value="{{ p.active }}" hint-placeholder-val="{{ false }}"><i class="ph ph-check" style="font-size: 13px; color: #2A46B8;"></i></sc-if></div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; gap: 8px;"><button style="width: 32px; height: 28px; border: 1px solid #D6D9DE; background: #fff; border-radius: 7px; cursor: pointer; color: #475467;" style-hover="border-color: #3B5BDB; color: #2A46B8;"><i class="ph ph-plus"></i></button><button style="width: 32px; height: 28px; border: 1px solid #D6D9DE; background: #fff; border-radius: 7px; cursor: pointer; color: #475467;" style-hover="border-color: #3B5BDB; color: #2A46B8;"><i class="ph ph-minus"></i></button></div>
+              </div>
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 13px; min-width: 0;">
+                <div style="display: flex; flex-direction: column; gap: 6px;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">Titre</label><input value="CR simple perso" style="background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 9px 13px; font-family: inherit; font-size: 13.5px; color: #1A1D23; outline: none;"></div>
+                <div style="display: flex; flex-direction: column; gap: 6px; flex: 1;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">Contenu</label><textarea style="flex: 1; min-height: 170px; resize: none; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 11px 13px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #344054; outline: none;">Tu es un assistant spécialisé dans la rédaction de comptes-rendus au format markdown de réunions professionnelles. À partir de la transcription que je te fournis, génère un CR concis et structuré :
+
+- Titre : "CR — [Sujet] — [Date]"
+- Participants listés sous le titre
+- Séparateurs --- entre les sections
+- Sections en gras et numérotées</textarea></div>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #3B5BDB; display: flex; align-items: center; justify-content: center;"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></span><span style="font-size: 13.5px; color: #1A1D23;">Utiliser ce prompt à la copie</span></label>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pGeneral }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 20px; max-width: 540px;">
+              <div style="display: flex; flex-direction: column; gap: 6px; max-width: 300px;"><label style="font-size: 12.5px; font-weight: 600; color: #344054;">Langue</label><div style="display: flex; align-items: center; justify-content: space-between; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 10px 13px; cursor: pointer;"><span style="font-size: 13.5px; color: #1A1D23;">Détection automatique</span><i class="ph ph-caret-up-down" style="font-size: 14px; color: #98A2B3;"></i></div></div>
+              <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #fff; border: 1.5px solid #CDD2DA;"></span><span style="font-size: 13.5px; color: #1A1D23;">Lancer debriefMeet au démarrage de session</span></label>
+              <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #3B5BDB; display: flex; align-items: center; justify-content: center;"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></span><span style="font-size: 13.5px; color: #1A1D23;">Activer les notifications</span></label>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pRaccourcis }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 14px; max-width: 440px;">
+              <sc-for list="{{ shortcuts }}" as="s" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; gap: 14px;"><label style="width: 84px; text-align: right; font-size: 13.5px; font-weight: 600; color: #344054;">{{ s.label }}</label><div style="flex: 1; background: #F6F7F9; border: 1px solid #E7E9EE; border-radius: 8px; padding: 9px 13px;"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #1A1D23;">{{ s.keys }}</span></div></div>
+              </sc-for>
+              <div style="padding-left: 98px;"><button style="font-size: 12.5px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 7px; padding: 7px 13px; cursor: pointer;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Réinitialiser les défauts</button><p style="font-size: 12px; line-height: 1.6; color: #8A919E; margin: 13px 0 0; max-width: 320px;">Un raccourci démarre/arrête l'action même sans focus. Champ vide = raccourci désactivé.</p></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ pJourn }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 13px; max-width: 540px;">
+              <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #3B5BDB; display: flex; align-items: center; justify-content: center;"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></span><span style="font-size: 13.5px; color: #1A1D23;">Activer la journalisation (mode debug)</span></label>
+              <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><span style="width: 19px; height: 19px; border-radius: 5px; background: #3B5BDB; display: flex; align-items: center; justify-content: center;"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></span><span style="font-size: 13.5px; color: #1A1D23;">Logs détaillés (debug)</span></label>
+              <p style="font-size: 12px; line-height: 1.7; color: #8A919E; margin: 3px 0 0;">Les logs ne contiennent jamais de transcriptions ni d'audio.<br>Emplacement : <span style="font-family: 'IBM Plex Mono', monospace;">~/Library/Logs/debriefMeet/</span></p>
+              <div style="display: flex; gap: 10px; margin-top: 4px;"><button style="font-size: 12.5px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 7px; padding: 7px 13px; cursor: pointer;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Ouvrir le fichier de log</button><button onClick="{{ clearLog }}" style="font-size: 12.5px; font-weight: 600; color: #B42318; background: #fff; border: 1px solid #F4C9C7; border-radius: 7px; padding: 7px 13px; cursor: pointer; font-family: inherit;" style-hover="background: #FEF3F2;">Vider le log</button></div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="flex: 0 0 auto; border-top: 1px solid #EFF1F4; padding: 10px 20px; display: flex; align-items: center; gap: 8px; background: #FBFBFC;">
+          <i class="ph ph-check-circle" style="font-size: 15px; color: #1F9D6B;"></i>
+          <span style="font-size: 12.5px; color: #667085;">Modifications enregistrées automatiquement</span>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ===== BOÎTE DE CONFIRMATION (suppression) ===== -->
+    <sc-if value="{{ showConfirm }}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; background: rgba(16,24,40,.45); backdrop-filter: blur(1.5px); display: flex; align-items: center; justify-content: center; z-index: 50;">
+        <div style="width: 380px; background: #fff; border-radius: 12px; box-shadow: 0 20px 44px -14px rgba(16,24,40,.40), 0 0 0 1px rgba(16,24,40,.06); padding: 22px; display: flex; flex-direction: column; gap: 18px;">
+          <div style="display: flex; gap: 14px; align-items: flex-start;">
+            <div style="flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px; background: #FEF3F2; border: 1px solid #F4C9C7; display: flex; align-items: center; justify-content: center;">
+              <i class="ph {{ confirmIcon }}" style="font-size: 19px; color: #B42318;"></i>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 5px; padding-top: 2px;">
+              <span style="font-size: 15px; font-weight: 700; color: #1A1D23; line-height: 1.35;">{{ confirmHeading }}</span>
+              <span style="font-size: 13px; line-height: 1.55; color: #667085;">Action irréversible. {{ confirmDesc }}</span>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onClick="{{ closeConfirm }}" style="font-size: 13px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 9px; padding: 9px 16px; cursor: pointer; font-family: inherit;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Annuler</button>
+            <button onClick="{{ doDelete }}" style="font-size: 13px; font-weight: 600; color: #fff; background: #B42318; border: none; border-radius: 9px; padding: 9px 16px; cursor: pointer; font-family: inherit;" style-hover="background: #96190F;">{{ confirmLabel }}</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== ASSOCIATION BLUEMIND ===== -->
+    <sc-if value="{{ assocOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; background: rgba(16,24,40,.45); backdrop-filter: blur(1.5px); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 24px;">
+        <div style="width: 440px; max-height: 100%; background: #fff; border-radius: 12px; box-shadow: 0 20px 44px -14px rgba(16,24,40,.40), 0 0 0 1px rgba(16,24,40,.06); display: flex; flex-direction: column; overflow: hidden;">
+          <div style="padding: 22px 22px 0; display: flex; gap: 14px; align-items: flex-start;">
+            <div style="flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px; background: #EEF1FE; display: flex; align-items: center; justify-content: center;"><i class="ph ph-calendar-check" style="font-size: 19px; color: #2A46B8;"></i></div>
+            <div style="display: flex; flex-direction: column; gap: 4px; padding-top: 1px;">
+              <span style="font-size: 15px; font-weight: 700; color: #1A1D23;">Associer à un événement</span>
+              <span style="font-size: 12.5px; line-height: 1.5; color: #667085;">Un événement du calendrier BlueMind correspond à cette réunion.</span>
+            </div>
+          </div>
+          <div style="flex: 1; overflow-y: auto; padding: 18px 22px 4px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <span style="font-size: 13.5px; color: #1A1D23;"><b>Titre :</b> {{ assocTitle }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #667085;">{{ assocDate }}</span>
+            </div>
+            <label onClick="{{ toggleApplyTitle }}" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+              <span style="{{ assocApplyBox }}"><sc-if value="{{ assocApply }}" hint-placeholder-val="{{ true }}"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></sc-if></span>
+              <span style="font-size: 13px; color: #1A1D23;">Appliquer ce titre à la réunion</span>
+            </label>
+            <div style="height: 1px; background: #EFF1F4; margin: 4px 0;"></div>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 500; letter-spacing: .06em; color: #98A2B3;">PARTICIPANTS</span>
+            <div style="display: flex; flex-direction: column; gap: 11px;">
+              <sc-for list="{{ assocInvites }}" as="p" hint-placeholder-count="3">
+                <label onClick="{{ p.onToggle }}" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                  <span style="{{ p.boxStyle }}"><sc-if value="{{ p.showCheck }}" hint-placeholder-val="{{ true }}"><i class="ph ph-check" style="font-size: 12px; color: #fff;"></i></sc-if></span>
+                  <span style="font-size: 13px; color: #344054;">{{ p.label }}</span>
+                </label>
+              </sc-for>
+            </div>
+          </div>
+          <div style="flex: 0 0 auto; padding: 14px 22px 20px; display: flex; justify-content: flex-end; gap: 10px;">
+            <button onClick="{{ closeAssoc }}" style="font-size: 13px; font-weight: 600; color: #344054; background: #fff; border: 1px solid #D6D9DE; border-radius: 9px; padding: 9px 16px; cursor: pointer; font-family: inherit;" style-hover="border-color: #3B5BDB; color: #2A46B8;">Annuler</button>
+            <button onClick="{{ confirmAssoc }}" style="font-size: 13px; font-weight: 600; color: #fff; background: #3B5BDB; border: none; border-radius: 9px; padding: 9px 18px; cursor: pointer; font-family: inherit;" style-hover="background: #2A46B8;">Associer</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- ============ TRAY ============ -->
+  <div style="display: flex; flex-direction: column; gap: 15px; width: 300px; flex: none;">
+    <span style="font-size: 12.5px; font-weight: 700; letter-spacing: .04em; color: #8A919E;">MENU DU TRAY</span>
+    <div style="display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #E7E9EE; border-radius: 9px; padding: 7px 12px; box-shadow: 0 4px 14px -8px rgba(16,24,40,.3);">
+      <dc-import name="WaveMark" color="{{ stateColor }}" filled="{{ stateFilled }}" size="24" hint-size="24px,24px"></dc-import>
+      <div style="flex: 1;"></div>
+      <i class="ph ph-battery-high" style="font-size: 16px; color: #B0B7C0;"></i>
+      <i class="ph ph-wifi-high" style="font-size: 16px; color: #B0B7C0;"></i>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #B0B7C0;">22:24</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 7px; margin: -6px 2px 0; font-size: 12px; color: #8A919E;"><span>État actuel :</span><span style="display: flex; align-items: center; gap: 5px; font-weight: 700; color: {{ stateLabelColor }};"><span style="width: 7px; height: 7px; border-radius: 50%; background: {{ stateLabelColor }};"></span>{{ stateLabel }}</span></div>
+
+    <div style="background: rgba(255,255,255,.95); border: 1px solid rgba(16,24,40,.09); border-radius: 11px; box-shadow: 0 20px 44px -14px rgba(16,24,40,.4); padding: 6px; display: flex; flex-direction: column; gap: 1px;">
+      <sc-for list="{{ trayItems }}" as="t" hint-placeholder-count="8">
+        <sc-if value="{{ t.divider }}" hint-placeholder-val="{{ false }}"><div style="height: 1px; background: rgba(16,24,40,.08); margin: 5px 8px;"></div></sc-if>
+        <sc-if value="{{ t.item }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ t.style }}"><div style="display: flex; align-items: center; gap: 11px;"><i class="ph {{ t.icon }}" style="font-size: 15px; width: 17px; color: {{ t.iconColor }};"></i><span style="font-size: 13px; font-weight: {{ t.weight }}; color: {{ t.color }};">{{ t.label }}</span></div><sc-if value="{{ t.keys }}" hint-placeholder-val="{{ false }}"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #B0B7C0;">{{ t.keys }}</span></sc-if></div>
+        </sc-if>
+      </sc-for>
+    </div>
+
+    <div style="background: #fff; border: 1px solid #E7E9EE; border-radius: 10px; padding: 13px 15px; display: flex; flex-direction: column; gap: 9px;">
+      <div style="display: flex; align-items: flex-start; gap: 9px;"><i class="ph ph-cursor-click" style="font-size: 16px; color: #2A46B8; margin-top: 1px;"></i><span style="font-size: 12.5px; line-height: 1.5; color: #475467;"><b style="color: #1A1D23;">Clic gauche</b> — ouvre la fenêtre</span></div>
+      <div style="display: flex; align-items: flex-start; gap: 9px;"><i class="ph ph-list" style="font-size: 16px; color: #2A46B8; margin-top: 1px;"></i><span style="font-size: 12.5px; line-height: 1.5; color: #475467;"><b style="color: #1A1D23;">Clic droit</b> — ce menu d'actions</span></div>
+      <div style="height: 1px; background: #F0F1F4; margin: 2px 0;"></div>
+      <span style="font-size: 12px; line-height: 1.55; color: #8A919E;">Icône constante ; la couleur encode l'activité (repos → 🔴 → 🟠 → 🟢).</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1400, &quot;height&quot;: 900}}">
+class Component extends DCLogic {
+  state = { view: 'reunion', prefTab: 'audio', sel: { meeting: new Set([1]), journal: new Set() }, anchor: { meeting: 1, journal: null }, recType: null, elapsed: 0, confirmTarget: null, openMenu: null, assoc: null };
+
+  openConfirm(title, desc, label, heading, icon) { this.setState({ confirmTarget: { title, desc, label: label || 'Supprimer', heading: heading || 'Supprimer', icon: icon || 'ph-trash' } }); }
+  closeConfirm() { this.setState({ confirmTarget: null }); }
+  doDelete() {
+    this.setState(s => {
+      const bucket = s.view === 'reunion' ? 'meeting' : (s.view === 'journal' ? 'journal' : null);
+      const sel = bucket ? { ...s.sel, [bucket]: new Set() } : s.sel;
+      return { confirmTarget: null, sel };
+    });
+  }
+
+  // ---- Sélection multiple (Ctrl/Cmd = bascule, Maj = plage) ----
+  selectRow(bucket, i, e) {
+    const meta = e && (e.metaKey || e.ctrlKey);
+    const shift = e && e.shiftKey;
+    this.setState(s => {
+      const prev = s.sel[bucket] || new Set();
+      const anchor = (s.anchor && s.anchor[bucket] != null) ? s.anchor[bucket] : i;
+      if (shift) {
+        const next = new Set();
+        const a = Math.min(anchor, i), b = Math.max(anchor, i);
+        for (let k = a; k <= b; k++) next.add(k);
+        return { sel: { ...s.sel, [bucket]: next }, anchor: { ...s.anchor, [bucket]: anchor } };
+      }
+      if (meta) {
+        const next = new Set(prev);
+        if (next.has(i)) next.delete(i); else next.add(i);
+        return { sel: { ...s.sel, [bucket]: next }, anchor: { ...s.anchor, [bucket]: i } };
+      }
+      return { sel: { ...s.sel, [bucket]: new Set([i]) }, anchor: { ...s.anchor, [bucket]: i } };
+    });
+  }
+  clearSel(bucket) { this.setState(s => ({ sel: { ...s.sel, [bucket]: new Set() } })); }
+  bulkDeleteConfirm(bucket, n) {
+    const noun = bucket === 'journal' ? (n > 1 ? 'entrées' : 'entrée') : (n > 1 ? 'réunions' : 'réunion');
+    const verb = n > 1 ? 'seront supprimées' : 'sera supprimée';
+    const extra = bucket === 'journal' ? 'notes et audio inclus' : 'transcription, d\u00e9brief et audio inclus';
+    this.openConfirm('', n + ' ' + noun + ' ' + verb + ' d\u00e9finitivement (' + extra + ').', 'Supprimer', 'Supprimer ' + n + ' ' + noun + ' ?', 'ph-trash');
+  }
+  bulkIgnoreConfirm(n) {
+    const noun = n > 1 ? 'réunions' : 'réunion';
+    this.openConfirm('', "L'audio retenu de " + n + ' ' + noun + " sera supprim\u00e9 d\u00e9finitivement (transcription et compte-rendu conserv\u00e9s).", 'Ignorer l\u2019audio', 'Supprimer l\u2019audio de ' + n + ' ' + noun + ' ?', 'ph-microphone-slash');
+  }
+
+  openAssoc(payload) { this.setState({ openMenu: null, assoc: payload }); }
+  closeAssoc() { this.setState({ assoc: null }); }
+  confirmAssoc() { this.setState({ assoc: null }); }
+  toggleApplyTitle() { this.setState(s => s.assoc ? { assoc: { ...s.assoc, applyTitle: !s.assoc.applyTitle } } : null); }
+  toggleInvite(i) { this.setState(s => { if (!s.assoc) return null; const inv = s.assoc.invites.map((p, idx) => idx === i ? { ...p, checked: !p.checked } : p); return { assoc: { ...s.assoc, invites: inv } }; }); }
+
+  componentDidUpdate(pp, ps) {
+    if (this.state.openMenu && !ps.openMenu) {
+      this._onDocDown = (e) => { if (!(e.target.closest && e.target.closest('[data-menu-root]'))) this.setState({ openMenu: null }); };
+      setTimeout(() => document.addEventListener('mousedown', this._onDocDown), 0);
+    } else if (!this.state.openMenu && ps.openMenu && this._onDocDown) {
+      document.removeEventListener('mousedown', this._onDocDown); this._onDocDown = null;
+    }
+  }
+
+  componentWillUnmount() {
+    if (this._t) clearInterval(this._t);
+    if (this._onDocDown) document.removeEventListener('mousedown', this._onDocDown);
+  }
+  startRec(type) {
+    if (this.state.recType) return;
+    if (this._t) clearInterval(this._t);
+    this.setState({ recType: type, elapsed: 0 });
+    this._t = setInterval(() => this.setState(s => ({ elapsed: s.elapsed + 1 })), 1000);
+  }
+  stopRec() {
+    if (this._t) { clearInterval(this._t); this._t = null; }
+    this.setState({ recType: null });
+  }
+
+  renderVals() {
+    const st = this.state;
+    const selSet = (k) => st.sel[k] || new Set();
+    const captureViews = ['dictee', 'reunion', 'journal'];
+    const isCapture = captureViews.includes(st.view);
+    const recNow = st.recType && st.recType === st.view;
+    const otherRec = st.recType && st.recType !== st.view;
+
+    const mm = String(Math.floor(st.elapsed / 60)).padStart(2, '0');
+    const ss = String(st.elapsed % 60).padStart(2, '0');
+    const elapsedFmt = mm + ':' + ss;
+
+    // ---- Barre d'outils : onglets ----
+    const navBase = 'display:flex;align-items:center;gap:8px;height:100%;padding:0 8px;border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;border-bottom:2px solid transparent;transition:all .12s;';
+    const navDefs = [
+      { key: 'reunion', label: 'Réunion', icon: 'ph-users-three' },
+      { key: 'dictee', label: 'Dictée', icon: 'ph-microphone' },
+      { key: 'journal', label: 'Journal', icon: 'ph-notebook' },
+    ];
+    const navItems = navDefs.map(n => {
+      const active = st.view === n.key;
+      const style = navBase + (active ? 'color:#2A46B8;border-bottom-color:#3B5BDB;' : 'color:#8A919E;');
+      return { ...n, onClick: () => this.setState({ view: n.key }), style };
+    });
+    const prefsActive = st.view === 'preferences';
+    const prefsBtnStyle = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;border:none;cursor:pointer;transition:all .12s;' + (prefsActive ? 'background:#EEF1FE;color:#2A46B8;' : 'background:transparent;color:#8A919E;');
+
+    // ---- Bouton Démarrer / Arrêter ----
+    const startMeta = {
+      dictee: { label: 'Démarrer la dictée', icon: 'ph-microphone' },
+      reunion: { label: 'Démarrer la réunion', icon: 'ph-users-three' },
+      journal: { label: 'Démarrer le journal', icon: 'ph-notebook' },
+    };
+    const sBase = 'display:flex;align-items:center;gap:8px;padding:9px 18px;border:none;border-radius:9px;font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:all .12s;';
+    let startBtn = { isStop: false, isStart: true, icon: 'ph-microphone', label: 'Démarrer', style: sBase, onClick: () => {} };
+    if (isCapture) {
+      if (recNow) {
+        startBtn = { isStop: true, isStart: false, icon: 'ph-stop-fill', label: 'Arrêter', style: sBase + 'background:#FF3B30;color:#fff;box-shadow:0 6px 16px -6px #FF3B30;', onClick: () => this.stopRec() };
+      } else if (otherRec) {
+        const m = startMeta[st.view];
+        startBtn = { isStop: false, isStart: true, icon: m.icon, label: m.label, style: sBase + 'background:#F2F4F7;color:#98A2B3;cursor:default;', onClick: () => {} };
+      } else {
+        const m = startMeta[st.view];
+        startBtn = { isStop: false, isStart: true, icon: m.icon, label: m.label, style: sBase + 'background:#3B5BDB;color:#fff;box-shadow:0 1px 2px rgba(16,24,40,.12);', onClick: () => this.startRec(st.view) };
+      }
+    }
+
+    // ---- États d'entrée ----
+    const STATES = {
+      encours:   { label: 'En cours',   color: '#FF3B30', bg: '#FFECEA', icon: 'ph-record-fill' },
+      transcrit: { label: 'Transcrit',  color: '#1F9D6B', bg: '#E7F6EF', icon: 'ph-check-circle' },
+      audio:     { label: 'Audio seul', color: '#7A828F', bg: '#F1F2F5', icon: 'ph-waveform' },
+      locuteurs: { label: 'Locuteurs',  color: '#3B5BDB', bg: '#EEF1FE', icon: 'ph-users-three' },
+    };
+    const confirmDescMap = { meeting: 'Transcription + d\u00e9brief locuteurs + audio retenu.', dictee: 'Texte transcrit retenu.', journal: 'Entr\u00e9e retir\u00e9e du journal.' };
+
+    // ---- Menu d'actions (kebab) : un seul point d'entrée par ligne → colonne alignée ----
+    const menuItemBase = 'display:flex;align-items:center;gap:11px;width:100%;padding:8px 10px;border-radius:7px;border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;text-align:left;transition:background .1s,color .1s;';
+    const itemStyle = (d) => d.disabled ? menuItemBase + 'color:#B0B7C0;cursor:default;' : (d.danger ? menuItemBase + 'color:#B42318;' : menuItemBase + 'color:#1A1D23;');
+    const itemHover = (d) => d.disabled ? '' : (d.danger ? 'background:#FEF3F2;' : 'background:#EEF1FE;color:#2A46B8;');
+    const buildMenu = (kind, m, title) => {
+      let defs;
+      if (kind === 'meeting') {
+        const canText = m.state !== 'audio';
+        const isSpk = m.state === 'locuteurs';
+        defs = [
+          { icon: 'ph-copy', label: 'Copier la transcription', disabled: !canText, act: () => {} },
+          { icon: 'ph-file-text', label: 'Ouvrir la transcription', disabled: !canText, act: () => {} },
+          { icon: 'ph-users', label: 'D\u00e9brief par locuteurs', disabled: !isSpk, act: () => {} },
+          { icon: 'ph-folder', label: 'Ouvrir le dossier', act: () => {} },
+          ...(m.bm === 'match' ? [{ icon: 'ph-calendar-plus', label: 'Associer à la réunion', act: () => this.openAssoc({ title: m.bmEvent, date: m.bmDate, applyTitle: true, invites: (m.bmInvites || []).map(p => ({ ...p, checked: true })) }) }] : []),
+          ...(m.bm === 'linked' ? [{ icon: 'ph-calendar-check', label: 'Associé — ' + m.bmEvent, disabled: true, act: () => {} }] : []),
+          { divider: true },
+          { icon: 'ph-microphone-slash', label: 'Ignorer l\u2019audio', act: () => this.openConfirm(title, "L'audio retenu sera supprim\u00e9 d\u00e9finitivement (transcription et compte-rendu conserv\u00e9s).", 'Ignorer l\u2019audio', 'Supprimer l\u2019audio de', 'ph-microphone-slash') },
+          { icon: 'ph-trash', label: 'Supprimer', danger: true, act: () => this.openConfirm(title, confirmDescMap.meeting, 'Supprimer', 'Supprimer') },
+        ];
+      } else if (kind === 'dictee') {
+        defs = [
+          { icon: 'ph-copy', label: 'Copier le texte', act: () => {} },
+          { icon: 'ph-file-text', label: 'Ouvrir', act: () => {} },
+          { icon: 'ph-folder', label: 'Ouvrir le dossier', act: () => {} },
+          { divider: true },
+          { icon: 'ph-trash', label: 'Supprimer', danger: true, act: () => this.openConfirm(title, confirmDescMap.dictee, 'Supprimer', 'Supprimer') },
+        ];
+      } else {
+        defs = [
+          { icon: 'ph-copy', label: 'Copier', act: () => {} },
+          { icon: 'ph-file-text', label: 'Ouvrir', act: () => {} },
+          { icon: 'ph-folder', label: 'Ouvrir le dossier', act: () => {} },
+          { divider: true },
+          { icon: 'ph-trash', label: 'Supprimer', danger: true, act: () => this.openConfirm(title, confirmDescMap.journal, 'Supprimer', 'Supprimer') },
+        ];
+      }
+      return defs.map(d => d.divider ? { divider: true, item: false } : {
+        item: true, divider: false, icon: d.icon, label: d.label,
+        iconColor: d.disabled ? '#B0B7C0' : (d.danger ? '#B42318' : '#98A2B3'),
+        style: itemStyle(d), styleHover: itemHover(d),
+        onClick: d.disabled
+          ? (e) => { if (e && e.stopPropagation) e.stopPropagation(); }
+          : (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ openMenu: null }); d.act(); },
+      });
+    };
+    const menuBase = 'position:absolute;right:6px;z-index:30;width:238px;background:#fff;border:1px solid #E7E9EE;border-radius:10px;box-shadow:0 20px 44px -14px rgba(16,24,40,.4);padding:5px;display:flex;flex-direction:column;gap:1px;';
+    const kebabToggle = (key) => (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState(prev => ({ openMenu: prev.openMenu === key ? null : key })); };
+
+    const INV = [
+      { nom: 'Paul Martel', email: 'paul@partenaire.example', role: 'organisateur' },
+      { nom: 'Claire Durand', email: 'c.durand@acme.example', role: 'accepté' },
+      { nom: 'Marc Lefèvre', email: 'm.lefevre@partenaire.example', role: 'en attente' },
+    ];
+    const rawMeetings = [
+      { title: 'Réunion sans titre', date: '03/07/2026', time: '15:31', dur: '22 min', people: false, state: 'locuteurs', bm: 'linked', bmEvent: 'CoTer — suivi hebdomadaire' },
+      { title: 'Acme — discussion devis', date: '03/07/2026', time: '14:22', dur: '17 min', people: false, state: 'transcrit', bm: 'match', bmEvent: 'Acme — cadrage devis', bmDate: '03/07/2026 à 14:20', bmInvites: INV },
+      { title: 'Réunion sans titre', date: '03/07/2026', time: '12:00', dur: '5 min', people: false, state: 'transcrit', bm: 'none' },
+      { title: 'Fabrice Durand — renouvellement contrat', date: '03/07/2026', time: '11:15', dur: '4 min', people: true, state: 'locuteurs', bm: 'linked', bmEvent: 'Renew LoadTest — Fabrice' },
+      { title: 'Réunion sans titre', date: '03/07/2026', time: '10:56', dur: '3 min', people: false, state: 'audio', bm: 'match', bmEvent: 'Point produit interne', bmDate: '03/07/2026 à 10:55', bmInvites: INV },
+      { title: 'Réunion sans titre', date: '02/07/2026', time: '23:42', dur: '8 min', people: false, state: 'audio', bm: 'none' },
+      { title: 'Réunion sans titre', date: '02/07/2026', time: '22:15', dur: '2 min', people: false, state: 'transcrit', bm: 'match', bmEvent: 'Rétro sprint 24', bmDate: '02/07/2026 à 22:10', bmInvites: INV },
+    ];
+    const rawDictees = [
+      { title: 'Note vocale — brief client', date: '06/07/2026', time: '09:41', dur: '2 min', state: 'transcrit' },
+      { title: 'Idées feature export', date: '05/07/2026', time: '18:20', dur: '1 min', state: 'transcrit' },
+      { title: 'Dictée sans titre', date: '05/07/2026', time: '14:03', dur: '3 min', state: 'transcrit' },
+      { title: 'Rappel — relancer Fabrice', date: '04/07/2026', time: '11:12', dur: '1 min', state: 'transcrit' },
+      { title: 'Dictée sans titre', date: '03/07/2026', time: '16:47', dur: '2 min', state: 'audio' },
+    ];
+    const mapRow = (arr, kind) => arr.map((m, i) => {
+      const s = STATES[m.state];
+      const key = kind + ':' + i;
+      const open = st.openMenu === key;
+      const up = i >= arr.length - 3;
+      return {
+        title: m.title, date: m.date + ' · ' + m.time, dur: m.dur,
+        typeIcon: m.people ? 'ph-users-three' : 'ph-microphone',
+        status: s.label, statusColor: s.color, statusBg: s.bg, statusIcon: s.icon,
+        sel: selSet(kind).has(i), onClick: (e) => this.selectRow(kind, i, e),
+        canCopy: kind === 'meeting' ? (m.state !== 'audio') : true, onCopy: () => {},
+        bmLinked: kind === 'meeting' && m.bm === 'linked', bmMatch: kind === 'meeting' && m.bm === 'match',
+        bmEvent: m.bmEvent || '', bmTip: m.bmEvent ? ('Associé à « ' + m.bmEvent + ' »') : '',
+        onAssocier: () => this.openAssoc({ title: m.bmEvent, date: m.bmDate, applyTitle: true, invites: (m.bmInvites || []).map(p => ({ ...p, checked: true })) }),
+        hasMenu: true, menuOpen: open, menuStyle: menuBase + (up ? 'bottom:40px;' : 'top:40px;'),
+        menu: buildMenu(kind, m, m.title), onToggleMenu: kebabToggle(key),
+      };
+    });
+    const meetings = mapRow(rawMeetings, 'meeting');
+    const dictees = mapRow(rawDictees, 'dictee');
+    let captureRows = st.view === 'reunion' ? meetings : [];
+    if (st.view === 'reunion' && recNow) {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const s = STATES.encours;
+      const liveRow = {
+        title: 'Réunion en cours',
+        date: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' · ' + pad(now.getHours()) + ':' + pad(now.getMinutes()),
+        dur: elapsedFmt, typeIcon: 'ph-microphone',
+        status: s.label, statusColor: s.color, statusBg: s.bg, statusIcon: s.icon,
+        hasMenu: false, menuOpen: false, menuStyle: menuBase, menu: [], onToggleMenu: () => {}, sel: false, onClick: () => {},
+      };
+      captureRows = [liveRow, ...meetings];
+    }
+
+    const journal = [
+      { name: '2026-07-02.md', note: '3 notes' },
+      { name: '2026-07-01.md', note: '1 note' },
+      { name: '2026-06-30.md', note: '2 notes' },
+    ].map((j, i) => {
+      const key = 'journal:' + i;
+      const open = st.openMenu === key;
+      return { ...j, sel: selSet('journal').has(i), onClick: (e) => this.selectRow('journal', i, e), canCopy: true, onCopy: () => {}, hasMenu: true, menuOpen: open, menuStyle: menuBase + 'top:40px;', menu: buildMenu('journal', { title: j.name }, j.name), onToggleMenu: kebabToggle(key) };
+    });
+
+    const searchPlaceholder = st.view === 'reunion' ? 'Rechercher une réunion…' : 'Rechercher…';
+    const showSearch = st.view !== 'dictee';
+
+    // ---- Barre d'actions en masse (sélection multiple) ----
+    const bulkBucket = st.view === 'reunion' ? 'meeting' : (st.view === 'journal' ? 'journal' : null);
+    const bulkCount = bulkBucket ? selSet(bulkBucket).size : 0;
+    const bulkActive = bulkCount >= 2;
+    const bulkShowAudio = bulkBucket === 'meeting';
+    const bulkClear = () => this.clearSel(bulkBucket);
+    const bulkDelete = () => this.bulkDeleteConfirm(bulkBucket, bulkCount);
+    const bulkIgnoreAudio = () => this.bulkIgnoreConfirm(bulkCount);
+
+    // ---- Préférences ----
+    const pillBase = 'display:flex;align-items:center;gap:11px;padding:8px 11px;border-radius:8px;border:none;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:600;text-align:left;width:100%;transition:all .12s;';
+    const prefTabs = [
+      { key: 'modele', label: 'Modèle', icon: 'ph-brain' },
+      { key: 'audio', label: 'Audio', icon: 'ph-waveform' },
+      { key: 'dossiers', label: 'Dossiers', icon: 'ph-folders' },
+      { key: 'prompts', label: 'Prompts', icon: 'ph-chat-text' },
+      { key: 'general', label: 'Général', icon: 'ph-sliders-horizontal' },
+      { key: 'raccourcis', label: 'Raccourcis', icon: 'ph-keyboard' },
+      { key: 'journalisation', label: 'Journalisation', icon: 'ph-bug' },
+    ].map(t => ({
+      ...t,
+      onClick: () => this.setState({ prefTab: t.key }),
+      style: pillBase + (st.prefTab === t.key ? 'background:#EEF1FE;color:#2A46B8;' : 'background:transparent;color:#667085;'),
+    }));
+
+    const promptRow = 'display:flex;align-items:center;justify-content:space-between;padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #EFF1F4;';
+    const prompts = [
+      { key: 'simple', title: 'CR simple', active: false },
+      { key: 'perso', title: 'CR simple perso', active: true },
+    ].map(p => ({ ...p, onClick: () => {}, style: promptRow + (p.key === 'perso' ? 'background:#EEF1FE;color:#2A46B8;font-weight:600;' : 'background:#fff;color:#1A1D23;font-weight:500;') }));
+
+    // ---- État icône ----
+    let stateColor = '#3D4351', stateFilled = false, stateLabel = 'Repos', stateLabelColor = '#6B7280';
+    if (st.recType) { stateColor = '#FF3B30'; stateFilled = true; stateLabel = 'Enregistrement'; stateLabelColor = '#FF3B30'; }
+
+    const trayRow = 'display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:7px;cursor:pointer;';
+    const trayItems = [
+      { item: true, icon: 'ph-microphone', label: 'Démarrer Dictée', keys: '⌃⌥⌘D', color: '#1A1D23', iconColor: '#667085', weight: '500', style: trayRow },
+      { item: true, icon: 'ph-users-three', label: 'Démarrer Réunion', keys: '⌃⌥⌘R', color: '#1A1D23', iconColor: '#667085', weight: '500', style: trayRow },
+      { item: true, icon: 'ph-notebook', label: 'Démarrer Journal', keys: '⌃⌥⌘J', color: '#1A1D23', iconColor: '#667085', weight: '500', style: trayRow },
+      { divider: true },
+      { item: true, icon: 'ph-arrow-square-out', label: 'Ouvrir debriefMeet', keys: '', color: '#2A46B8', iconColor: '#2A46B8', weight: '600', style: trayRow + 'background:#EEF1FE;' },
+      { item: true, icon: 'ph-gear', label: 'Préférences…', keys: '', color: '#1A1D23', iconColor: '#667085', weight: '500', style: trayRow },
+      { divider: true },
+      { item: true, icon: 'ph-sign-out', label: 'Quitter', keys: '', color: '#B42318', iconColor: '#B42318', weight: '500', style: trayRow },
+    ];
+
+    const showConfirm = !!st.confirmTarget;
+    const confirmTitle = st.confirmTarget ? st.confirmTarget.title : '';
+    const confirmDesc = st.confirmTarget ? st.confirmTarget.desc : '';
+    const confirmLabel = st.confirmTarget ? st.confirmTarget.label : 'Supprimer';
+    const confirmHeading = st.confirmTarget ? (st.confirmTarget.title ? (st.confirmTarget.heading + ' \u00ab ' + st.confirmTarget.title + ' \u00bb ?') : st.confirmTarget.heading) : '';
+    const confirmIcon = st.confirmTarget ? st.confirmTarget.icon : 'ph-trash';
+    const clearLog = () => this.openConfirm('', 'Les entr\u00e9es de journalisation actuelles seront effac\u00e9es.', 'Vider', 'Vider le fichier de log ?');
+
+    const assocOpen = !!st.assoc;
+    const A = st.assoc || { title: '', date: '', applyTitle: true, invites: [] };
+    const boxOn = 'width:19px;height:19px;border-radius:5px;background:#3B5BDB;display:flex;align-items:center;justify-content:center;flex:none;';
+    const boxOff = 'width:19px;height:19px;border-radius:5px;background:#fff;border:1.5px solid #CDD2DA;flex:none;';
+    const assocApplyBox = A.applyTitle ? boxOn : boxOff;
+    const assocInvites = A.invites.map((p, i) => ({
+      label: (p.nom || p.email) + '   <' + p.email + '>   —   ' + p.role,
+      showCheck: p.checked, boxStyle: p.checked ? boxOn : boxOff, onToggle: () => this.toggleInvite(i),
+    }));
+
+    return {
+      assocOpen, assocTitle: A.title, assocDate: A.date, assocApply: A.applyTitle, assocApplyBox, assocInvites,
+      closeAssoc: () => this.closeAssoc(), confirmAssoc: () => this.confirmAssoc(), toggleApplyTitle: () => this.toggleApplyTitle(),
+      showConfirm, confirmTitle, confirmDesc, confirmLabel, confirmHeading, confirmIcon,
+      closeConfirm: () => this.closeConfirm(), doDelete: () => this.doDelete(),
+      isCapture, recNow, otherRec, startBtn, elapsedFmt, searchPlaceholder, showSearch,
+      bulkActive, bulkCount, bulkShowAudio, bulkClear, bulkDelete, bulkIgnoreAudio,
+      isTable: st.view === 'reunion',
+      isDictee: st.view === 'dictee',
+      isJournal: st.view === 'journal',
+      isPrefs: st.view === 'preferences',
+      navItems, captureRows, journal, prefTabs, prompts, trayItems,
+      openPrefs: () => this.setState({ view: 'preferences' }), prefsBtnStyle,
+      stateColor, stateFilled, stateLabel, stateLabelColor,
+      recTitle: st.recType === 'dictee' ? 'Dictée en cours' : (st.recType === 'journal' ? 'Journal en cours' : 'Réunion en cours'),
+      pModele: st.prefTab === 'modele', pAudio: st.prefTab === 'audio', pDossiers: st.prefTab === 'dossiers',
+      pPrompts: st.prefTab === 'prompts', pGeneral: st.prefTab === 'general', pRaccourcis: st.prefTab === 'raccourcis', pJourn: st.prefTab === 'journalisation',
+      clearLog,
+      audioChecks: ["Transcrire pendant l'enregistrement", "Annuler l'écho des haut-parleurs (sans casque)", 'Conserver l\u2019audio des réunions (diarization)'],
+      folders: [
+        { label: 'Réunions', path: '/Users/sylvain/Documents/debriefMeet/reunions' },
+        { label: 'Journal', path: '/Users/sylvain/Documents/debriefMeet/journal' },
+      ],
+      shortcuts: [
+        { label: 'Dictée', keys: '⌃⌥⌘D' },
+        { label: 'Réunion', keys: '⌃⌥⌘R' },
+        { label: 'Journal', keys: '⌃⌥⌘J' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

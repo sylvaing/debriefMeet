@@ -1,6 +1,11 @@
 """Dialog F1 — associer un enregistrement à un événement de calendrier BlueMind
 (docs/40 §6.2/§6.3) : choix de l'événement (si plusieurs correspondances), puis
-récapitulatif avec la liste des invités **cochables** (tous cochés par défaut)."""
+récapitulatif avec la liste des invités **cochables** (tous cochés par défaut).
+
+Restylé sur le gabarit unifié DESIGN.md §8.9/§8.11 (variante accent, positive) :
+`DialogueGabarit` porte l'en-tête (tuile `calendar-check` + titre + description)
+et le pied (Annuler + Associer) ; `zone_corps` accueille la page de choix
+(si plusieurs correspondances) puis le récapitulatif."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,8 +15,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -24,6 +27,7 @@ from debrief_meet.core.bluemind.association import Association, InviteAssocie, f
 from debrief_meet.core.bluemind.store import Evenement
 from debrief_meet.core.bluemind.sync import libelle_part_status
 from debrief_meet.core.fichiers import titre_reunion
+from debrief_meet.ui.dialogues import DialogueGabarit, Intention
 from debrief_meet.ui.theme import C, SANS
 
 
@@ -36,22 +40,20 @@ def _libelle_section(texte: str) -> QLabel:
     return lab
 
 
-class DialogAssociationBluemind(QDialog):
+class DialogAssociationBluemind(DialogueGabarit):
     def __init__(self, chemin_md: Path, evenements: list[Evenement], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Associer à la réunion")
-        self.setMinimumWidth(460)
+        super().__init__(
+            parent, titre="Associer à un événement",
+            description="Un événement du calendrier BlueMind correspond à cette réunion.",
+            icone="calendar-check", intention=Intention.ACCENT, largeur_carte=440)
         self._chemin_md = chemin_md
         self._evenements = evenements
         self._evenement_choisi: Evenement | None = None
         self._checks_invites: list[tuple[QCheckBox, dict]] = []
         self._check_titre: QCheckBox | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 20)
-        layout.setSpacing(16)
         self._pages = QStackedWidget(self)
-        layout.addWidget(self._pages)
+        self.zone_corps.addWidget(self._pages)
 
         self._page_choix: QWidget | None = None
         if len(evenements) > 1:
@@ -60,27 +62,27 @@ class DialogAssociationBluemind(QDialog):
 
         self._page_recap = QWidget()
         self._lay_recap = QVBoxLayout(self._page_recap)
+        self._lay_recap.setContentsMargins(0, 0, 0, 0)
         self._pages.addWidget(self._page_recap)
 
-        self._boutons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self._boutons.accepted.connect(self._valider)
-        self._boutons.rejected.connect(self.reject)
-        layout.addWidget(self._boutons)
+        self.definir_action("Associer", self._valider)
 
         if len(evenements) == 1:
             self._selectionner_evenement(evenements[0])
         elif len(evenements) > 1:
             self._pages.setCurrentWidget(self._page_choix)
-            self._boutons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+            self.bouton_action().setEnabled(False)
 
     # ── Choix (si plusieurs correspondances) ────────────────────────────────────
 
     def _construire_page_choix(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(QLabel("Plusieurs événements correspondent — choisissez lequel associer :"))
         liste = QListWidget()
+        liste.setStyleSheet(
+            f"QListWidget {{ border: 1px solid {C.BORDER}; border-radius: 8px; background: #fff; }}")
         for evt in self._evenements:
             heure = datetime.fromtimestamp(evt.debut_ms / 1000).strftime("%H:%M")
             item = QListWidgetItem(f"{evt.titre} — {heure}")
@@ -96,7 +98,7 @@ class DialogAssociationBluemind(QDialog):
             return
         self._selectionner_evenement(courant.data(Qt.ItemDataRole.UserRole))
         self._pages.setCurrentWidget(self._page_recap)
-        self._boutons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+        self.bouton_action().setEnabled(True)
 
     # ── Récapitulatif + invités cochables ────────────────────────────────────────
 
@@ -118,7 +120,7 @@ class DialogAssociationBluemind(QDialog):
         self._lay_recap.addWidget(titre_lbl)
 
         date_lbl = QLabel(debut_dt.strftime("%d/%m/%Y à %H:%M"))
-        date_lbl.setFont(QFont(SANS, 12))
+        date_lbl.setFont(QFont("IBM Plex Mono", 12))
         date_lbl.setStyleSheet(f"color: {C.INK500};")
         self._lay_recap.addWidget(date_lbl)
 
@@ -126,7 +128,7 @@ class DialogAssociationBluemind(QDialog):
         self._check_titre.setChecked(titre_reunion(self._chemin_md) is None)
         self._lay_recap.addWidget(self._check_titre)
 
-        self._lay_recap.addSpacing(14)
+        self._lay_recap.addSpacing(4)
         self._lay_recap.addWidget(_libelle_section("Participants"))
 
         self._checks_invites = []

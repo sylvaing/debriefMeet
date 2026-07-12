@@ -43,7 +43,7 @@ def test_reunion_colonnes_et_lignes(qapp, tmp_path):
     modele.recharger()
 
     assert modele.rowCount() == 1
-    assert modele.columnCount() == 6
+    assert modele.columnCount() == 7
     idx_titre = modele.index(0, COL_TITRE_REUNION)
     assert modele.data(idx_titre) == "Point équipe"
     assert modele.data(idx_titre, ROLE_CHEMIN) is not None

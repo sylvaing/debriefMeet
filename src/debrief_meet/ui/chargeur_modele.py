@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QEventLoop, QObject, QThread, Signal, Slot
-from PySide6.QtWidgets import QMessageBox, QProgressDialog, QWidget
+from PySide6.QtWidgets import QProgressDialog, QWidget
 
 from debrief_meet.core.arret_threads import arreter_thread
 from debrief_meet.core.config import Config
 from debrief_meet.platform.interfaces import MoteurTranscription
+from debrief_meet.ui import dialogues
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +87,8 @@ def precharger_au_demarrage(moteur: MoteurTranscription, config: Config,
 
     if erreur:
         logger.warning("Téléchargement du modèle initial échoué : %s", erreur[0])
-        QMessageBox.warning(
-            parent, "Modèle non disponible",
-            f"Le téléchargement du modèle a échoué :\n{erreur[0]}\n\n"
+        dialogues.avertir(
+            parent, titre="Modèle non disponible",
+            description=f"Le téléchargement du modèle a échoué :\n{erreur[0]}\n\n"
             "debriefMeet démarre quand même, mais la transcription sera indisponible tant "
             "que le modèle n'est pas téléchargé (réessayez via les Préférences).")

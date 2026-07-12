@@ -16,6 +16,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
 from debrief_meet.core.modes import Mode
+from debrief_meet.ui.bulk_action_bar import BulkActionBar
 from debrief_meet.ui.chrono import formater_chrono
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.pulsing_dot import PointPulsant
@@ -53,12 +54,18 @@ class CaptureActionBar(QWidget):
 
     demande_bascule = Signal()
     recherche_change = Signal(str)
+    # Actions en masse (§8.6.4) — relayées depuis la BulkActionBar interne.
+    demande_ignorer_audio_masse = Signal()
+    demande_supprimer_masse = Signal()
+    demande_deselection = Signal()
 
     def __init__(
         self,
         mode: Mode,
         avec_recherche: bool,
         placeholder_recherche: str = "Rechercher…",
+        actions_masse: bool = False,
+        avec_ignorer_audio: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -90,6 +97,14 @@ class CaptureActionBar(QWidget):
         self._msg_autre.hide()
         layout.addWidget(self._msg_autre)
 
+        self._bulk: BulkActionBar | None = None
+        if actions_masse:
+            self._bulk = BulkActionBar(avec_ignorer_audio, self)
+            self._bulk.ignorer_audio.connect(self.demande_ignorer_audio_masse.emit)
+            self._bulk.supprimer.connect(self.demande_supprimer_masse.emit)
+            self._bulk.deselection.connect(self.demande_deselection.emit)
+            layout.addWidget(self._bulk)
+
         layout.addStretch()
 
         self._recherche: QLineEdit | None = None
@@ -102,6 +117,11 @@ class CaptureActionBar(QWidget):
             layout.addWidget(self._recherche)
 
         self.definir_etat(Mode.IDLE)
+
+    def definir_compte_selection(self, n: int) -> None:
+        """Actualise la barre d'actions en masse (visible dès n ≥ 2, §8.6.4)."""
+        if self._bulk is not None:
+            self._bulk.definir_compte(n)
 
     def definir_etat(self, mode_actif: Mode, secondes: int = 0) -> None:
         """`mode_actif` = `Mode.IDLE` si rien n'enregistre."""

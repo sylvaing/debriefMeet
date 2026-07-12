@@ -15,7 +15,6 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from debrief_meet.core.arret_threads import proteger_thread
+from debrief_meet.ui.dialogues import CarteFlottante
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +82,10 @@ class _WorkerTelechargement(QObject):
             self.echec.emit(str(exc))
 
 
-class AssistantDiarization(QDialog):
+class AssistantDiarization(CarteFlottante):
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+        super().__init__(parent, largeur_carte=520)
         self.setWindowTitle("Activer la diarization — debriefMeet")
-        self.setMinimumSize(520, 460)
         self._succes = False
         self._thread: QThread | None = None
         self._worker: _WorkerTelechargement | None = None
@@ -96,7 +95,7 @@ class AssistantDiarization(QDialog):
     # ── Construction ────────────────────────────────────────────────────────────
 
     def _construire_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        layout = self.corps
         self._stack = QStackedWidget()
         self._stack.addWidget(self._page(
             "diar_etape_1.svg",
@@ -121,8 +120,10 @@ class AssistantDiarization(QDialog):
 
         barre = QHBoxLayout()
         self._btn_prec = QPushButton("Précédent")
+        self._btn_prec.setObjectName("secondary")
         self._btn_prec.clicked.connect(self._precedent)
         self._btn_suiv = QPushButton("Suivant")
+        self._btn_suiv.setObjectName("primary")
         self._btn_suiv.clicked.connect(self._suivant)
         barre.addStretch()
         barre.addWidget(self._btn_prec)

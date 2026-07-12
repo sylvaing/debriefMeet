@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
@@ -45,6 +44,7 @@ from debrief_meet.core.logs import configurer_logs
 from debrief_meet.core.modeles import NOMS_LOGIQUES
 from debrief_meet.core.raccourcis import libelle_modificateurs
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription
+from debrief_meet.ui import dialogues
 from debrief_meet.ui.chargeur_modele import ChargeurModele
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.testeur_connexion_bluemind import TesteurConnexionBlueMind
@@ -744,9 +744,9 @@ class PreferencesView(QWidget):
         texte = sequence.toString(QKeySequence.SequenceFormat.PortableText)
         if not _a_modificateur_suffisant(texte):
             mods = libelle_modificateurs(("Meta", "Ctrl", "Alt"))
-            QMessageBox.warning(
-                self, "Raccourcis",
-                f"Le raccourci « {nom} » doit inclure au moins une touche {mods} "
+            dialogues.avertir(
+                self, titre="Raccourcis",
+                description=f"Le raccourci « {nom} » doit inclure au moins une touche {mods} "
                 "(une lettre seule ou Maj+lettre capturée globalement rendrait "
                 "le clavier inutilisable).")
             self._revert_raccourci(cle, edit)
@@ -760,9 +760,9 @@ class PreferencesView(QWidget):
             for c, e, _n in self._champs_raccourcis() if e is not edit
         ]
         if texte in autres:
-            QMessageBox.warning(
-                self, "Raccourcis",
-                f"Le raccourci « {nom} » est déjà utilisé par une autre action.")
+            dialogues.avertir(
+                self, titre="Raccourcis",
+                description=f"Le raccourci « {nom} » est déjà utilisé par une autre action.")
             self._revert_raccourci(cle, edit)
             return
 
@@ -781,9 +781,9 @@ class PreferencesView(QWidget):
         if self._reappliquer_raccourcis is not None:
             echecs = self._reappliquer_raccourcis()
             if echecs:
-                QMessageBox.warning(
-                    self, "Raccourcis",
-                    "Combinaison(s) déjà utilisée(s) par une autre application :\n"
+                dialogues.avertir(
+                    self, titre="Raccourcis",
+                    description="Combinaison(s) déjà utilisée(s) par une autre application :\n"
                     + "\n".join(echecs))
 
     def _reinitialiser_raccourcis(self) -> None:
@@ -957,12 +957,12 @@ class PreferencesView(QWidget):
         self._label_bm_statut.setStyleSheet(f"color: {C.REC};")
 
     def _reinitialiser_sync_bluemind(self) -> None:
-        rep = QMessageBox.question(
-            self, "Réinitialiser la synchronisation",
-            "La réplique locale du calendrier sera effacée puis resynchronisée.\n"
+        confirme = dialogues.confirmer(
+            self, titre="Réinitialiser la synchronisation ?",
+            description="La réplique locale du calendrier sera effacée puis resynchronisée.\n"
             "Les transcriptions et associations existantes ne sont pas modifiées.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if rep != QMessageBox.StandardButton.Yes:
+            label_action="Réinitialiser", icone="arrows-clockwise", intention=dialogues.Intention.ACCENT)
+        if not confirme:
             return
         if self._bluemind_reinitialiser_sync is not None:
             self._bluemind_reinitialiser_sync()
@@ -1012,7 +1012,8 @@ class PreferencesView(QWidget):
 
     def _ouvrir_log(self, chemin: Path) -> None:
         if not chemin.exists():
-            QMessageBox.information(self, "Log", "Aucun fichier de log trouvé.")
+            dialogues.informer(self, titre="Log", description="Aucun fichier de log trouvé.",
+                              icone="file-text")
             return
         # `open` (macOS) n'existe pas sur Windows — trouvé en test interactif réel
         # sur la VM (2026-07-04) : FileNotFoundError [WinError 2] en Préférences.
@@ -1061,7 +1062,7 @@ class PreferencesView(QWidget):
     def _sur_modele_echec(self, message: str) -> None:
         if self._dlg_modele is not None:
             self._dlg_modele.close()
-        QMessageBox.warning(
-            self, "Modèle",
-            f"Le changement de modèle a échoué :\n{message}\n\n"
+        dialogues.avertir(
+            self, titre="Modèle",
+            description=f"Le changement de modèle a échoué :\n{message}\n\n"
             "Le nouveau modèle sera utilisé au prochain démarrage.")

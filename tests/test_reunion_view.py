@@ -8,7 +8,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QMessageBox
 from scipy.io import wavfile
 
 from debrief_meet.core.config import Config
@@ -203,7 +202,7 @@ def test_generer_sans_audio_affiche_message(qapp, machine, tmp_path, monkeypatch
     g = FauxGestionnaire()
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=g)
     appels = []
-    monkeypatch.setattr(rv_module.QMessageBox, "information", lambda *a, **k: appels.append(a))
+    monkeypatch.setattr(rv_module.dialogues, "avertir", lambda *a, **k: appels.append(a))
     vue._generer(md)
     assert appels
     assert g.lances == []
@@ -222,8 +221,7 @@ def test_transcrire_delegue_au_gestionnaire(qapp, machine, tmp_path):
 def test_supprimer_audio_retire_les_pistes(qapp, machine, tmp_path, monkeypatch):
     md = _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
-    monkeypatch.setattr(rv_module.QMessageBox, "question",
-                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._supprimer_audio_un(md)
     assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
     assert not (tmp_path / "2026-01-01_10-00_systeme.wav").exists()
@@ -235,8 +233,7 @@ def test_tout_supprimer_retire_md_locuteurs_audio(qapp, machine, tmp_path, monke
     loc = chemin_locuteurs(md)
     loc.write_text("loc", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
-    monkeypatch.setattr(rv_module.QMessageBox, "question",
-                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._tout_supprimer_un(md)
     assert not md.exists()
     assert not loc.exists()
@@ -248,8 +245,7 @@ def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch
     b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     vue._table.selectAll()
-    monkeypatch.setattr(rv_module.QMessageBox, "question",
-                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._tout_supprimer(a)
     assert not a.exists() and not b.exists()
 
@@ -436,3 +432,50 @@ def test_action_indique_deja_associe(qapp, machine, tmp_path):
     spec = _spec(_actions(vue), rv_module._ICONE_BLUEMIND_ASSOCIE)
     assert spec.actif is False
     assert "Point projet X" in spec.tooltip
+
+
+# ── Actions en masse (§8.6.4) ────────────────────────────────────────────────
+
+def test_bulk_bar_visible_a_partir_de_deux_lignes(qapp, machine, tmp_path):
+    from PySide6.QtCore import QItemSelectionModel
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert vue._action_bar._bulk.isHidden()
+    sm = vue._table.selectionModel()
+    for r in range(2):
+        sm.select(vue._proxy.index(r, 0),
+                  QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    assert not vue._action_bar._bulk.isHidden()
+
+
+def test_bulk_supprimer_efface_la_selection(qapp, machine, tmp_path, monkeypatch):
+    from PySide6.QtCore import QItemSelectionModel
+    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    sm = vue._table.selectionModel()
+    for r in range(2):
+        sm.select(vue._proxy.index(r, 0),
+                  QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._action_bar.demande_supprimer_masse.emit()
+    assert not a.exists() and not b.exists()
+    assert vue._action_bar._bulk.isHidden()   # sélection vidée après recharge
+
+
+def test_bulk_ignorer_audio_sur_selection(qapp, machine, tmp_path, monkeypatch):
+    from PySide6.QtCore import QItemSelectionModel
+    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    sm = vue._table.selectionModel()
+    for r in range(2):
+        sm.select(vue._proxy.index(r, 0),
+                  QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._action_bar.demande_ignorer_audio_masse.emit()
+    # audio supprimé, .md conservés
+    assert a.exists() and b.exists()
+    assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
+    assert not (tmp_path / "2026-01-02_11-00_moi.wav").exists()

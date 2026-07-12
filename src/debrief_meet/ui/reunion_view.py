@@ -14,12 +14,14 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+from dataclasses import dataclass
+from typing import Callable
+
 from PySide6.QtCore import QFileSystemWatcher, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -31,15 +33,22 @@ from debrief_meet.core.config import Config
 from debrief_meet.core.fichiers import chemin_locuteurs, date_heure_reunion, duree_reunion, pistes_audio_existantes
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
+from debrief_meet.ui import dialogues
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
+from debrief_meet.ui.calendrier_delegate import CalendrierColonneDelegate, CalendrierSpec
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
-from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_TITRE_REUNION, CaptureModel
+from debrief_meet.ui.capture_model import (
+    COL_ACTIONS_REUNION,
+    COL_CALENDRIER_REUNION,
+    COL_TITRE_REUNION,
+    CaptureModel,
+)
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
 from debrief_meet.ui.icon_delegate import IconeColonneDelegate
 from debrief_meet.ui.status_pill import StatusPillDelegate
 from debrief_meet.ui.survol_ligne import TableAvecSurvolLigne
 from debrief_meet.ui.texte_delegate import TexteLigneDelegate
-from debrief_meet.ui.theme import M
+from debrief_meet.ui.theme import C, M
 
 _ICONE_COPIER = "copy"
 _ICONE_TRANSCRIRE = "file-text"
@@ -49,9 +58,21 @@ _ICONE_OUVRIR = "arrow-square-out"
 _ICONE_REVELER = "folder"
 _ICONE_SUPPR_AUDIO = "microphone-slash"
 _ICONE_TOUT_SUPPR = "trash"
-_ICONE_BLUEMIND_ASSOCIER = "calendar-check"
-_ICONE_BLUEMIND_ASSOCIE = "check-circle"
+_ICONE_BLUEMIND_ASSOCIER = "calendar-plus"
+_ICONE_BLUEMIND_ASSOCIE = "calendar-check"
 _ICONE_NOMMER_LOCUTEURS = "chat-text"
+
+
+@dataclass(frozen=True)
+class _EtatBluemind:
+    """Résultat partagé du calcul d'état BlueMind (§6.2) — consommé à la fois par
+    l'item du menu ⋯ (`_action_bluemind`) et par la colonne dédiée
+    (`_calendrier_pour_index`), pour ne calculer la correspondance qu'une fois."""
+
+    etat: str  # "linked" | "match" | "none"
+    titre_evenement: str = ""
+    on_associer: Callable[[], None] | None = None
+
 
 
 class ReunionView(QWidget):
@@ -105,6 +126,8 @@ class ReunionView(QWidget):
         table.setItemDelegate(TexteLigneDelegate(table))
         table.setItemDelegateForColumn(0, IconeColonneDelegate(table))
         table.setItemDelegateForColumn(
+            COL_CALENDRIER_REUNION, CalendrierColonneDelegate(self._calendrier_pour_index, table))
+        table.setItemDelegateForColumn(
             COL_ACTIONS_REUNION, ActionsDelegate(self._actions_pour_index, table))
         table.setItemDelegateForColumn(4, StatusPillDelegate(table))
 
@@ -115,12 +138,11 @@ class ReunionView(QWidget):
         table.setColumnWidth(2, 190)  # date + heure ("JJ/MM/AAAA · HH:MM") — 150px les tronque en mono
         table.setColumnWidth(3, 74)
         table.setColumnWidth(4, 116)
-        # 8 icônes au maximum désormais (copier, transcrire/générer, nommer les
-        # locuteurs, ouvrir, révéler, suppr. audio, tout suppr., BlueMind associer/
-        # associé) — largeur fixe et uniforme sur toutes les lignes (ActionsDelegate
-        # ne clippe pas au rect de la colonne : sous-dimensionner fait chevaucher
-        # ÉTAT, même sur les lignes sans icône BlueMind). Cf. ActionsDelegate.sizeHint.
-        table.setColumnWidth(5, 274)
+        table.setColumnWidth(COL_CALENDRIER_REUNION, 34)  # icône 28×28 + marge (§8.6.2)
+        # 82 = marge droite 20 + Copier 30 + gap 2 + ⋯ 30 : la colonne doit contenir
+        # les 2 boutons (= sizeHint d'ActionsDelegate). Sous-dimensionner ferait déborder
+        # le bouton Copier à gauche → chevauchement avec la colonne « lien calendrier ».
+        table.setColumnWidth(COL_ACTIONS_REUNION, 82)
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -134,12 +156,23 @@ class ReunionView(QWidget):
         layout.setSpacing(0)
 
         self._action_bar = CaptureActionBar(
-            Mode.REUNION, avec_recherche=True, placeholder_recherche="Rechercher une réunion…", parent=self)
+            Mode.REUNION, avec_recherche=True, placeholder_recherche="Rechercher une réunion…",
+            actions_masse=True, avec_ignorer_audio=True, parent=self)
         self._action_bar.demande_bascule.connect(machine.toggle_reunion)
         self._action_bar.recherche_change.connect(self._proxy.setFilterFixedString)
+        # Actions en masse (§8.6.4) : réutilisent les handlers unitaires avec chemin=None
+        # (→ _cibles(None) = sélection), confirmation §8.9 portant le décompte.
+        self._action_bar.demande_supprimer_masse.connect(lambda: self._tout_supprimer(None))
+        self._action_bar.demande_ignorer_audio_masse.connect(lambda: self._supprimer_audio_un(None))
+        self._action_bar.demande_deselection.connect(self._table.clearSelection)
+        self._table.selectionModel().selectionChanged.connect(self._sur_selection_change)
+        self._modele.modelReset.connect(self._sur_selection_change)
         layout.addWidget(self._action_bar)
 
         layout.addWidget(self._table, 1)
+
+    def _sur_selection_change(self, *_args) -> None:
+        self._action_bar.definir_compte_selection(len(self._chemins_selectionnes()))
 
     # ── Machine à états (RecordingController) ───────────────────────────────────
 
@@ -172,7 +205,7 @@ class ReunionView(QWidget):
         en_cours = chemin == job
         un_job_tourne = job is not None
 
-        actions = [ActionSpec(_ICONE_COPIER, "Copier la transcription", True,
+        actions = [ActionSpec(_ICONE_COPIER, "Copier la transcription", not ligne.en_attente,
                               lambda c=chemin: self._copier(c))]
 
         if ligne.en_attente:
@@ -216,45 +249,74 @@ class ReunionView(QWidget):
 
         actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir la transcription", True,
                                   lambda c=chemin: self._ouvrir(c)))
-        actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le Finder", True,
+        actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True,
                                   lambda c=chemin: self._reveler(c)))
-        actions.append(ActionSpec(
-            _ICONE_SUPPR_AUDIO, "Supprimer l'audio (garde le débrief)", bool(ligne.audio),
-            lambda c=chemin: self._supprimer_audio_un(c)))
-        actions.append(ActionSpec(
-            _ICONE_TOUT_SUPPR, "Tout supprimer (transcription + locuteurs + audio)", True,
-            lambda c=chemin: self._tout_supprimer_un(c)))
 
         action_bluemind = self._action_bluemind(chemin)
         if action_bluemind is not None:
             actions.append(action_bluemind)
+
+        actions.append(ActionSpec(
+            _ICONE_SUPPR_AUDIO, "Supprimer l'audio (garde le débrief)", bool(ligne.audio),
+            lambda c=chemin: self._supprimer_audio_un(c), separateur_avant=True))
+        actions.append(ActionSpec(
+            _ICONE_TOUT_SUPPR, "Tout supprimer", True,
+            lambda c=chemin: self._tout_supprimer_un(c), danger=True))
         return actions
 
     # ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
 
-    def _action_bluemind(self, chemin: Path) -> ActionSpec | None:
+    def _etat_bluemind_pour(self, chemin: Path) -> _EtatBluemind | None:
         """Détection **automatique et locale** (réplique) — aucun réseau sur ce
-        chemin (§6.2). None si BlueMind n'est pas configuré (interco invisible)."""
+        chemin (§6.2). None si BlueMind n'est pas configuré (interco invisible) ;
+        calcul partagé par le menu ⋯ (`_action_bluemind`) et la colonne dédiée
+        (`_calendrier_pour_index`, §8.6.2)."""
         if self._store_bluemind is None:
             return None
         if bluemind_association.existe(chemin):
             asso = bluemind_association.lire(chemin)
             titre = asso.titre if asso else chemin.stem
-            return ActionSpec(_ICONE_BLUEMIND_ASSOCIE, f"Associé à « {titre} »", False, lambda: None)
+            return _EtatBluemind("linked", titre)
 
         debut = date_heure_reunion(chemin)
         if debut is None:
-            return None
+            return _EtatBluemind("none")
         marge = timedelta(hours=6)
         debut_ms = int((debut - marge).timestamp() * 1000)
         fin_ms = int((debut + marge).timestamp() * 1000)
         candidats = self._store_bluemind.evenements_dans_plage(debut_ms, fin_ms)
         correspondances = evenements_correspondants(candidats, debut, duree_reunion(chemin))
         if not correspondances:
+            return _EtatBluemind("none")
+        return _EtatBluemind(
+            "match", on_associer=lambda c=chemin, evts=correspondances: self._associer_bluemind(c, evts))
+
+    def _action_bluemind(self, chemin: Path) -> ActionSpec | None:
+        """Item du menu ⋯ (§8.6.3) — None si BlueMind non configuré ou aucune
+        correspondance (l'interco reste invisible)."""
+        etat = self._etat_bluemind_pour(chemin)
+        if etat is None or etat.etat == "none":
             return None
-        return ActionSpec(
-            _ICONE_BLUEMIND_ASSOCIER, "Associer à la réunion", True,
-            lambda c=chemin, evts=correspondances: self._associer_bluemind(c, evts))
+        if etat.etat == "linked":
+            return ActionSpec(_ICONE_BLUEMIND_ASSOCIE, f"Associé — {etat.titre_evenement}", False, lambda: None)
+        return ActionSpec(_ICONE_BLUEMIND_ASSOCIER, "Associer à la réunion", True, etat.on_associer)
+
+    def _calendrier_pour_index(self, index: QModelIndex) -> CalendrierSpec | None:
+        """Fournisseur de la colonne « lien calendrier » dédiée (§8.6.2)."""
+        proxy = index.model()
+        source = proxy.mapToSource(index)
+        info = self._modele.info_ligne(source.row())
+        if info is None or info.en_cours:
+            return None
+        etat = self._etat_bluemind_pour(info.chemin)
+        if etat is None or etat.etat == "none":
+            return CalendrierSpec(None, "", "", False)
+        if etat.etat == "linked":
+            return CalendrierSpec(
+                "calendar-check", C.SUCCESS, f"Associé à « {etat.titre_evenement} »", False)
+        return CalendrierSpec(
+            "calendar-plus", C.ACCENT_INK,
+            "Un événement du calendrier BlueMind correspond — associer", True, etat.on_associer)
 
     def _associer_bluemind(self, chemin: Path, evenements) -> None:
         from debrief_meet.ui.bluemind_association import DialogAssociationBluemind
@@ -350,22 +412,24 @@ class ReunionView(QWidget):
         if self._gestionnaire is None or not self._gestionnaire.diarization_prete():
             return
         if not pistes_audio_existantes(chemin):
-            QMessageBox.information(
-                self, "Diarization",
-                f"Aucun audio retenu pour « {chemin.name} ».\n"
-                "Activez la rétention audio dans les Préférences avant la réunion.")
+            dialogues.avertir(
+                self, titre="Diarization",
+                description=f"Aucun audio retenu pour « {chemin.name} ».\n"
+                "Activez la rétention audio dans les Préférences avant la réunion.",
+                icone="waveform")
             return
         if not self._gestionnaire.lancer(chemin):
-            QMessageBox.information(self, "Diarization", "Une génération est déjà en cours.")
+            dialogues.avertir(self, titre="Diarization", description="Une génération est déjà en cours.")
 
     def _transcrire(self, chemin: Path) -> None:
         if self._gestionnaire is None or not self._gestionnaire.disponible():
             return
         if not pistes_audio_existantes(chemin):
-            QMessageBox.information(self, "Transcription", f"Aucun audio retenu pour « {chemin.name} ».")
+            dialogues.avertir(self, titre="Transcription",
+                              description=f"Aucun audio retenu pour « {chemin.name} ».", icone="waveform")
             return
         if not self._gestionnaire.lancer_transcription(chemin):
-            QMessageBox.information(self, "Transcription", "Une tâche est déjà en cours.")
+            dialogues.avertir(self, titre="Transcription", description="Une tâche est déjà en cours.")
 
     def _cabler_gestionnaire(self) -> None:
         if self._gestionnaire is None:
@@ -380,22 +444,25 @@ class ReunionView(QWidget):
     def _sur_diar_echoue(self, _md: object, message: str) -> None:
         self._modele.recharger()
         if self.isVisible():
-            QMessageBox.warning(self, "Diarization — échec",
-                                f"La génération des locuteurs a échoué :\n{message}")
+            dialogues.avertir(self, titre="Diarization — échec",
+                              description=f"La génération des locuteurs a échoué :\n{message}")
 
     # ── Suppressions ────────────────────────────────────────────────────────────
 
-    def _supprimer_audio_un(self, chemin: Path) -> None:
+    def _supprimer_audio_un(self, chemin: Path | None = None) -> None:
+        # chemin=None → cible la sélection courante (action en masse, §8.6.4).
         cibles = [c for c in self._cibles(chemin) if pistes_audio_existantes(c)]
         if not cibles:
-            QMessageBox.information(self, "Audio retenu", "Aucun audio retenu à supprimer.")
+            dialogues.avertir(self, titre="Audio retenu", description="Aucun audio retenu à supprimer.")
             return
-        rep = QMessageBox.question(
-            self, "Supprimer l'audio retenu",
-            f"Supprimer l'audio retenu de {len(cibles)} réunion(s) ?\n"
-            "(Le débrief reste ; la diarization ne sera plus regénérable.)",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if rep != QMessageBox.StandardButton.Yes:
+        n = len(cibles)
+        noun = "réunions" if n > 1 else "réunion"
+        confirme = dialogues.confirmer(
+            self, titre=f"Supprimer l'audio de {n} {noun} ?",
+            description=f"L'audio retenu de {n} {noun} sera supprimé définitivement "
+            "(transcription et compte-rendu conservés).",
+            label_action="Ignorer l'audio", icone="microphone-slash")
+        if not confirme:
             return
         for c in cibles:
             for p in pistes_audio_existantes(c):
@@ -412,12 +479,14 @@ class ReunionView(QWidget):
         cibles = self._cibles(chemin)
         if not cibles:
             return
-        rep = QMessageBox.question(
-            self, "Tout supprimer",
-            f"Supprimer définitivement {len(cibles)} enregistrement(s) ?"
-            "\n(Transcription + débrief locuteurs + audio retenu.)",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if rep != QMessageBox.StandardButton.Yes:
+        n = len(cibles)
+        noun = "réunions" if n > 1 else "réunion"
+        verbe = "seront supprimées" if n > 1 else "sera supprimée"
+        confirme = dialogues.confirmer(
+            self, titre=f"Supprimer {n} {noun} ?",
+            description=f"{n} {noun} {verbe} définitivement (transcription, débrief et audio inclus).",
+            label_action="Supprimer", icone="trash")
+        if not confirme:
             return
         for c in cibles:
             self._supprimer_un(c)

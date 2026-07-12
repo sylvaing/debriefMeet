@@ -43,14 +43,15 @@ _COULEUR_SECONDAIRE = QColor(C.INK500)
 # reste réservé à `HistoryState` sur la colonne état (contrat de `StatusPillDelegate`).
 ROLE_CHEMIN = Qt.ItemDataRole.UserRole + 1
 
-COLS_REUNIONS = ("type", "titre", "date", "durée", "état", "actions")
+COLS_REUNIONS = ("type", "titre", "date", "durée", "état", "calendrier", "actions")
 COLS_JOURNAL = ("icône", "fichier", "note", "actions")
 
-_ENTETES_REUNIONS = ("", "TITRE", "DATE", "DURÉE", "ÉTAT", "")
+_ENTETES_REUNIONS = ("", "TITRE", "DATE", "DURÉE", "ÉTAT", "", "")
 _ENTETES_JOURNAL = ("", "FICHIER", "NOTE", "")
 
 COL_TITRE_REUNION = 1
-COL_ACTIONS_REUNION = 5
+COL_CALENDRIER_REUNION = 5  # DESIGN.md §8.6.2 — colonne dédiée, sortie de la rangée d'actions
+COL_ACTIONS_REUNION = 6
 COL_FICHIER_JOURNAL = 1
 COL_ACTIONS_JOURNAL = 3
 
@@ -143,7 +144,7 @@ class CaptureModel(QAbstractTableModel):
         return len(self._lignes) + (1 if self._ligne_en_cours is not None else 0)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else (6 if self._est_reunion else 4)
+        return 0 if parent.isValid() else (7 if self._est_reunion else 4)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation != Qt.Orientation.Horizontal or role != Qt.ItemDataRole.DisplayRole:
