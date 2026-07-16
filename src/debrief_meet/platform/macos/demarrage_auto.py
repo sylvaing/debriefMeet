@@ -43,7 +43,13 @@ class DemarrageAutoMacOS(DemarrageAuto):
         return self._plist_path.exists()
 
     def activer(self) -> None:
-        executable = Path(sys.argv[0]).resolve()
+        from debrief_meet.core.ressources import est_figee
+
+        # En app figée, sys.argv[0] est peu fiable (peut être relatif, ou différer
+        # du binaire réellement exécuté) ; sys.executable pointe toujours sur
+        # Contents/MacOS/debriefMeet. En dev, sys.executable serait l'interpréteur
+        # Python du venv — on garde donc sys.argv[0] dans ce cas (docs/16 §5.4).
+        executable = Path(sys.executable).resolve() if est_figee() else Path(sys.argv[0]).resolve()
         contenu = _PLIST_TEMPLATE.format(label=_BUNDLE_ID, executable=executable)
         self._plist_path.parent.mkdir(parents=True, exist_ok=True)
         self._plist_path.write_text(contenu, encoding="utf-8")

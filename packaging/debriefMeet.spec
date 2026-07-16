@@ -24,14 +24,25 @@ BUNDLE_ID = "com.sylvaingarcia.debriefmeet"
 ASSETS = os.path.join(SRC, "debrief_meet", "ui", "assets")
 ICONE = os.path.join(ASSETS, "icons", "debriefMeet.icns")  # refonte design (handoff)
 HELPER = os.path.join(ROOT, "helpers", "macos", "sck-audio", "SCKAudioCapture")
+FFMPEG = os.path.join(ROOT, "packaging", "vendor", "ffmpeg")
+FFMPEG_LICENSE = os.path.join(ROOT, "packaging", "vendor", "LICENSE-ffmpeg.md")
+if not os.path.exists(FFMPEG):
+    raise SystemExit(
+        "packaging/vendor/ffmpeg introuvable — lancer d'abord :\n"
+        "    bash packaging/build_ffmpeg.sh\n"
+        "(docs/16-packaging-macos.md §5.5)"
+    )
 
 # ── Ressources embarquées ─────────────────────────────────────────────────────
 # Assets UI : résolus via Path(__file__).parent/"assets" → cible debrief_meet/ui/assets.
 # Helper Swift : résolu via chemin_ressource("helpers","macos","sck-audio",...) → même
 # chemin relatif sous _MEIPASS.
+# ffmpeg (LGPL, compilé par build_ffmpeg.sh) : résolu via chemin_ressource("vendor","ffmpeg").
 datas = [
     (ASSETS, os.path.join("debrief_meet", "ui", "assets")),
     (HELPER, os.path.join("helpers", "macos", "sck-audio")),
+    (FFMPEG, "vendor"),
+    (FFMPEG_LICENSE, "vendor"),
 ]
 binaries = []
 hiddenimports = [

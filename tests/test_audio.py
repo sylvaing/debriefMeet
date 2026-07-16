@@ -5,7 +5,14 @@ import threading
 import numpy as np
 import pytest
 
-from debrief_meet.core.audio import BufferAudio, SEUIL_RMS_SILENCE, preparer_asr, reechantillonner
+from debrief_meet.core.audio import (
+    BufferAudio,
+    SEUIL_RMS_SILENCE,
+    decoder_audio_16k,
+    preparer_asr,
+    reechantillonner,
+)
+from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable
 
 
 def test_buffer_accumule_plusieurs_chunks():
@@ -113,3 +120,13 @@ def test_preparer_asr_audio_fort_inchange():
     result = preparer_asr(fort)
     assert result is not None
     np.testing.assert_array_equal(result, fort)
+
+
+def test_decoder_audio_16k_opus_leve_erreur_typee_si_ffmpeg_introuvable(monkeypatch, tmp_path):
+    from debrief_meet.core import fichiers
+
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: None)
+    faux_opus = tmp_path / "piste.opus"
+    faux_opus.write_bytes(b"\x00")
+    with pytest.raises(ErreurFfmpegIntrouvable):
+        decoder_audio_16k(faux_opus)

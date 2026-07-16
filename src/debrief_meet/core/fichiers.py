@@ -245,9 +245,32 @@ def formater_duree(secondes: int | None) -> str:
 _SR_AUDIO = 16_000
 
 
-def _ffmpeg_present() -> bool:
+class ErreurFfmpegIntrouvable(RuntimeError):
+    """ffmpeg requis (embarqué ou système) mais introuvable."""
+
+    def __init__(self) -> None:
+        super().__init__("ffmpeg requis pour relire l'audio Opus.")
+
+
+def chemin_ffmpeg() -> str | None:
+    """Chemin de l'exécutable ffmpeg à utiliser, ou None si introuvable.
+
+    En app figée (bundle), le binaire LGPL embarqué (`vendor/ffmpeg`, cf. docs/16
+    §5.5) est résolu via `ressources.chemin_ressource` — une app lancée depuis le
+    Finder hérite d'un PATH minimal, donc `shutil.which` échouerait même si ffmpeg
+    est installé via brew sur la machine. En dev, repli sur le PATH courant."""
     import shutil
-    return shutil.which("ffmpeg") is not None
+
+    from debrief_meet.core.ressources import chemin_ressource, est_figee
+
+    if est_figee():
+        embarque = chemin_ressource("vendor", "ffmpeg")
+        return str(embarque) if embarque.exists() else None
+    return shutil.which("ffmpeg")
+
+
+def _ffmpeg_present() -> bool:
+    return chemin_ffmpeg() is not None
 
 
 class _PisteWriter:
@@ -259,8 +282,11 @@ class _PisteWriter:
         if mode == "opus":
             self.chemin = base.with_name(base.name + ".opus")
             import subprocess
+            exe = chemin_ffmpeg()
+            if exe is None:
+                raise ErreurFfmpegIntrouvable()
             self._proc = subprocess.Popen(
-                ["ffmpeg", "-y", "-loglevel", "error",
+                [exe, "-y", "-loglevel", "error",
                  "-f", "f32le", "-ar", str(_SR_AUDIO), "-ac", "1", "-i", "pipe:0",
                  "-c:a", "libopus", "-b:a", f"{debit_kbps}k", str(self.chemin)],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

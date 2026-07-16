@@ -29,6 +29,10 @@ dist/
 *.pkg
 bundles/
 
+# ffmpeg LGPL compilé par packaging/build_ffmpeg.sh (docs/16 §5.5) — reconstructible,
+# jamais commité (~5-10 Mo).
+packaging/vendor/
+
 # Généré par le script de build (docs/31 §3.2, docs/32 §3.1) — jamais commité.
 src/debrief_meet/_version.py
 packaging/windows/version.iss
@@ -57,6 +61,7 @@ spike/backends_windows/assets/models/
 *.so
 *.o
 *.obj
+*.cstemp
 
 # --- Sorties dérivées d'enregistrements RÉELS = CONFIDENTIEL ---
 # Transcriptions/diarisations verbatim de vraies réunions (noms, tarifs, stratégie).

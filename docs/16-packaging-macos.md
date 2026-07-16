@@ -1,13 +1,26 @@
 # Phase 4 — Packaging macOS (`.app` + `.dmg`)
 
-> **Statut au 2026-07-12 :** 🟡 **en cours** — fondations code + outillage faits et
-> testés ; **build PyInstaller non encore validé** (mis en pause le 2026-06-30).
-> Préparation d'un run autonome faite le 2026-07-12 : **certificat créé et validé**
-> (§4, aucune interaction requise), **décision ffmpeg tranchée** (§5.5, option b —
-> build LGPL minimal compilé par nous, bundlé), **item notifications ajouté** à la
-> checklist (§6.8). Ce document est autoporteur :
-> une autre session doit pouvoir reprendre à partir d'ici sans contexte
-> supplémentaire — seul §6 (validation TCC) reste manuel, par conception.
+> **Statut au 2026-07-12 :** 🟢 **§5 terminé et validé en conditions réelles** sur
+> cette machine (arm64, macOS 26.5.1) — reste **uniquement §6** (validation TCC
+> manuelle : permissions Micro/Enregistrement de l'écran, ne peut pas être
+> scriptée par conception).
+>
+> Réalisé le 2026-07-12 : `packaging/build_ffmpeg.sh` compile pour de vrai un
+> ffmpeg LGPL minimal (§5.5, corrigé au passage : `--disable-postproc` obsolète,
+> noms internes des demuxers/muxers `pcm_f32le`/`pcm_s16le` différents de la
+> sortie `ffmpeg -demuxers`) ; `packaging/build_app.sh`/`build_dmg.sh` écrits et
+> **exécutés réellement** — `dist/debriefMeet.app` build + signé (Authority
+> `debriefMeet Local` stable, même leaf hash qu'à la création du certificat) +
+> `dist/debriefMeet-0.2.0.dmg` (343 Mo) produits. App **lancée réellement** (pas
+> seulement compilée) : tray, worker MLX (self-relaunch), helper SCK et ffmpeg
+> embarqués tous trouvés en bundle. Un bug réel trouvé au lancement (bruit
+> `unrecognized arguments` du bootstrap `multiprocessing.resource_tracker` sur
+> `sys.executable` figé) corrigé dans `__main__._relais_interprete_figee` — cf.
+> §5.1. `demarrage_auto.py` corrigé pour utiliser `sys.executable` en app figée
+> (§5.4, item resté ouvert malgré le ✅ bundle id).
+>
+> Ce document est autoporteur : une autre session doit pouvoir reprendre à
+> partir d'ici sans contexte supplémentaire.
 >
 > Références : [`03-phases-implementation.md`](03-phases-implementation.md) §Phase 4.
 
@@ -111,54 +124,76 @@ Dans `packaging/` :
 
 ---
 
-## 5. Point de reprise — reste à faire
+## 5. Point de reprise — ✅ terminé (2026-07-12)
 
-> Ordre conseillé. Tout se lance depuis la racine du dépôt, avec `.venv-build`.
+> Tout se lance depuis la racine du dépôt, avec `.venv-build`.
 
-### 5.1 Valider le build PyInstaller (partie tâtonnante)
+### 5.1 Build PyInstaller — ✅ validé en conditions réelles
 
 ```bash
 .venv-build/bin/pyinstaller packaging/debriefMeet.spec --noconfirm \
     --distpath dist --workpath build/work
 ```
 
-Puis lancer `dist/debriefMeet.app/Contents/MacOS/debriefMeet` en terminal pour voir
-les erreurs d'import. **Itérer** : ajouter les modules manquants dans
-`hiddenimports`/`collect_all` de la spec (suspects classiques : sous-modules
-`pyannote`, `lightning`, `speechbrain`, plugins `torchaudio`). Vérifier que :
-- le tray apparaît,
-- le worker MLX démarre (transcription dictée),
-- le helper SCK est trouvé (`Contents/Resources/helpers/macos/sck-audio/SCKAudioCapture`).
+**Build réussi du premier coup** (aucun hiddenimport manquant à ajouter — la spec
+existante suffisait). `dist/debriefMeet.app/Contents/MacOS/debriefMeet` **lancé
+réellement** en terminal :
+- tray apparaît (LSUIElement, pas d'icône Dock) ;
+- worker MLX démarre (self-relaunch `[sys.executable, "--mlx-worker"]`), pool=1 et
+  pool=2 atteignent `READY` ;
+- helper SCK trouvé (`Contents/Resources/helpers/macos/sck-audio/SCKAudioCapture`,
+  signé, `Authority=debriefMeet Local`) ;
+- ffmpeg embarqué trouvé (`Contents/Resources/vendor/ffmpeg`, symlink PyInstaller
+  vers `Contents/Frameworks/vendor/ffmpeg`, signé).
 
-### 5.2 `packaging/build_app.sh` (à écrire)
+**Bug réel trouvé et corrigé** (uniquement visible en app figée, invisible en
+dev) : au démarrage du worker MLX, `multiprocessing.resource_tracker` (déclenché
+en interne par mlx/torch) relance `sys.executable` en mode `-c` pur
+(`-B -S -I -c "from multiprocessing.resource_tracker import main;main(11)"`).
+Notre binaire figé n'est pas un interpréteur générique : ces flags atterrissaient
+dans l'argparse de `__main__._parser`, qui échouait avec `unrecognized arguments`
+(bruit dans les logs, sans casser la transcription — le worker atteignait quand
+même `READY`). Corrigé en émulant `python -c` : `__main__._relais_interprete_figee()`
+détecte `-c` dans `sys.argv` et `exec()` le code reçu avant tout le reste (routage
+placé avant même le check `--mlx-worker`). Confirmé par un relancement réel :
+0 occurrence de `unrecognized arguments`/`resource_tracker` dans les logs après
+correctif, workers toujours `READY`. Tests : `tests/test_main_relais_interprete.py`.
 
-Orchestration signature **stable** :
-1. `bash packaging/creer_certificat.sh` (idempotent).
-2. Recompiler le helper signé stable : `CODESIGN_IDENTITY="debriefMeet Local" bash helpers/macos/sck-audio/build.sh`.
-3. `pyinstaller … debriefMeet.spec`.
-4. Signer l'app : `codesign --force --deep --sign "debriefMeet Local" dist/debriefMeet.app`
-   (⚠️ **pas** `--options runtime` : mlx/torch ont besoin de mémoire exécutable non signée ; le hardened runtime n'est requis que pour la notarisation, hors périmètre).
-5. Re-signer le helper avec ses entitlements : `codesign --force --sign "debriefMeet Local" --entitlements helpers/macos/sck-audio/entitlements.plist dist/debriefMeet.app/Contents/Resources/helpers/macos/sck-audio/SCKAudioCapture`.
-6. Re-sceller l'app (sans `--deep`) : `codesign --force --sign "debriefMeet Local" dist/debriefMeet.app`.
-7. Vérifier : `codesign -dv --verbose=4 dist/debriefMeet.app` → noter l'**Authority**. Rebuild → l'Authority doit être **identique** (preuve que TCC tiendra).
+### 5.2 `packaging/build_app.sh` — ✅ écrit et exécuté réellement
 
-### 5.3 `packaging/build_dmg.sh` (à écrire)
+Orchestration signature **stable**, implémentée telle que prévue (identité →
+helper → PyInstaller → signature app `--deep` sans `--options runtime` →
+re-signature helper avec entitlements → **signature du binaire ffmpeg embarqué**
+→ re-scellage sans `--deep` → vérification). Exécutée deux fois de suite sur
+cette machine : `Authority=debriefMeet Local` les deux fois, et le leaf hash
+(`codesign -d -r-`) est **identique** à celui relevé à la création du certificat
+(§4) — preuve concrète que TCC conservera les permissions entre rebuilds.
+
+⚠️ Piège rencontré (à anticiper pour une prochaine machine) : le **premier**
+`codesign` réel avec l'identité (celui du helper, dans `build_app.sh`) peut
+déclencher une popup système "codesign veut accéder à une clé…" **invisible aux
+API d'accessibilité/scripting** (fenêtre sécurisée du trousseau) — un script ou
+un agent ne peut ni la détecter ni la fermer. Un humain doit cliquer **Toujours
+autoriser** une fois ; ensuite tous les codesign suivants passent sans popup.
+
+### 5.3 `packaging/build_dmg.sh` — ✅ écrit et exécuté réellement
 
 ```bash
 VERSION=$(.venv-build/bin/python -c "import debrief_meet; print(debrief_meet.__version__)")
 create-dmg --volname "debriefMeet" --app-drop-link 450 180 \
     "dist/debriefMeet-$VERSION.dmg" "dist/debriefMeet.app"
 ```
-(lien `/Applications` pour l'install par glisser-déposer).
+(lien `/Applications` pour l'install par glisser-déposer). Produit réellement :
+`dist/debriefMeet-0.2.0.dmg` (343 Mo, compression 75,5 %).
 
-### 5.4 Makefile + autostart en contexte bundle
+### 5.4 Makefile + autostart en contexte bundle — ✅ fait
 
-- Ajouter cibles `build-app` et `dmg` (utilisant `.venv-build`).
+- Cibles `build-app` et `dmg` ajoutées (utilisant `.venv-build`).
 - `platform/macos/demarrage_auto.py` :
   - **Aligner le bundle id** : ✅ fait (2026-07-02) — `_BUNDLE_ID = "com.sylvaingarcia.debriefmeet"` (cohérence avec la spec ; sinon label LaunchAgent incohérent). Confirmé par l'audit externe ([`audits-externes/21`](audits-externes/21-audit-recommandations.md) R1) : c'était à faire **avant** le premier build, sinon l'autostart pointe dans le vide et risque de dédoublement TCC.
-  - En mode figé, faire pointer le LaunchAgent sur le binaire `.app` via `sys.executable` (et non `sys.argv[0]`, moins fiable une fois figé).
+  - **En mode figé, LaunchAgent → `sys.executable`** : ✅ fait (2026-07-12) — `activer()` utilise `sys.executable` si `est_figee()`, sinon `sys.argv[0]` (dev, inchangé). Tests : `tests/test_demarrage_auto_macos.py`.
 
-### 5.5 Décision ffmpeg dans l'app packagée (audit R7)
+### 5.5 Décision ffmpeg dans l'app packagée (audit R7) — ✅ implémenté et compilé réellement
 
 > Issue de la contre-analyse de l'audit externe ([`audits-externes/21`](audits-externes/21-audit-recommandations.md) R7).
 
@@ -189,10 +224,13 @@ pas brew).
    configure de départ —
    `--disable-gpl --disable-nonfree --disable-everything --disable-doc
    --disable-ffplay --disable-ffprobe --enable-libopus` + activation sélective
-   (protocols `file,pipe` ; demuxers `s16le,ogg,wav` ; muxers `opus,ogg,wav,s16le` ;
-   decoders `pcm_s16le,opus,libopus` ; encoders `pcm_s16le,libopus` ; filters
-   `aresample,aformat,anull`) — **itérer avec les tests réels ci-dessous comme
-   oracle** plutôt que de sur-raffiner la liste a priori.
+   (protocols `file,pipe` ; demuxers `pcm_f32le,pcm_s16le,ogg,wav` — noms internes
+   du build system, différents des noms courts affichés par `ffmpeg -demuxers`
+   (`f32le`/`s16le`) : utiliser `./configure --list-demuxers`/`--list-muxers`
+   comme référence, pas la sortie runtime ; muxers `opus,ogg,wav,pcm_s16le` ;
+   decoders `pcm_f32le,pcm_s16le,opus,libopus` ; encoders `pcm_s16le,libopus` ;
+   filters `aresample,aformat,anull`) — **itérer avec les tests réels ci-dessous
+   comme oracle** plutôt que de sur-raffiner la liste a priori.
    Validation obligatoire du binaire produit :
    - `otool -L ffmpeg` → uniquement `/usr/lib` + frameworks système (pas de
      `/opt/homebrew`) ;
@@ -234,15 +272,32 @@ Options écartées : (a) étendre la résolution aux chemins brew (garde la
 dépendance implicite à brew sur chaque machine cible), (c) assumer le WAV
 (fichiers ~10×, casse la relecture des `.opus` historiques).
 
-Tests attendus : `chemin_ffmpeg()` en mode figé simulé (monkeypatch
-`est_figee`/`chemin_ressource`) et en dev ; erreur typée quand rien n'est
-résolu ; `test_build.py` vérifie la présence de `vendor/ffmpeg` signé dans
-l'app produite.
+**✅ Réalisé et validé le 2026-07-12** (versions épinglées : ffmpeg 8.1.2,
+libopus 1.6.1 statique — checksums SHA-256 dans `build_ffmpeg.sh`) :
+- binaire produit : 2,3 Mo, `otool -L` = uniquement `/usr/lib` + frameworks
+  système, `-version` sans `--enable-gpl`, `-encoders` contient `libopus` ;
+- cycle réel encode (PCM f32le → `.opus` via `libopus`) → décode (`.opus` → WAV
+  16 kHz mono) exécuté avec les commandes exactes de `core/fichiers.py`/`core/audio.py` ;
+- `chemin_ffmpeg()` testé en mode figé simulé et en dev (`tests/test_fichiers.py`),
+  erreur typée `ErreurFfmpegIntrouvable` testée côté encodage et décodage
+  (`tests/test_fichiers.py`, `tests/test_audio.py`) ;
+- `tests/test_build.py::TestFfmpegVendor` vérifie (quand le binaire est présent :
+  skip sinon, il n'est pas produit par `make setup`) l'absence de dylib Homebrew,
+  l'absence de `--enable-gpl`, la présence de `libopus` ;
+- signé dans l'app produite avec l'identité stable (`build_app.sh` §5.2),
+  `Authority=debriefMeet Local` confirmé via `codesign -dv`.
+
+Deux pièges de configure corrigés en cours de route (documentés dans le point 1
+ci-dessus après coup) : `--disable-postproc` n'existe plus en ffmpeg 8.1.x, et
+les demuxers/muxers raw PCM doivent être activés sous leur nom **interne**
+(`pcm_f32le`, `pcm_s16le`) et non le nom court affiché par `ffmpeg -demuxers`.
 
 ### 5.6 Doc & clôture
 
-- Mettre ce statut à jour (→ ✅).
-- Marquer **Phase 4 ✅** dans [`03-phases-implementation.md`](03-phases-implementation.md) (section + tableau Vue d'ensemble).
+- Statut de ce document mis à jour (→ §5 ✅, 2026-07-12).
+- `03-phases-implementation.md` mis à jour : Phase 4 reste 🔄 tant que §6
+  (validation manuelle TCC, ci-dessous) n'a pas été rejouée par Sylvain sur le
+  `.dmg` réellement produit — mais tout le travail scriptable est fait.
 
 ---
 

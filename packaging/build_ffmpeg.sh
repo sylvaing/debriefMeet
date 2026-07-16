@@ -1,0 +1,190 @@
+#!/bin/bash
+# build_ffmpeg.sh — compile un ffmpeg minimal LGPL (arm64) pour l'embarquer dans
+# debriefMeet.app (docs/16 §5.5, décision utilisateur du 2026-07-12 : option b).
+#
+# Pourquoi compiler nous-mêmes plutôt qu'utiliser un prébuild communautaire :
+# les prébuilds courants (evermeet, John Van Sickle…) sont quasi tous
+# --enable-gpl (x264/x265…) et le binaire Homebrew embarque des dylibs
+# /opt/homebrew non portables sur une machine cible sans brew (Bastien/Alix).
+# Le code de l'app n'utilise que : encodage PCM→Opus (core/fichiers.py) et
+# décodage Opus/PCM/WAV→PCM (core/audio.py) — entièrement dans le périmètre LGPL
+# (--disable-gpl --disable-nonfree, libopus = BSD).
+#
+# Idempotent : si packaging/vendor/ffmpeg existe déjà et passe la validation,
+# ne recompile pas. Usage : bash packaging/build_ffmpeg.sh [--force]
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENDOR="$ROOT/packaging/vendor"
+BUILD="$VENDOR/_build"
+OUT="$VENDOR/ffmpeg"
+LICENSE_OUT="$VENDOR/LICENSE-ffmpeg.md"
+
+FORCE=false
+[[ "${1:-}" == "--force" ]] && FORCE=true
+
+# ── Versions & checksums épinglés (sources officielles, vérifiés le 2026-07-12) ─
+FFMPEG_VERSION="8.1.2"
+FFMPEG_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+FFMPEG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+
+OPUS_VERSION="1.6.1"
+OPUS_URL="https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"
+OPUS_SHA256="6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1"
+
+echo() { command echo "$@"; }
+info() { echo "==> $*"; }
+err()  { echo "✗ $*" >&2; exit 1; }
+
+# ── Validation du binaire (réutilisée en sortie normale et pour le check idempotent) ─
+valider_binaire() {
+    local bin="$1"
+    [[ -x "$bin" ]] || return 1
+    # Aucune dépendance Homebrew/tierce : uniquement système.
+    if otool -L "$bin" | tail -n +2 | grep -vqE '^\s*(/usr/lib|/System)/'; then
+        otool -L "$bin" >&2
+        err "binaire lié à des dylibs non-système (voir ci-dessus) — build non portable."
+    fi
+    "$bin" -hide_banner -encoders 2>/dev/null | grep -q "libopus" \
+        || err "encodeur libopus absent du binaire compilé."
+    "$bin" -version 2>/dev/null | grep -q -- "--enable-gpl" \
+        && err "le binaire est compilé --enable-gpl (inattendu, licence non conforme)."
+    return 0
+}
+
+if [[ -x "$OUT" ]] && ! $FORCE; then
+    if valider_binaire "$OUT" 2>/dev/null; then
+        info "binaire déjà présent et validé : $OUT (skip — utiliser --force pour rebuilder)"
+        exit 0
+    fi
+    info "binaire présent mais invalide — reconstruction."
+fi
+
+command -v pkg-config >/dev/null || err "pkg-config introuvable (brew install pkg-config)."
+
+mkdir -p "$BUILD"
+NPROC="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+# ── 1. Télécharge + vérifie les sources ─────────────────────────────────────────
+descendre() {
+    local url="$1" sha="$2" dest="$3"
+    if [[ -f "$dest" ]] && [[ "$(shasum -a 256 "$dest" | awk '{print $1}')" == "$sha" ]]; then
+        info "source déjà présente et vérifiée : $(basename "$dest")"
+        return
+    fi
+    info "téléchargement : $url"
+    curl -fSL --retry 3 -o "$dest" "$url"
+    local obtenu
+    obtenu="$(shasum -a 256 "$dest" | awk '{print $1}')"
+    [[ "$obtenu" == "$sha" ]] || err "SHA-256 invalide pour $(basename "$dest") (attendu $sha, obtenu $obtenu)."
+}
+
+descendre "$OPUS_URL" "$OPUS_SHA256" "$BUILD/opus-${OPUS_VERSION}.tar.gz"
+descendre "$FFMPEG_URL" "$FFMPEG_SHA256" "$BUILD/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+
+OPUS_SRC="$BUILD/opus-${OPUS_VERSION}"
+FFMPEG_SRC="$BUILD/ffmpeg-${FFMPEG_VERSION}"
+OPUS_PREFIX="$BUILD/opus-install"
+
+rm -rf "$OPUS_SRC" "$FFMPEG_SRC" "$OPUS_PREFIX"
+tar -xzf "$BUILD/opus-${OPUS_VERSION}.tar.gz" -C "$BUILD"
+tar -xJf "$BUILD/ffmpeg-${FFMPEG_VERSION}.tar.xz" -C "$BUILD"
+
+# Exécute une commande en journalisant sa sortie ; affiche la fin du journal et
+# quitte en erreur si la commande échoue (sinon un `./configure` silencieux qui
+# échoue ne laisserait aucune trace exploitable).
+lancer() {
+    local log="$1"; shift
+    if ! "$@" >"$log" 2>&1; then
+        echo "✗ échec de : $* — dernières lignes de $log :" >&2
+        tail -60 "$log" >&2
+        exit 1
+    fi
+}
+
+# ── 2. libopus statique ──────────────────────────────────────────────────────────
+info "compilation de libopus ${OPUS_VERSION} (statique)…"
+(
+    cd "$OPUS_SRC"
+    lancer "$BUILD/opus-configure.log" \
+        ./configure --prefix="$OPUS_PREFIX" --disable-shared --enable-static --disable-doc \
+        --disable-extra-programs
+    lancer "$BUILD/opus-make.log" make -j"$NPROC"
+    lancer "$BUILD/opus-install.log" make install
+)
+
+# ── 3. ffmpeg minimal LGPL ────────────────────────────────────────────────────────
+info "compilation de ffmpeg ${FFMPEG_VERSION} (LGPL minimal, libopus statique)…"
+(
+    cd "$FFMPEG_SRC"
+    export PKG_CONFIG_PATH="$OPUS_PREFIX/lib/pkgconfig"
+    lancer "$BUILD/ffmpeg-configure.log" \
+        ./configure \
+        --disable-gpl --disable-nonfree \
+        --disable-everything \
+        --disable-doc --disable-ffplay --disable-ffprobe \
+        --disable-network --disable-avdevice \
+        --disable-autodetect \
+        --enable-protocol=file,pipe \
+        --enable-demuxer=pcm_f32le,pcm_s16le,ogg,wav \
+        --enable-muxer=opus,ogg,wav,pcm_s16le \
+        --enable-decoder=pcm_f32le,pcm_s16le,opus,libopus \
+        --enable-encoder=pcm_s16le,libopus \
+        --enable-filter=aresample,aformat,anull \
+        --enable-libopus \
+        --pkg-config-flags="--static" \
+        --extra-cflags="-I$OPUS_PREFIX/include" \
+        --extra-ldflags="-L$OPUS_PREFIX/lib" \
+        --disable-debug --disable-shared --enable-static
+    lancer "$BUILD/ffmpeg-make.log" make -j"$NPROC" ffmpeg
+)
+
+mkdir -p "$VENDOR"
+cp "$FFMPEG_SRC/ffmpeg" "$OUT"
+chmod +x "$OUT"
+
+info "validation du binaire produit…"
+valider_binaire "$OUT"
+
+# ── 4. Test bout-en-bout : encode (commande core/fichiers.py) → décode (core/audio.py) ─
+# `lavfi` (génération de signal) appartient à avdevice, désactivé ici — on génère le
+# PCM brut en Python (aucune dépendance au venv du projet), comme le fait réellement
+# core/fichiers.py qui pipe des échantillons f32le bruts sur stdin de ffmpeg.
+info "test réel encode/décode (commandes exactes utilisées par l'app)…"
+TMPT="$(mktemp -d)"
+trap 'rm -rf "$TMPT"' EXIT
+python3 -c '
+import math, struct
+with open("'"$TMPT"'/in.f32", "wb") as f:
+    for i in range(16000):
+        f.write(struct.pack("<f", 0.2 * math.sin(2 * math.pi * 440 * i / 16000)))
+'
+"$OUT" -y -loglevel error \
+    -f f32le -ar 16000 -ac 1 -i pipe:0 \
+    -c:a libopus -b:a 24k "$TMPT/test.opus" < "$TMPT/in.f32"
+"$OUT" -y -loglevel error -i "$TMPT/test.opus" -ac 1 -ar 16000 -f wav "$TMPT/decode.wav"
+[[ -s "$TMPT/test.opus" && -s "$TMPT/decode.wav" ]] || err "cycle encode/décode Opus en échec."
+info "cycle encode → décode Opus OK."
+
+# ── 5. Licence (LGPL 2.1 + mention libopus BSD) ─────────────────────────────────
+cat > "$LICENSE_OUT" <<EOF
+# Licence — ffmpeg embarqué (vendor/ffmpeg)
+
+Ce binaire est un build **minimal** de ffmpeg ${FFMPEG_VERSION}, compilé par
+debriefMeet pour l'encodage/décodage Opus (rétention audio des réunions,
+cf. \`docs/16-packaging-macos.md\` §5.5). Aucun composant \`--enable-gpl\` n'est
+activé — build sous licence **LGPL 2.1 ou supérieure**.
+
+- ffmpeg ${FFMPEG_VERSION} — https://ffmpeg.org — LGPL 2.1+ (\`--disable-gpl --disable-nonfree\`).
+  Sources : ${FFMPEG_URL}
+- libopus ${OPUS_VERSION} — https://opus-codec.org — licence BSD (liaison statique).
+  Sources : ${OPUS_URL}
+
+L'app invoque ce binaire en **subprocess** (programme séparé) : simple agrégation,
+aucune contamination du code de l'app (\`src/debrief_meet\`, propriétaire).
+
+Texte complet de la LGPL 2.1 : https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+EOF
+
+info "OK : $OUT"
+info "licence : $LICENSE_OUT"

@@ -109,10 +109,15 @@ def _decoder_ffmpeg(chemin) -> tuple[np.ndarray, int]:
     import tempfile
     from pathlib import Path
 
+    from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable, chemin_ffmpeg
+
+    exe = chemin_ffmpeg()
+    if exe is None:
+        raise ErreurFfmpegIntrouvable()
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "decode.wav"
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
+            [exe, "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
              "-f", "wav", str(wav)],
             check=True, capture_output=True,
         )

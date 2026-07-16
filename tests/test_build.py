@@ -261,6 +261,52 @@ class TestHelperSwift:
         )
 
 
+@pytest.mark.skipif(not IS_MACOS, reason="ffmpeg embarqué macOS uniquement")
+class TestFfmpegVendor:
+    """ffmpeg LGPL embarqué (docs/16-packaging-macos.md §5.5).
+
+    `packaging/vendor/ffmpeg` n'est produit que par un `bash packaging/build_ffmpeg.sh`
+    explicite (pas par `make setup`) : les vérifications de contenu sont skippées
+    quand le binaire est absent (fresh clone / CI)."""
+
+    BUILD_SH = ROOT / "packaging" / "build_ffmpeg.sh"
+    BINAIRE = ROOT / "packaging" / "vendor" / "ffmpeg"
+
+    def test_build_ffmpeg_sh_existe(self):
+        assert self.BUILD_SH.exists()
+
+    def test_build_ffmpeg_sh_executable(self):
+        assert os.access(self.BUILD_SH, os.X_OK), (
+            "build_ffmpeg.sh n'est pas exécutable — chmod +x packaging/build_ffmpeg.sh"
+        )
+
+    def test_binaire_sans_dependance_homebrew(self):
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        libs = subprocess.run(
+            ["otool", "-L", str(self.BINAIRE)], capture_output=True, text=True, check=True
+        ).stdout
+        for ligne in libs.splitlines()[1:]:
+            assert "/opt/homebrew" not in ligne, f"dylib Homebrew non portable : {ligne}"
+
+    def test_binaire_sans_gpl(self):
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        version = subprocess.run(
+            [str(self.BINAIRE), "-version"], capture_output=True, text=True, check=True
+        ).stdout
+        assert "--enable-gpl" not in version, "build ffmpeg --enable-gpl inattendu (licence)"
+
+    def test_binaire_a_libopus(self):
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        encoders = subprocess.run(
+            [str(self.BINAIRE), "-hide_banner", "-encoders"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert "libopus" in encoders
+
+
 # ── Benchmark : assemblage du bundle portable ─────────────────────────────────
 
 class TestBenchmarkBundle:

@@ -59,7 +59,28 @@ def _commande_depuis_args(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _relais_interprete_figee() -> bool:
+    """En app figée, `sys.executable` est le binaire debriefMeet, pas un interpréteur
+    Python générique. Or `multiprocessing` (déclenché en interne par mlx/torch, ex.
+    `resource_tracker`) relance parfois `sys.executable` en mode "python -c" pur :
+    `-B -S -I -c "<code>"`. Sans interception, notre argparse reçoit ces flags et
+    échoue avec "unrecognized arguments" (observé au 1er lancement réel de l'app
+    packagée, cf. docs/16 §5.1 — inoffensif pour la transcription mais bruyant).
+    On émule `python -c` : si `-c` est présent, exécute le code qui suit et
+    retourne True (l'appelant ne doit rien faire d'autre)."""
+    if "-c" not in sys.argv:
+        return False
+    idx = sys.argv.index("-c")
+    code = sys.argv[idx + 1]
+    sys.argv = ["-c", *sys.argv[idx + 2:]]
+    exec(code, {"__name__": "__main__"})
+    return True
+
+
 def main() -> None:
+    if _relais_interprete_figee():
+        return
+
     # Mode worker MLX : en app figée, le binaire .app se relance lui-même comme
     # sous-processus de transcription (cf. moteur_mlx._commande_worker). On route
     # ici, avant toute init Qt/IPC, sinon le worker démarrerait une UI fantôme.
