@@ -41,6 +41,18 @@ hiddenimports = [
     "debrief_meet.platform.windows._fw_worker",  # relancé via --fw-worker
 ]
 
+# ffmpeg embarqué (lgpl BtbN, rétention Opus — docs/41) : téléchargé par
+# telecharger_ffmpeg.cmd, jamais commité. Échec dur si absent : le spec ne
+# tourne que sur la VM, toujours après cette étape du build.
+FFMPEG_EXE = os.path.join(SPECPATH, "ffmpeg", "ffmpeg.exe")
+FFMPEG_LICENCE = os.path.join(SPECPATH, "ffmpeg", "LICENSE.txt")
+if not os.path.exists(FFMPEG_EXE):
+    raise SystemExit(
+        "[spec] ffmpeg.exe manquant — lancer packaging/windows/telecharger_ffmpeg.cmd "
+        "(appelé normalement par build_app.cmd)")
+binaries.append((FFMPEG_EXE, "ffmpeg"))
+datas.append((FFMPEG_LICENCE, "ffmpeg"))
+
 # ── Dépendances lourdes (moteur CT2, loopback, AEC) ────────────────────────────
 # ctranslate2/faster-whisper embarquent des DLL natives + données de config non
 # détectées par l'analyse statique de PyInstaller sans collect_all.

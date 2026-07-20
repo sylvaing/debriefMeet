@@ -34,6 +34,10 @@ src/debrief_meet/_version.py
 packaging/windows/version.iss
 BUILD_INFO
 
+# ffmpeg embarqué Windows (docs/41) — téléchargé sur la VM au moment du build,
+# jamais commité (~100 Mo).
+packaging/windows/ffmpeg/
+
 # Archives : filet de sécurité. Les rapports de benchmark emballent des
 # WAV de sondes (audio confidentiel) que la règle *.wav ne voit pas dans un zip.
 *.zip

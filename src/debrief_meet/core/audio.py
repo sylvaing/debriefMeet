@@ -109,13 +109,22 @@ def _decoder_ffmpeg(chemin) -> tuple[np.ndarray, int]:
     import tempfile
     from pathlib import Path
 
+    from debrief_meet.core.ressources import chemin_ffmpeg
+    ffmpeg = chemin_ffmpeg() or "ffmpeg"
+
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "decode.wav"
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
-             "-f", "wav", str(wav)],
-            check=True, capture_output=True,
-        )
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
+                 "-f", "wav", str(wav)],
+                check=True, capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"ffmpeg introuvable (ni embarqué, ni sur le PATH) — impossible de décoder {chemin}"
+            ) from exc
         return _wav_vers_float_mono(wav)
 
 

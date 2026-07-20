@@ -188,6 +188,16 @@ else
 fi
 printf '        -> %s\n' "$VERSION_OUT"
 
+echo ""
+echo "--- ffmpeg embarque (docs/41) ---"
+verif "ffmpeg.exe present dans le bundle" existe_sur_vm "$VM_APP\\_internal\\ffmpeg\\ffmpeg.exe"
+if ssh_vm "cmd /c \"$VM_APP\\_internal\\ffmpeg\\ffmpeg.exe\" -encoders 2>nul | findstr /i libopus" >/dev/null 2>&1; then
+    printf '[OK]    %s\n' "ffmpeg embarque : libopus present"
+else
+    printf '[ECHEC] %s\n' "ffmpeg embarque : libopus present"
+    ECHECS=$((ECHECS + 1))
+fi
+
 # ── Phase B — mise a jour par-dessus ─────────────────────────────────────
 
 echo ""

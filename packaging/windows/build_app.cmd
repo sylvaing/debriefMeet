@@ -7,7 +7,7 @@ cd /d %VM_DIR%
 if errorlevel 1 ( echo ERREUR : impossible de cd vers %VM_DIR% & goto :error )
 echo [build_app.cmd] Repertoire : %CD%
 
-echo [1/5] Creation du venv Python 3.13...
+echo [1/6] Creation du venv Python 3.13...
 if exist .venv-build ( rmdir /s /q .venv-build )
 py -3.13 -m venv .venv-build
 if errorlevel 1 goto :error
@@ -19,11 +19,15 @@ if errorlevel 1 goto :error
 python -m pip install pyinstaller
 if errorlevel 1 goto :error
 
-echo [2/5] Generation de la version (_version.py + version.iss)...
+echo [2/6] Telechargement/verification ffmpeg (lgpl, cache VM)...
+call packaging\windows\telecharger_ffmpeg.cmd
+if errorlevel 1 goto :error
+
+echo [3/6] Generation de la version (_version.py + version.iss)...
 python packaging\windows\generer_version.py --build-info BUILD_INFO
 if errorlevel 1 goto :error
 
-echo [3/5] Suite de tests (bloquant - build refuse si rouge, docs/32)...
+echo [4/6] Suite de tests (bloquant - build refuse si rouge, docs/32)...
 REM Hors gate produit Windows :
 REM - test_benchmark_* / test_spike_backends_* : importent benchmark/ et spike/
 REM   (outils internes, non synchronises sur la VM) ;
@@ -32,11 +36,11 @@ REM   benchmark) -- ces fichiers ne font pas partie du produit ni du sync VM.
 python -m pytest -m "not integration" --ignore-glob="tests/test_benchmark_*.py" --ignore-glob="tests/test_spike_backends_*.py" --ignore=tests/test_build.py
 if errorlevel 1 goto :error
 
-echo [4/5] PyInstaller (onedir)...
+echo [5/6] PyInstaller (onedir)...
 pyinstaller packaging\windows\debriefMeet.spec --noconfirm --distpath dist --workpath build\work
 if errorlevel 1 goto :error
 
-echo [5/5] Inno Setup...
+echo [6/6] Inno Setup...
 if not defined ISCC_EXE (
     REM Emplacement selon le mode d'installation : machine (Program Files) ou
     REM utilisateur (AppData\Local\Programs — cas d'un `winget install --scope user`).

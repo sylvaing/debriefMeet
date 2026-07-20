@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import wave
 from datetime import datetime, timedelta
@@ -8,6 +9,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class EcrivainJournal:
@@ -246,8 +249,8 @@ _SR_AUDIO = 16_000
 
 
 def _ffmpeg_present() -> bool:
-    import shutil
-    return shutil.which("ffmpeg") is not None
+    from debrief_meet.core.ressources import chemin_ffmpeg
+    return chemin_ffmpeg() is not None
 
 
 class _PisteWriter:
@@ -259,11 +262,15 @@ class _PisteWriter:
         if mode == "opus":
             self.chemin = base.with_name(base.name + ".opus")
             import subprocess
+
+            from debrief_meet.core.ressources import chemin_ffmpeg
+            ffmpeg = chemin_ffmpeg() or "ffmpeg"
             self._proc = subprocess.Popen(
-                ["ffmpeg", "-y", "-loglevel", "error",
+                [ffmpeg, "-y", "-loglevel", "error",
                  "-f", "f32le", "-ar", str(_SR_AUDIO), "-ac", "1", "-i", "pipe:0",
                  "-c:a", "libopus", "-b:a", f"{debit_kbps}k", str(self.chemin)],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self._wav = None
         else:
             self.chemin = base.with_name(base.name + ".wav")
@@ -316,6 +323,9 @@ class EnregistreurAudioReunion:
                  format: str = "auto", debit_kbps: int = 24) -> None:
         self.format = "opus" if (format == "opus" or (format == "auto" and _ffmpeg_present())) else "wav"
         self._debit_kbps = debit_kbps
+        from debrief_meet.core.ressources import chemin_ffmpeg
+        logger.debug("Rétention audio réunion : format=%s, ffmpeg=%s",
+                     self.format, chemin_ffmpeg() or "absent → WAV")
         self._moi = _PisteWriter(base_moi, self.format, debit_kbps) if base_moi else None
         self._systeme = _PisteWriter(base_systeme, self.format, debit_kbps) if base_systeme else None
         # Chemins conservés même après terminer() (utiles à la passe finale).

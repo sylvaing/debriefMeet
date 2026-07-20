@@ -17,7 +17,7 @@ _LOCUTEURS_MD = """# Réunion — locuteurs
 def _fichiers(tmp_path):
     md = tmp_path / "2026-07-08_14-00.md"
     loc = tmp_path / "2026-07-08_14-00_locuteurs.md"
-    md.write_text("# Réunion\n")
+    md.write_text("# Réunion\n", encoding="utf-8")
     loc.write_text(_LOCUTEURS_MD, encoding="utf-8")
     return md, loc
 
@@ -77,7 +77,7 @@ def test_champ_vide_exclu_du_mapping(qapp, tmp_path):
 def test_aucun_locuteur_detecte(qapp, tmp_path):
     md = tmp_path / "r.md"
     loc = tmp_path / "r_locuteurs.md"
-    md.write_text("# X\n")
-    loc.write_text("# X\n\nPas de tour de parole détectable.\n")
+    md.write_text("# X\n", encoding="utf-8")
+    loc.write_text("# X\n\nPas de tour de parole détectable.\n", encoding="utf-8")
     dlg = DialogMappingLocuteurs(md, loc)
     assert dlg._combos == {}

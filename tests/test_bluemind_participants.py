@@ -40,7 +40,7 @@ def test_organisateur_en_premier_si_fourni_en_premier():
 
 def test_insertion_apres_h1(tmp_path):
     md = tmp_path / "r.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte existant\n")
+    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte existant\n", encoding="utf-8")
     bloc = construire_bloc("X", "d", _INVITES)
     inserer_dans_fichier(md, bloc)
     texte = md.read_text(encoding="utf-8")
@@ -50,7 +50,7 @@ def test_insertion_apres_h1(tmp_path):
 
 def test_insertion_idempotente_deux_validations_un_seul_bloc(tmp_path):
     md = tmp_path / "r.md"
-    md.write_text("# Réunion\n\nContenu\n")
+    md.write_text("# Réunion\n\nContenu\n", encoding="utf-8")
     bloc = construire_bloc("X", "d", _INVITES)
     inserer_dans_fichier(md, bloc)
     inserer_dans_fichier(md, bloc)
@@ -62,7 +62,7 @@ def test_insertion_idempotente_deux_validations_un_seul_bloc(tmp_path):
 
 def test_revalidation_remplace_le_contenu(tmp_path):
     md = tmp_path / "r.md"
-    md.write_text("# Réunion\n\nContenu\n")
+    md.write_text("# Réunion\n\nContenu\n", encoding="utf-8")
     inserer_dans_fichier(md, construire_bloc("X", "d", _INVITES[:1]))
     inserer_dans_fichier(md, construire_bloc("X", "d", _INVITES))
     texte = md.read_text(encoding="utf-8")
@@ -76,7 +76,7 @@ def test_fichier_absent_ne_leve_pas(tmp_path):
 
 def test_sans_h1_insere_en_tete(tmp_path):
     md = tmp_path / "r.md"
-    md.write_text("Contenu sans titre\n")
+    md.write_text("Contenu sans titre\n", encoding="utf-8")
     inserer_dans_fichier(md, construire_bloc("X", "d", _INVITES))
     texte = md.read_text(encoding="utf-8")
     assert texte.startswith(MARQUEUR_DEBUT)
@@ -86,8 +86,8 @@ def test_sans_h1_insere_en_tete(tmp_path):
 def test_inserer_pour_reunion_insere_dans_les_deux_fichiers(tmp_path):
     md = tmp_path / "2026-07-08_14-00.md"
     loc = tmp_path / "2026-07-08_14-00_locuteurs.md"
-    md.write_text("# Réunion\n\nTranscription\n")
-    loc.write_text("# Locuteurs\n\nSPEAKER_00: bonjour\n")
+    md.write_text("# Réunion\n\nTranscription\n", encoding="utf-8")
+    loc.write_text("# Locuteurs\n\nSPEAKER_00: bonjour\n", encoding="utf-8")
     inserer_pour_reunion(md, "Point projet X", "2026-07-08 14:00", _INVITES)
     assert MARQUEUR_DEBUT in md.read_text(encoding="utf-8")
     assert MARQUEUR_DEBUT in loc.read_text(encoding="utf-8")
@@ -95,6 +95,6 @@ def test_inserer_pour_reunion_insere_dans_les_deux_fichiers(tmp_path):
 
 def test_inserer_pour_reunion_sans_locuteurs_ne_le_cree_pas(tmp_path):
     md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion\n\nTranscription\n")
+    md.write_text("# Réunion\n\nTranscription\n", encoding="utf-8")
     inserer_pour_reunion(md, "X", "d", _INVITES)
     assert not (tmp_path / "2026-07-08_14-00_locuteurs.md").exists()

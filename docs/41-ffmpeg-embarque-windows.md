@@ -1,8 +1,7 @@
 # Embarquer ffmpeg dans le build Windows (rétention Opus garantie)
 
-> **Statut : 📝 PLAN D'IMPLÉMENTATION** (2026-07-12) — rédigé pour une session
-> **Sonnet autonome, sans interaction**. Toutes les décisions sont prises ; suivre
-> les étapes dans l'ordre, chaque gate est vérifiable par des commandes.
+> **Statut : ✅ TERMINÉ** (2026-07-12) — implémenté et validé de bout en bout
+> (gates 1→5 verts, cf. §6). Toutes les étapes A→J du plan ont été suivies.
 > Périmètre : **Windows uniquement** (Phase 5). macOS hors scope (Phase 4, ffmpeg
 > Homebrew présent sur la machine de dev ; à re-décider au moment du packaging mac).
 
@@ -272,9 +271,42 @@ Mac verts), consigner au §6 que les gates 2–5 restent à jouer, ne pas boucle
 - Le zip BtbN a un **dossier racine au nom variable** → extraire dans un temp et
   copier via un glob/`for /d`, ne pas coder le nom du dossier en dur.
 
-## 6. Journal (à remplir par la session d'implémentation)
+## 6. Journal (implémentation du 2026-07-12)
 
-- URL/SHA épinglés : _à compléter_
-- Taille `ffmpeg.exe` / taille du setup avant→après : _à compléter_
-- Résultat des gates 1–5 : _à compléter_
-- Surprises/écarts au plan : _à compléter_
+- **URL/SHA épinglés** : tag daté `autobuild-2026-07-12-13-16`, asset
+  `ffmpeg-n8.1.2-22-g94138f6973-win64-lgpl-8.1.zip` (branche release n8.1.2, pas
+  master) — SHA256 `4fac2e7d7de89bb4354d8c661c968c988e3ccb82b96896803cfc133298eeddc6`,
+  vérifié localement (Mac) puis re-vérifié par `telecharger_ffmpeg.cmd` sur la VM.
+- **Taille** : `ffmpeg.exe` seul ≈ 108 Mo (113 542 656 octets décompressés).
+  Setup avant (docs/32, 2026-07-04) : 125 Mo. Setup après (avec ffmpeg embarqué) :
+  **159 Mo** — dans la fourchette attendue (155–170 Mo).
+- **Résultat des gates 1–5** : tous verts.
+  1. `make test` (Mac) : **938 passed** (0 régression, +9 tests docs/41).
+  2. `bash scripts/build_app_windows_vm.sh` : ✅ — setup produit
+     `dist/debriefMeet-setup-0.2.0+20260712.68c04e4.exe`, log `[2/6]` confirme le
+     téléchargement + check `libopus` OK, gate pytest VM **780 passed**.
+  3. Rebuild immédiat (même run suivant, cache) : `[2/6]` répond
+     « Deja en place ... SHA256 verifie » — quasi instantané, confirmé par le
+     2ᵉ run du script (pas de re-téléchargement).
+  4. `bash scripts/fumee_setup_vm.sh` : ✅ vert, y compris les 2 nouveaux checks
+     (« ffmpeg.exe present dans le bundle », « ffmpeg embarque : libopus present »).
+  5. Taille consignée ci-dessus (159 Mo, ≤ 175 Mo attendu).
+- **Surprises/écarts au plan** :
+  - Le premier run VM a échoué à la collecte pytest à cause de deux fichiers
+    **obsolètes** restés sur la VM (`tests/test_historique_diarization.py` et
+    `src/debrief_meet/ui/historique.py`, supprimés du dépôt depuis la refonte UI
+    — la sync tar n'efface jamais les fichiers en trop). Nettoyés manuellement
+    sur la VM ; sans rapport avec ffmpeg.
+  - Le run suivant a révélé un **bug pré-existant, indépendant de ffmpeg** :
+    5 fichiers de tests BlueMind (`test_bluemind_association.py`,
+    `test_bluemind_association_dialog.py`, `test_bluemind_mapping_dialog.py`,
+    `test_bluemind_participants.py`, `test_tray.py`) écrivaient des fixtures
+    `.md` accentuées via `Path.write_text(...)` **sans `encoding="utf-8"`** —
+    invisible sur Mac (locale UTF-8 par défaut) mais cassant sur Windows (locale
+    cp1252), alors que le code produit (`core/fichiers.py`) relit toujours en
+    UTF-8 explicite. Vérifié que le code produit n'a **aucune** occurrence de ce
+    problème (uniquement les fixtures de test). Corrigé en ajoutant
+    `encoding="utf-8"` aux appels concernés (22 occurrences) ; gate pytest VM
+    repassée au vert derrière ce correctif, aucune régression Mac (938 passed).
+  - Le build BtbN retenu est la branche **n8.1.2** (release stable), pas la
+    variante `ffmpeg-N-...` (= master, exclue par la règle §2.1).

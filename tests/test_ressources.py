@@ -36,3 +36,30 @@ def test_chemin_ressource_repli_dossier_binaire_si_meipass_absent(monkeypatch):
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     p = ressources.chemin_ressource("z")
     assert p == Path(sys.executable).parent / "z"
+
+
+# ── chemin_ffmpeg — embarqué d'abord, PATH en repli (docs/41) ──────────────────
+
+def test_chemin_ffmpeg_priorite_embarque(monkeypatch, tmp_path):
+    dossier = tmp_path / "ffmpeg"
+    dossier.mkdir()
+    nom = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    binaire = dossier / nom
+    binaire.write_bytes(b"")
+    monkeypatch.setattr(ressources, "_racine_ressources", lambda: tmp_path)
+
+    assert ressources.chemin_ffmpeg() == str(binaire)
+
+
+def test_chemin_ffmpeg_repli_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(ressources, "_racine_ressources", lambda: tmp_path)
+    monkeypatch.setattr("shutil.which", lambda nom: "/usr/fake/ffmpeg")
+
+    assert ressources.chemin_ffmpeg() == "/usr/fake/ffmpeg"
+
+
+def test_chemin_ffmpeg_absent_partout(monkeypatch, tmp_path):
+    monkeypatch.setattr(ressources, "_racine_ressources", lambda: tmp_path)
+    monkeypatch.setattr("shutil.which", lambda nom: None)
+
+    assert ressources.chemin_ffmpeg() is None

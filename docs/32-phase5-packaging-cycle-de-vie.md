@@ -77,6 +77,11 @@ Petit script (exécuté sur la VM, mais écrit en Python portable) :
   (`scripts/generer_icone.py` à étendre pour produire un `.ico` multi-tailles).
 - Exclure les gros modules inutiles (`mlx`, `pyannote`, `torch`…) : vérifier la
   taille du dist — cible < 500 Mo hors modèles.
+- `ffmpeg.exe` (build BtbN lgpl statique, rétention Opus garantie) est embarqué
+  sous `_internal\ffmpeg\` — téléchargé et vérifié (SHA256 + check `libopus`) au
+  build par `packaging/windows/telecharger_ffmpeg.cmd`, jamais commité dans le
+  dépôt. Sa licence LGPL (`LICENSE.txt`) part dans le même dossier. Détails :
+  `docs/41`.
 
 ### 3.3 `packaging/windows/debriefMeet.iss` (Inno Setup)
 

@@ -38,7 +38,7 @@ def test_chemin_sidecar():
 
 def test_ecrire_puis_lire(tmp_path):
     md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion\n")
+    md.write_text("# Réunion\n", encoding="utf-8")
     ecrire(md, _asso())
     relu = lire(md)
     assert relu is not None
@@ -61,7 +61,7 @@ def test_lire_absent_retourne_none(tmp_path):
 
 def test_lire_json_corrompu_retourne_none(tmp_path):
     md = tmp_path / "r.md"
-    chemin_sidecar(md).write_text("{ pas du json valide")
+    chemin_sidecar(md).write_text("{ pas du json valide", encoding="utf-8")
     assert lire(md) is None
 
 
@@ -108,7 +108,7 @@ def test_construire_invites_depuis_evenement_organisateur_en_tete():
 
 def test_associer_evenement_ecrit_sidecar_et_bloc(tmp_path):
     md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte\n")
+    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte\n", encoding="utf-8")
     asso = associer_evenement(md, _evt())
     assert asso.event_uid == "evt-1"
     relu = lire(md)

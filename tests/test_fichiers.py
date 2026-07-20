@@ -81,6 +81,63 @@ def test_enregistreur_opus_si_ffmpeg(tmp_path):
     assert 15000 <= n <= 17000                                     # ~16000 éch. (1 s)
 
 
+# ── ffmpeg embarqué (docs/41) : chemin résolu, flag console, repli ────────────
+
+def test_pistewriter_opus_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypatch):
+    """`_PisteWriter` opus doit utiliser `chemin_ffmpeg()` (embarqué si présent) et
+    masquer la fenêtre console Windows via `CREATE_NO_WINDOW`."""
+    import subprocess
+
+    from debrief_meet.core import fichiers
+
+    monkeypatch.setattr(
+        "debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
+
+    appels = {}
+
+    class _FauxProc:
+        def __init__(self, *args, **kwargs):
+            appels["args"] = args
+            appels["kwargs"] = kwargs
+            self.stdin = None
+
+    monkeypatch.setattr(subprocess, "Popen", _FauxProc)
+
+    fichiers._PisteWriter(tmp_path / "m", "opus", 24)
+
+    assert appels["args"][0][0] == "/chemin/embarque/ffmpeg"
+    assert appels["kwargs"]["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def test_ffmpeg_present_suit_chemin_ffmpeg(monkeypatch):
+    from debrief_meet.core.fichiers import _ffmpeg_present
+
+    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: None)
+    assert _ffmpeg_present() is False
+
+    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/ffmpeg")
+    assert _ffmpeg_present() is True
+
+
+def test_enregistreur_auto_bascule_opus_si_ffmpeg_present(tmp_path, monkeypatch):
+    import subprocess
+
+    class _FauxProc:
+        def __init__(self, *args, **kwargs):
+            self.stdin = None
+
+    monkeypatch.setattr("debrief_meet.core.fichiers._ffmpeg_present", lambda: True)
+    monkeypatch.setattr(subprocess, "Popen", _FauxProc)
+    enr = EnregistreurAudioReunion(base_moi=tmp_path / "m", base_systeme=None, format="auto")
+    assert enr.format == "opus"
+
+
+def test_enregistreur_auto_bascule_wav_si_ffmpeg_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr("debrief_meet.core.fichiers._ffmpeg_present", lambda: False)
+    enr = EnregistreurAudioReunion(base_moi=tmp_path / "m", base_systeme=None, format="auto")
+    assert enr.format == "wav"
+
+
 def test_enregistreur_piste_none_ignoree(tmp_path):
     enr = EnregistreurAudioReunion(base_moi=None, base_systeme=tmp_path / "s", format="wav")
     enr.ajouter_moi(np.ones(1600, dtype=np.float32))          # piste Moi absente → ignoré

@@ -113,3 +113,52 @@ def test_preparer_asr_audio_fort_inchange():
     result = preparer_asr(fort)
     assert result is not None
     np.testing.assert_array_equal(result, fort)
+
+
+# ── _decoder_ffmpeg : chemin résolu + flag console (docs/41) ───────────────────
+
+def test_decoder_ffmpeg_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypatch):
+    import subprocess
+    import wave
+
+    from debrief_meet.core.audio import _decoder_ffmpeg
+
+    monkeypatch.setattr(
+        "debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
+
+    appels = {}
+
+    def _faux_run(args, **kwargs):
+        appels["args"] = args
+        appels["kwargs"] = kwargs
+        # Le vrai ffmpeg écrirait le wav de sortie (dernier argument).
+        with wave.open(args[-1], "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\x00\x00" * 100)
+
+    monkeypatch.setattr(subprocess, "run", _faux_run)
+
+    audio, sr = _decoder_ffmpeg(tmp_path / "entree.opus")
+
+    assert appels["args"][0] == "/chemin/embarque/ffmpeg"
+    assert appels["kwargs"]["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    assert sr == 16000
+    assert len(audio) == 100
+
+
+def test_decoder_ffmpeg_absent_leve_une_erreur_actionnable(tmp_path, monkeypatch):
+    import subprocess
+
+    from debrief_meet.core.audio import _decoder_ffmpeg
+
+    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: None)
+
+    def _faux_run(args, **kwargs):
+        raise FileNotFoundError(args[0])
+
+    monkeypatch.setattr(subprocess, "run", _faux_run)
+
+    with pytest.raises(RuntimeError, match="ffmpeg introuvable"):
+        _decoder_ffmpeg(tmp_path / "entree.opus")
