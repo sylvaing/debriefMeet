@@ -33,6 +33,10 @@ Suite attendue : **889 passed** en environnement dev partiel — sans les extras
 `macos` (mlx-whisper, pyannote.audio) ni le helper Swift compilé — après l'interco
 BlueMind (docs/40, 2026-07-09). Avec ces extras installés, 14 tests supplémentaires
 passent (`test_diarization.py`, `test_moteur_faster_whisper.py`, `test_build.py`).
+Avec extras macOS complets **et** `.venv-build`/`packaging/vendor/ffmpeg` construits
+(après docs/16, 2026-07-12) : **939 passed** (`pytest -m "not integration"`), 949 en
+suite complète — seul `test_audio_canonique_present` échoue sur un clone frais
+(fixture WAV du benchmark, non liée au packaging, cf. docs/08 § « Audio de test »).
 
 ## Environnements Python — ne pas confondre
 
@@ -60,7 +64,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | 0 — Socle + archi | ✅ |
 | 0.5 — Spike audio système (SCK retenu) | ✅ |
 | 1→3 — Dictée, Réunion, Journal macOS | ✅ |
-| **4 — Packaging macOS** | 🔄 en pause (build pas encore lancé) |
+| **4 — Packaging macOS** | 🔄 build réel fait (2026-07-12) — `.app`+`.dmg` signés produits et lancés avec succès, cf. `docs/16` §5 ; reste uniquement §6 (validation TCC manuelle) |
 | **4b — Modèle large-v3-turbo** | ✅ TERMINÉ (2026-06-30, turbo = modèle par défaut) |
 | **5 — Spike backends Windows** | 🔄 code terminé (505 tests), build VM à lancer — **ne bloque plus la Phase 5** (v1 = CPU, cf. docs/30) |
 | **5 — Portage Windows** | 🔄 EN COURS (docs/30→35, ordre docs/30 §6) — prérequis §5 ✅, docs/31 ✅, docs/34 ✅, docs/32 (packaging) ✅ PREMIER BUILD RÉUSSI (2026-07-04, `dist/debriefMeet-setup-0.2.0+20260704.4029f0d.exe`, 125 Mo, gate pytest VM 506 passed), docs/37 (fumée SSH) ✅ TERMINÉ (2026-07-04, `scripts/fumee_setup_vm.sh`, 2 runs verts) — corrigés au passage : `platformdirs appauthor=False` (cf. § dédié), crash QThread access violation (`gestionnaire_diarization.py`), 3 usages de `subprocess.Popen(["open", ...])` macOS-only cassant sur Windows (`preferences_view.py`, `reunion_view.py`) trouvés en **test interactif réel sur la VM** et corrigés ; désinstallation interactive **validée propre** par Sylvain (dossier app+données+Registre supprimés, Documents préservé — cf. docs/37 §7, limite confirmée propre à SSH) ; reste : docs/35 (livraison)
@@ -80,6 +84,9 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - Bundle id : `com.sylvaingarcia.debriefmeet` (aligné partout, y compris `demarrage_auto.py`, depuis 2026-07-02).
 - **Pas d'auto-update en v1** — MAJ = re-téléchargement manuel du `.dmg`.
 - La config (`platformdirs`) et les transcriptions (`~/Documents/debriefMeet`) vivent hors du bundle → survivent au remplacement.
+- **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Piège configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x.
+- **`sys.executable` en app figée n'est pas un interpréteur Python générique** : `multiprocessing` (déclenché en interne par mlx/torch, ex. `resource_tracker`) le relance parfois en `-c "<code>"` pur → `__main__._relais_interprete_figee()` émule `python -c` avant tout autre routage (sinon bruit `unrecognized arguments`, sans casser la transcription).
+- Premier `codesign` réel après création du certificat : peut afficher une popup trousseau **invisible aux API de scripting/accessibilité** (fenêtre sécurisée) — nécessite un clic humain une fois (« Toujours autoriser »), aucun moyen de la détecter ou franchir en automatique.
 
 ## Build Windows (benchmark + Phase 5)
 

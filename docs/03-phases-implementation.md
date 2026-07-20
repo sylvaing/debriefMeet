@@ -202,7 +202,7 @@ Note : si SCKAudioPOC n'est pas compilé → `make build-helpers` d'abord.
 
 ---
 
-## Phase 4 — Packaging macOS (livrable installable) 🟡 EN COURS
+## Phase 4 — Packaging macOS (livrable installable) 🔄 CODE+BUILD TERMINÉS — reste la validation manuelle TCC
 
 > Détail d'avancement + point de reprise autoporteur : [`16-packaging-macos.md`](16-packaging-macos.md).
 
@@ -210,13 +210,29 @@ Note : si SCKAudioPOC n'est pas compilé → `make build-helpers` d'abord.
 
 **Contenu :**
 - **PyInstaller → `.app`**, **helper Swift embarqué**, `Info.plist` (`NSMicrophoneUsageDescription` + `NSAudioCaptureUsageDescription`), cible **arm64 / 14.4+**.
-- **Icône de l'app** : **`AppIcon.icns` déjà générée** (`scripts/generer_icone.py` → `src/debrief_meet/ui/assets/AppIcon.icns`, multi-résolution 16→1024). À référencer dans l'`Info.plist` (`CFBundleIconFile` / `CFBundleIconName`).
-- **Signature auto-signée stable** (certificat local) → permission audio persistante entre rebuilds. Génération du **`.dmg`**.
-- Vérifier autostart **en contexte bundle** et l'attachement TCC au bundle.
+- **Icône de l'app** : `debriefMeet.icns` (refonte design, handoff — a remplacé l'ancienne `AppIcon.icns` générée par `scripts/generer_icone.py`), référencée dans l'`Info.plist` via la spec PyInstaller.
+- **ffmpeg LGPL minimal compilé et embarqué** (`packaging/build_ffmpeg.sh`) — app autonome pour l'encodage/décodage Opus, sans dépendance à un brew de la machine cible (docs/16 §5.5).
+- **Signature auto-signée stable** (certificat local) → permission audio persistante entre rebuilds. `.dmg` généré.
+- Autostart en contexte bundle (`sys.executable`) et bundle id alignés partout.
+
+**✅ Réalisé et validé en conditions réelles le 2026-07-12** (build effectué sur la
+machine de développement, pas seulement scripté) : `packaging/build_ffmpeg.sh`,
+`build_app.sh`, `build_dmg.sh` exécutés pour de vrai → `dist/debriefMeet.app` signé
+(`Authority=debriefMeet Local`, leaf hash identique à la création du certificat) +
+`dist/debriefMeet-0.2.0.dmg` (343 Mo) produits. App **lancée réellement** : tray,
+worker MLX, helper SCK, ffmpeg embarqué tous fonctionnels. Un bug réel de
+compatibilité `multiprocessing`/app figée trouvé et corrigé au passage (cf. docs/16
+§5.1). Suite non-intégration : 939 passed.
+
+**Reste (manuel, TCC non scriptable par conception) :** checklist §6 de
+[`16-packaging-macos.md`](16-packaging-macos.md) — installer le `.dmg` produit,
+accorder Micro + Enregistrement de l'écran une fois, relancer/réinstaller par-dessus
+→ permissions et données conservées, 3 modes + autostart + raccourcis + notifications
+depuis l'app installée.
 
 **Livrable :** un `.dmg` installable ; après install, les 3 modes marchent et les permissions ne se redemandent pas.
 
-**Tests :** *Unitaires* inchangés (verts). *Manuel* — installer le `.dmg`, accorder les permissions une fois, relancer → conservées ; 3 modes depuis l'app installée ; autostart.
+**Tests :** *Unitaires* verts (939 passed). *Manuel* — installer le `.dmg`, accorder les permissions une fois, relancer → conservées ; 3 modes depuis l'app installée ; autostart.
 
 ---
 
@@ -346,7 +362,7 @@ Améliorations livrées **en parallèle** des phases ci-dessus (cœur stable dè
 | 3.5 | macOS | Reconnexion micro à chaud (Qt Multimedia) ✅ | 2 |
 | **A** | macOS | **AEC sans casque** ✅ intégrée — [05](05-spike-aec-webrtc.md)/[06](06-integration-aec.md) | 2 |
 | **D** | macOS | **Diarization** (passe finale) ✅ implémentée — [07](07-diarization.md) | A + rétention audio |
-| 4 | macOS | `.dmg` installable, permissions stables 🟡 en cours — [16](16-packaging-macos.md) | 3 |
+| 4 | macOS | `.dmg` installable, permissions stables 🔄 build réel fait, reste validation TCC manuelle — [16](16-packaging-macos.md) | 3 |
 | 5 | Windows | Dictée + Réunion+AEC (spike backends → [18](18-spike-backends-windows.md) → moteur) | 3 (cœur) |
 | 6 | Linux | AppImage Linux | 3 (cœur) |
 

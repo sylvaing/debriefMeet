@@ -5,7 +5,14 @@ import threading
 import numpy as np
 import pytest
 
-from debrief_meet.core.audio import BufferAudio, SEUIL_RMS_SILENCE, preparer_asr, reechantillonner
+from debrief_meet.core.audio import (
+    BufferAudio,
+    SEUIL_RMS_SILENCE,
+    decoder_audio_16k,
+    preparer_asr,
+    reechantillonner,
+)
+from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable
 
 
 def test_buffer_accumule_plusieurs_chunks():
@@ -121,10 +128,10 @@ def test_decoder_ffmpeg_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypatc
     import subprocess
     import wave
 
+    from debrief_meet.core import fichiers
     from debrief_meet.core.audio import _decoder_ffmpeg
 
-    monkeypatch.setattr(
-        "debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
 
     appels = {}
 
@@ -148,17 +155,11 @@ def test_decoder_ffmpeg_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypatc
     assert len(audio) == 100
 
 
-def test_decoder_ffmpeg_absent_leve_une_erreur_actionnable(tmp_path, monkeypatch):
-    import subprocess
+def test_decoder_audio_16k_opus_leve_erreur_typee_si_ffmpeg_introuvable(monkeypatch, tmp_path):
+    from debrief_meet.core import fichiers
 
-    from debrief_meet.core.audio import _decoder_ffmpeg
-
-    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: None)
-
-    def _faux_run(args, **kwargs):
-        raise FileNotFoundError(args[0])
-
-    monkeypatch.setattr(subprocess, "run", _faux_run)
-
-    with pytest.raises(RuntimeError, match="ffmpeg introuvable"):
-        _decoder_ffmpeg(tmp_path / "entree.opus")
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: None)
+    faux_opus = tmp_path / "piste.opus"
+    faux_opus.write_bytes(b"\x00")
+    with pytest.raises(ErreurFfmpegIntrouvable):
+        decoder_audio_16k(faux_opus)

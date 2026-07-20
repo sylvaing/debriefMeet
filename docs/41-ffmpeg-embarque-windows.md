@@ -310,3 +310,12 @@ Mac verts), consigner au §6 que les gates 2–5 restent à jouer, ne pas boucle
     repassée au vert derrière ce correctif, aucune régression Mac (938 passed).
   - Le build BtbN retenu est la branche **n8.1.2** (release stable), pas la
     variante `ffmpeg-N-...` (= master, exclue par la règle §2.1).
+- **Réconciliation avec le packaging macOS (docs/16, mergé dans `main` le
+  2026-07-12)** : les deux branches avaient embarqué ffmpeg en parallèle avec des
+  conventions différentes. Fusionné en unifiant sur celle de `main` — un **seul**
+  point de résolution `chemin_ffmpeg()` **dans `core/fichiers.py`** (et non
+  `ressources.py` comme le proposait l'Étape E), qui lève `ErreurFfmpegIntrouvable`
+  quand ffmpeg manque en Opus. Fonction étendue pour sonder les deux layouts de
+  bundle selon l'OS : `vendor/ffmpeg` (macOS) ou `ffmpeg/ffmpeg.exe` (Windows). Le
+  flag `CREATE_NO_WINDOW` (§2.5) et le check `libopus` du build restent inchangés.
+  Suite après merge : **947 passed** sur Mac (extras + `vendor/ffmpeg`), 0 échec.

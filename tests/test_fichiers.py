@@ -11,7 +11,9 @@ from debrief_meet.core.fichiers import (
     EcrivainJournal,
     EcrivainReunion,
     EnregistreurAudioReunion,
+    ErreurFfmpegIntrouvable,
     apercu_journal,
+    chemin_ffmpeg,
     chemin_locuteurs,
     chemin_reunion,
     chemins_audio_reunion,
@@ -46,6 +48,41 @@ def test_pistes_audio_existantes(tmp_path):
     (tmp_path / "r_systeme.wav").write_bytes(b"\x00")
     noms = sorted(p.name for p in pistes_audio_existantes(md))
     assert noms == ["r_moi.opus", "r_systeme.wav"]
+
+
+def test_chemin_ffmpeg_dev_repli_shutil_which(monkeypatch):
+    from debrief_meet.core import ressources
+
+    monkeypatch.setattr(ressources, "est_figee", lambda: False)
+    monkeypatch.setattr("shutil.which", lambda nom: f"/usr/bin/{nom}")
+    assert chemin_ffmpeg() == "/usr/bin/ffmpeg"
+
+
+def test_chemin_ffmpeg_figee_resout_le_binaire_embarque(monkeypatch, tmp_path):
+    from debrief_meet.core import ressources
+
+    binaire = tmp_path / "vendor" / "ffmpeg"
+    binaire.parent.mkdir()
+    binaire.write_bytes(b"\x00")
+    monkeypatch.setattr(ressources, "est_figee", lambda: True)
+    monkeypatch.setattr(ressources, "chemin_ressource", lambda *p: Path(tmp_path, *p))
+    assert chemin_ffmpeg() == str(binaire)
+
+
+def test_chemin_ffmpeg_figee_binaire_absent_retourne_none(monkeypatch, tmp_path):
+    from debrief_meet.core import ressources
+
+    monkeypatch.setattr(ressources, "est_figee", lambda: True)
+    monkeypatch.setattr(ressources, "chemin_ressource", lambda *p: Path(tmp_path, *p))
+    assert chemin_ffmpeg() is None
+
+
+def test_enregistreur_opus_leve_erreur_typee_si_ffmpeg_introuvable(monkeypatch, tmp_path):
+    from debrief_meet.core import fichiers
+
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: None)
+    with pytest.raises(ErreurFfmpegIntrouvable):
+        EnregistreurAudioReunion(base_moi=tmp_path / "m", base_systeme=None, format="opus")
 
 
 def test_enregistreur_wav_16k_mono_streaming(tmp_path):
@@ -90,8 +127,7 @@ def test_pistewriter_opus_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypa
 
     from debrief_meet.core import fichiers
 
-    monkeypatch.setattr(
-        "debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
 
     appels = {}
 
@@ -110,23 +146,26 @@ def test_pistewriter_opus_utilise_le_chemin_resolu_et_le_flag(tmp_path, monkeypa
 
 
 def test_ffmpeg_present_suit_chemin_ffmpeg(monkeypatch):
-    from debrief_meet.core.fichiers import _ffmpeg_present
+    from debrief_meet.core import fichiers
 
-    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: None)
-    assert _ffmpeg_present() is False
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: None)
+    assert fichiers._ffmpeg_present() is False
 
-    monkeypatch.setattr("debrief_meet.core.ressources.chemin_ffmpeg", lambda: "/chemin/ffmpeg")
-    assert _ffmpeg_present() is True
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: "/chemin/ffmpeg")
+    assert fichiers._ffmpeg_present() is True
 
 
 def test_enregistreur_auto_bascule_opus_si_ffmpeg_present(tmp_path, monkeypatch):
     import subprocess
 
+    from debrief_meet.core import fichiers
+
     class _FauxProc:
         def __init__(self, *args, **kwargs):
             self.stdin = None
 
-    monkeypatch.setattr("debrief_meet.core.fichiers._ffmpeg_present", lambda: True)
+    monkeypatch.setattr(fichiers, "_ffmpeg_present", lambda: True)
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: "/chemin/embarque/ffmpeg")
     monkeypatch.setattr(subprocess, "Popen", _FauxProc)
     enr = EnregistreurAudioReunion(base_moi=tmp_path / "m", base_systeme=None, format="auto")
     assert enr.format == "opus"

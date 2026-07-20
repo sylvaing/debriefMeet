@@ -28,21 +28,3 @@ def _racine_ressources() -> Path:
 def chemin_ressource(*parties: str) -> Path:
     """Chemin absolu d'une ressource, relatif à la racine (dépôt ou bundle)."""
     return _racine_ressources().joinpath(*parties)
-
-
-def chemin_ffmpeg() -> str | None:
-    """Chemin du ffmpeg à utiliser : embarqué (bundle Windows, docs/41) d'abord,
-    PATH en repli.
-
-    Retourne None si aucun ffmpeg n'est disponible (l'appelant se replie en WAV
-    ou lève, selon le contexte). Pas de condition `est_figee()` : en dev le
-    dossier embarqué n'existe pas (repli PATH naturel) ; en bundle il gagne
-    toujours, même si le poste a un autre ffmpeg sur son PATH (déterminisme de
-    version)."""
-    import shutil
-
-    nom = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-    embarque = chemin_ressource("ffmpeg", nom)
-    if embarque.exists():
-        return str(embarque)
-    return shutil.which("ffmpeg")

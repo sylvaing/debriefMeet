@@ -248,8 +248,37 @@ def formater_duree(secondes: int | None) -> str:
 _SR_AUDIO = 16_000
 
 
+class ErreurFfmpegIntrouvable(RuntimeError):
+    """ffmpeg requis (embarqué ou système) mais introuvable."""
+
+    def __init__(self) -> None:
+        super().__init__("ffmpeg requis pour relire l'audio Opus.")
+
+
+def chemin_ffmpeg() -> str | None:
+    """Chemin de l'exécutable ffmpeg à utiliser, ou None si introuvable.
+
+    En app figée (bundle), le binaire LGPL embarqué est résolu via
+    `ressources.chemin_ressource` — une app lancée depuis le Finder (macOS) ou en
+    `console=False` (Windows) hérite d'un PATH minimal, donc `shutil.which`
+    échouerait même si ffmpeg est installé sur la machine. Emplacement embarqué
+    selon l'OS : `vendor/ffmpeg` (macOS, docs/16 §5.5) ou `ffmpeg/ffmpeg.exe`
+    (Windows, docs/41). En dev, repli sur le PATH courant."""
+    import shutil
+    import sys
+
+    from debrief_meet.core.ressources import chemin_ressource, est_figee
+
+    if est_figee():
+        if sys.platform == "win32":
+            embarque = chemin_ressource("ffmpeg", "ffmpeg.exe")
+        else:
+            embarque = chemin_ressource("vendor", "ffmpeg")
+        return str(embarque) if embarque.exists() else None
+    return shutil.which("ffmpeg")
+
+
 def _ffmpeg_present() -> bool:
-    from debrief_meet.core.ressources import chemin_ffmpeg
     return chemin_ffmpeg() is not None
 
 
@@ -262,11 +291,11 @@ class _PisteWriter:
         if mode == "opus":
             self.chemin = base.with_name(base.name + ".opus")
             import subprocess
-
-            from debrief_meet.core.ressources import chemin_ffmpeg
-            ffmpeg = chemin_ffmpeg() or "ffmpeg"
+            exe = chemin_ffmpeg()
+            if exe is None:
+                raise ErreurFfmpegIntrouvable()
             self._proc = subprocess.Popen(
-                [ffmpeg, "-y", "-loglevel", "error",
+                [exe, "-y", "-loglevel", "error",
                  "-f", "f32le", "-ar", str(_SR_AUDIO), "-ac", "1", "-i", "pipe:0",
                  "-c:a", "libopus", "-b:a", f"{debit_kbps}k", str(self.chemin)],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -323,7 +352,6 @@ class EnregistreurAudioReunion:
                  format: str = "auto", debit_kbps: int = 24) -> None:
         self.format = "opus" if (format == "opus" or (format == "auto" and _ffmpeg_present())) else "wav"
         self._debit_kbps = debit_kbps
-        from debrief_meet.core.ressources import chemin_ffmpeg
         logger.debug("Rétention audio réunion : format=%s, ffmpeg=%s",
                      self.format, chemin_ffmpeg() or "absent → WAV")
         self._moi = _PisteWriter(base_moi, self.format, debit_kbps) if base_moi else None
