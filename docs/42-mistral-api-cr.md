@@ -36,8 +36,8 @@ répercutées dans §5.1, §7.1, §7.3, §7.4, §10, §11.
 
 | Question | Résultat empirique |
 |----------|--------------------|
-| **Format `.opus` accepté directement ?** | **OUI** — upload direct du `.opus` court **et** des segments Ogg Opus. **Aucun transcodage WAV nécessaire** (renverse l'ancienne §7.1/§10). |
-| **Longues réunions (> ~15 min) ?** | Découpage en segments Opus ≤ 14 min OK, recollage par offset correct (37,6 min → 3 segments → 683 segments de transcription). |
+| **Format `.opus` accepté directement ?** | **OUI** — upload direct du `.opus` court **et** long. **Aucun transcodage WAV nécessaire** (renverse l'ancienne §7.1). |
+| **Longues réunions en 1 requête ?** | **OUI, PAS de découpage nécessaire** : la piste de **37,6 min** a été transcrite en **un seul appel** (88 s, 31201 car / 682 segments), format accepté. La limite « ~15 min » de la doc ne s'applique pas à l'endpoint multipart. Le découpage est **relégué en repli** (§10). |
 | **Séparation Moi/Participants sans `diarize` ?** | OK, mais valable surtout en **visio** (voir « présentiel vs visio »). |
 | **Qualité FR + noms ?** | **Excellente** avec `mistral-small-latest` : CR structuré (titre, participants, contexte, points numérotés, **Actions par responsable**), noms bien orthographiés. |
 | **Coût ?** | **~0,125 $ pour 41,3 min d'audio** — dont ~99 % transcription, **CR ≈ 0,001 $**. |
@@ -51,15 +51,17 @@ répercutées dans §5.1, §7.1, §7.3, §7.4, §10, §11.
 - ⚠️ Tarif 0,003 $/min issu de la recherche, **à reconfirmer** sur mistral.ai/pricing.
 
 ### Format & découpage (tranche §7.1 + §10)
-- L'endpoint **accepte l'Ogg Opus directement** → on **abandonne le décodage WAV
-  systématique**. On envoie l'Opus tel quel (fichier court) ou des **segments Opus copiés**.
-- Découpage **sans ré-encodage** (compact + rapide) :
+- L'endpoint **accepte l'Ogg Opus directement, piste entière** → on envoie l'`.opus` tel
+  quel, **sans transcodage ni découpage** (validé 37,6 min en 1 appel).
+- **Découpage = repli seulement** (piste refusée pour durée / timeout). Si déclenché, se
+  fait **sans ré-encodage** (copie Opus, compact) :
   ```
   ffmpeg -y -i src.opus -f segment -segment_time 840 -reset_timestamps 1 -c copy seg_%03d.ogg
   ```
-  → chunks **~2,4 Mo / 14 min** contre **~27 Mo / 14 min** en WAV 16 kHz. Offset externe =
-  `index × 840 s` (les timestamps de segment sont remis à 0 par `-reset_timestamps 1`).
-- Le WAV 16 kHz ne sert plus qu'en **repli** si un format était refusé (HTTP 400/415/422).
+  → chunks ~2,4 Mo / 14 min. Offset externe = `index × 840 s` (timestamps remis à 0 par
+  `-reset_timestamps 1`).
+- Le WAV 16 kHz n'est qu'un **dernier recours** si un format était refusé (HTTP 400/415/422)
+  — très improbable puisque l'Opus est accepté.
 
 ### Robustesse réseau (tranche §7.3)
 - Premier essai en **WAV 27 Mo** → `Broken pipe` (upload lent + mise en veille probable du
@@ -68,13 +70,19 @@ répercutées dans §5.1, §7.1, §7.3, §7.4, §10, §11.
   a été récupérée automatiquement (`reprise 1/2`).
 - Conseiller **`caffeinate -i`** pendant un long run (éviter la veille).
 
+### Découpage inutile par défaut (tranche §10) — **1 requête par piste**
+Test `--pas-de-decoupage` : la piste de 37,6 min passe en **un seul appel** → **le défaut
+devient « pas de découpage »**, le chunking n'est qu'un **repli** (piste très longue refusée
+ou timeout). Corollaire : **1 requête par piste** (2 au total) → le problème de concurrence
+ci-dessous **disparaît** sur le chemin normal.
+
 ### Concurrence / rate-limit — NE PAS paralléliser sur le tier gratuit
-- 4 requêtes de transcription **en parallèle** = **488 s** (vs **177 s** en séquentiel) +
-  une connexion lâchée. Le tier gratuit **throttle la concurrence** (mise en file
-  silencieuse, sans 429 franc) → paralléliser est **contre-productif**.
-- **Défaut produit = séquentiel.** La concurrence n'a de sens que sur un tier payant à
-  limite élevée. Le produit **doit** gérer le **429** (respect de `Retry-After` + backoff)
-  et **plafonner la concurrence** — indispensable quel que soit le tier.
+- Historique (quand on découpait) : 4 requêtes **en parallèle** = **488 s** (vs **177 s** en
+  séquentiel) + une connexion lâchée. Le tier gratuit **throttle la concurrence**
+  (mise en file silencieuse, sans 429 franc) → paralléliser est **contre-productif**.
+- Avec « pas de découpage », il n'y a que 2 requêtes (1/piste) : **séquentiel**, aucun souci.
+- Le produit **doit** quand même gérer le **429** (respect de `Retry-After` + backoff) au cas
+  où, et ne jamais paralléliser sur tier gratuit.
 
 ### Piège httpx multipart (déjà rencontré et corrigé dans le spike)
 En multipart (`files=...`), `data` **doit être un `dict`** ; une valeur-liste devient des
@@ -91,9 +99,10 @@ l'app, docs/07). Le CR reste lisible sans, mais sans étiquette de locuteur fiab
 → **détecter et sauter les pistes silencieuses** (§7.4) reste indispensable.
 
 ### Timing observé
-~177 s (séquentiel) pour transcrire 41 min d'audio + générer le CR. Le temps serveur par
-appel Voxtral est le plancher (~35-45 s pour 14 min, RTF ~0,05). Sur le tier gratuit, pas
-de gain à attendre du parallélisme (voir ci-dessus).
+- **Pistes entières (1 requête/piste) : ~90 s** pour 41 min d'audio + CR → **le plus rapide**.
+- Découpé séquentiel : ~177 s. Découpé parallèle (tier gratuit) : ~488 s.
+- Conclusion : envoyer la piste entière est **plus simple ET plus rapide** ; le découpage
+  ne se justifie qu'en repli sur les cas extrêmes.
 
 ---
 
@@ -167,7 +176,7 @@ core/mistral/                 ← pur Python : aucun import OS-specific ni Qt (r
 ├── client.py                 # ClientMistral : httpx sync, auth Bearer, erreurs typées, timeouts, reprises TransportError + 429/Retry-After
 ├── transcription.py          # transcrire_fichier(chemin, langue, context_bias) → TranscriptionMistral (Opus direct ; repli WAV si format refusé)
 ├── cr.py                     # generer_cr(transcription, prompt, modele) → markdown (source-agnostique)
-├── decoupage.py              # découpe Opus > limite en segments ≤ 14 min par COPIE ffmpeg (pas de ré-encodage)
+├── decoupage.py              # REPLI seulement : découpe Opus par COPIE ffmpeg si une piste longue est refusée/timeout (pas le chemin normal — cf. spike)
 ├── fusion.py                 # entrelace les segments Moi + Participants par timestamp → transcript étiqueté
 └── pipeline.py               # orchestration bout-en-bout (2 pistes → CR → <stem>_CR.md)
                               # (PAS de module de coût : aucune notion de prix dans l'app, §11)
@@ -205,28 +214,28 @@ vit dans `ui/`.
 3. **Confirmation confidentialité** (§2) au premier envoi — le message précise ce qui part
    (texte seul, ou audio si transcription Voxtral).
 4. **Worker de fond** (`generateur_cr_mistral.py`, QThread) + `QProgressDialog`.
-5. **[branche Voxtral uniquement] Découpage** (`decoupage.py`) : par piste, si durée
-   > ~14 min, segments Opus par copie (§10). Sinon 1 unité.
-6. **[branche Voxtral uniquement] Transcription** (`transcription.py`) : chaque unité →
-   `POST /v1/audio/transcriptions` (`voxtral-mini-latest`), `language` = config `langue`,
-   `context_bias` = noms d'invités BlueMind si `<stem>.bluemind.json` existe (§7.5),
-   `timestamp_granularities=["segment"]` ; offset réappliqué par segment (§10). **En
-   séquentiel** (§7.3). Détecter/sauter les pistes silencieuses (§7.4).
+5. **[branche Voxtral uniquement] Transcription** (`transcription.py`) : **envoyer chaque
+   piste ENTIÈRE** (`.opus`) en un seul appel `POST /v1/audio/transcriptions`
+   (`voxtral-mini-latest`), `language` = config `langue`, `context_bias` = noms d'invités
+   BlueMind si `<stem>.bluemind.json` existe (§7.5), `timestamp_granularities=["segment"]`.
+   **1 requête par piste, en séquentiel** (§7.3). Détecter/sauter les pistes silencieuses (§7.4).
+   → **Découpage = repli** (`decoupage.py`, §10) : seulement si une piste très longue est
+   refusée (erreur durée) ou timeout ; alors segments Opus par copie + offset réappliqué.
    → **En visio, PAS de `diarize`** (séparation via les 2 pistes). **En présentiel** (piste
    système silencieuse), tout est sur le micro → `diarize` ou diarisation pyannote si on
    veut des étiquettes de locuteur (§14).
-7. **[branche Voxtral uniquement] Fusion** (`fusion.py`) : entrelacer les segments Moi +
+6. **[branche Voxtral uniquement] Fusion** (`fusion.py`) : entrelacer les segments Moi +
    Participants par timestamp → transcript étiqueté `**Moi :**` / `**Participants :**`
    (réutiliser `core/fichiers.py::_entrelaces`, l.455).
-8. **Rédaction CR** (`cr.py`, commun aux deux branches) : `POST /v1/chat/completions` avec
+7. **Rédaction CR** (`cr.py`, commun aux deux branches) : `POST /v1/chat/completions` avec
    un modèle **texte** (`mistral_modele_cr`), message = `prompts.contenu_actif(...)` +
    transcript. `cr.py` prend **du texte en entrée** (source-agnostique) → même code que la
    source vienne du local ou de Voxtral.
-9. **Écriture** : `<stem>_CR.md` à côté du `.md`. Rafraîchir l'Historique, proposer
+8. **Écriture** : `<stem>_CR.md` à côté du `.md`. Rafraîchir l'Historique, proposer
    « Ouvrir » / « Copier ». Logger l'**usage** (source, minutes, tokens) — **jamais de coût**
    (§11).
-10. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
-    429, réseau, format refusé, durée dépassée), rien d'écrit à moitié sur disque.
+9. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
+   429, réseau, format refusé, durée dépassée), rien d'écrit à moitié sur disque.
 
 ## 5. Détails API Mistral (vérifiés 2026-07-20)
 
@@ -247,8 +256,10 @@ vit dans `ui/`.
   `context_bias` (jusqu'à 100 termes → noms d'invités), `temperature`.
 - **Réponse** (confirmée par le spike) : `text`, `language`, `segments` (chaque segment a
   `start` / `end` / `text`), `usage` (`prompt_tokens` / `completion_tokens`).
-- **Limite de durée par requête** : ~15 min → d'où le découpage §10 (confirmé : la piste de
-  37,6 min a dû être découpée).
+- **Limite de durée par requête** : la doc annonce « ~15 min », mais le spike a transcrit
+  **37,6 min en un seul appel** → cette limite **ne s'applique pas** à l'endpoint multipart.
+  On envoie la piste entière ; le découpage n'est qu'un repli (§10). Plafond exact inconnu
+  (batch documenté ~3 h, fichier ≤ 1 Go).
 - **Tarif** : facturé à la **minute d'audio** (~0,003 $/min), **pas au token** (confirmé :
   ~0,125 $ pour 41,3 min).
 
@@ -286,12 +297,11 @@ vit dans `ui/`.
 
 ## 7. Points techniques à trancher pendant l'implémentation
 
-### 7.1 Format d'upload — Opus direct (tranché par le spike)
-**L'Ogg Opus est accepté directement par l'endpoint** (upload direct du fichier court ET
-des segments Opus copiés — cf. Résultats du spike). **On envoie donc l'Opus tel quel**,
-sans transcodage :
-- fichier ≤ limite → upload direct de la piste `.opus` (mime `audio/ogg`) ;
-- fichier > limite → segments Opus par **copie** (§10), pas de ré-encodage.
+### 7.1 Format d'upload — Opus direct, piste entière (tranché par le spike)
+**L'Ogg Opus est accepté directement par l'endpoint, y compris une piste longue** (37,6 min
+transcrite en un seul appel — cf. Résultats du spike). **On envoie donc la piste `.opus`
+entière telle quelle** (mime `audio/ogg`), **sans transcodage ni découpage**. Le découpage
+Opus par copie n'intervient qu'en **repli** sur piste refusée/timeout (§10).
 
 Le **décodage/transcodage WAV 16 kHz** n'est plus le chemin par défaut ; il ne subsiste
 qu'en **repli** si un jour un format était refusé (HTTP 400/415/422) : dans ce cas
@@ -305,15 +315,17 @@ Segments **Opus** (`.ogg`, copie sans ré-encodage) dans le dossier scratch/temp
 
 ### 7.3 Timeouts, reprises réseau, rate-limit (mesuré au spike)
 - **Timeouts** longs (transcription lente) : connect ~10 s, **read ~600 s**. Réglables.
+- **1 requête par piste** (piste entière, §7.1), **en séquentiel** → 2 appels max, pas de
+  concurrence sur le chemin normal.
 - **Reprises sur `httpx.TransportError`** (broken pipe, `ReadError`, `ConnectError`) : ~3
-  essais, backoff. **Validé en réel** (une coupure récupérée automatiquement). Chunks Opus
-  compacts (§10) réduisent fortement le risque de coupure à l'upload.
+  essais, backoff. **Validé en réel** (une coupure récupérée automatiquement).
 - **HTTP 429 (rate-limit)** : à gérer explicitement — respecter l'en-tête `Retry-After`,
   backoff exponentiel. Le tier gratuit **throttle silencieusement la concurrence** (spike :
-  4 requêtes parallèles = 488 s vs 177 s séquentiel). → **transcrire en séquentiel par
-  défaut** et **plafonner la concurrence** ; ne paralléliser que sur un tier payant.
-- **Pas de retry** sur les 4xx de format (400/415/422) → déclenche le repli WAV (§7.1) ; ni
-  sur 401/403 (clé invalide) → erreur claire remontée à l'utilisateur.
+  4 requêtes parallèles = 488 s vs 177 s séquentiel) → **ne jamais paralléliser** sur tier
+  gratuit (de toute façon inutile puisqu'on n'a qu'1 requête/piste).
+- **Erreur de durée (4xx) ou timeout** sur une piste longue → bascule sur le **découpage**
+  (§10). **4xx de format** (très improbable, Opus accepté) → dernier recours = transcodage
+  WAV puis réessai. **401/403** (clé invalide) → erreur claire, pas de retry.
 
 ### 7.4 Piste vide / silencieuse — CAS RÉEL confirmé
 Confirmé par le spike : la piste système était à **−91 dB (silence numérique total)** →
@@ -419,22 +431,28 @@ est saisie et testée ».
 - **Extensible** : l'assistant est **propre à Mistral** ; un futur fournisseur aura le sien
   (`assistant_<fournisseur>.py`). Pas de généralisation prématurée en v1.
 
-## 10. Découpage des longues réunions (`decoupage.py`) — méthode validée au spike
+## 10. Découpage = REPLI seulement (`decoupage.py`) — pas le chemin normal
 
-- Ne découper **que si** la durée dépasse la limite (~15 min). Sinon 1 seule unité = la
-  piste d'origine envoyée telle quelle.
-- Découper l'**Opus par copie** (aucun ré-encodage, chunks compacts ~2,4 Mo/14 min) :
-  ```
-  ffmpeg -y -loglevel error -i src.opus \
-     -f segment -segment_time 840 -reset_timestamps 1 -c copy seg_%03d.ogg
-  ```
-  (`840 s = 14 min`, marge sous les ~15 min). `-reset_timestamps 1` remet chaque segment à
-  t=0 → l'offset externe suffit.
-- Après transcription, **réappliquer l'offset temporel** (`index × 840 s`) aux `start`/`end`
-  des `segments` avant la fusion, pour garder l'ordre chronologique.
-- Repli **WAV 16 kHz** uniquement si un format était refusé (§7.1) — pas le chemin normal.
-- (Optionnel, non requis en v1) découper sur un creux d'énergie proche de la frontière pour
-  éviter de couper un mot ; un découpage à durée fixe est acceptable (validé au spike).
+**Défaut : PAS de découpage.** Le spike a transcrit une piste de **37,6 min en un seul
+appel** (88 s) → on envoie **la piste entière**. Plus simple, plus rapide, une seule requête
+par piste, pas d'artefact de frontière. Le module `decoupage.py` n'est qu'un **filet de
+sécurité**, à déclencher **seulement** si :
+- une piste très longue est **refusée** pour cause de durée (HTTP 4xx explicite), **ou**
+- l'appel **timeout** malgré les reprises (§7.3).
+
+Dans ce cas seulement, découper l'**Opus par copie** (aucun ré-encodage, chunks compacts) :
+```
+ffmpeg -y -loglevel error -i src.opus \
+   -f segment -segment_time 840 -reset_timestamps 1 -c copy seg_%03d.ogg
+```
+(`840 s = 14 min`.) `-reset_timestamps 1` remet chaque segment à t=0 → **réappliquer
+l'offset** (`index × 840 s`) aux `start`/`end` avant fusion. Ces segments repartent alors,
+eux aussi, en séquentiel.
+
+> On ne connaît pas le plafond exact de l'endpoint (validé 37,6 min ; doc batch ~3 h,
+> fichier ≤ 1 Go). D'où « entier par défaut, découpage déclenché sur échec » plutôt que
+> « jamais de découpage ». Un seuil de sécurité (ex. découper au-delà de ~90 min sans même
+> tenter) est acceptable si on veut éviter un premier appel voué à l'échec.
 
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
@@ -483,18 +501,23 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 - **Ne pas** router Mistral via `MoteurTranscription`/`factory.py` (§1.1).
 - **httpx multipart** : `data` **doit être un `dict`** (valeurs-listes = champs répétés) ;
   une liste de tuples casse l'encodage du corps (`TypeError … tuple found`). Cf. spike.
+- **Pas de découpage par défaut** (§10) : envoyer la piste `.opus` **entière** (validé
+  37,6 min en 1 appel). Le découpage n'est qu'un repli sur refus-durée/timeout. **Ne pas**
+  redécouper « par précaution ».
 - **Ne pas paralléliser sur tier gratuit** : throttling silencieux → plus lent + coupures.
-  Séquentiel par défaut, gestion 429/`Retry-After` obligatoire (§7.3).
-- **Opus accepté directement** (§7.1) : envoyer l'Opus tel quel / segments copiés ; le WAV
-  n'est qu'un repli. **Ne pas** ré-encoder en WAV 27 Mo par défaut (upload lourd → coupures).
+  De toute façon 1 requête/piste (2 max) en séquentiel ; gestion 429/`Retry-After` par
+  sécurité (§7.3).
+- **Opus accepté directement** (§7.1) : envoyer l'Opus tel quel. **Ne jamais** ré-encoder en
+  WAV par défaut (upload lourd → coupures) ; WAV = dernier recours si format refusé.
 - **Thread UI** : tout appel réseau et tout ffmpeg (découpage/décodage) en worker de fond
   — sinon l'UI gèle sur une longue réunion.
 - **Crash QThread à l'arrêt** : réutiliser les helpers `arreter_thread`/`proteger_thread`
   (docs/26) ; ne pas créer de `QTimer`/`QObject` sans parent (crash natif en tests — cf.
   mémoire refonte UI).
 - **Nettoyage temporaires** en `finally`, y compris sur annulation utilisateur.
-- **IDs de modèles / tarifs** à reconfirmer sur les docs Mistral au moment du code (§5).
-- **Coût accidentel** : garde-fou `mistral_duree_max_min` + confirmation avant envoi.
+- **IDs de modèles** à reconfirmer sur les docs Mistral au moment du code (§5).
+- **Envoi accidentel géant** : garde-fou `mistral_duree_max_min` + confirmation avant envoi.
+  (Aucune notion de coût affichée — §11.)
 
 ## 14. Extensions futures (hors périmètre v1)
 
