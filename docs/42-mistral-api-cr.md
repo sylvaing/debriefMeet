@@ -7,7 +7,7 @@
 > Code du spike : `spike/mistral-cr/` (`spike_mistral_cr.py` + `README.md`).
 > **Décisions de cadrage validées avec Sylvain (2026-07-20) :**
 > 1. **CR adaptatif (tranché après spike)** — par défaut le CR est rédigé à partir du
->    **transcript local existant** (rapide ~15 s, ~0,001 $, seul le *texte* part au cloud).
+>    **transcript local existant** (rapide ~15 s, seul le *texte* part au cloud).
 >    **Repli automatique** sur la **transcription Voxtral** (endpoint à la minute) quand il
 >    n'y a pas de transcript local (mode enregistrement-seul). **Option avancée** pour
 >    forcer Voxtral (local médiocre, ou envie de diarisation). Dans tous les cas, l'étape CR
@@ -40,15 +40,6 @@ répercutées dans §5.1, §7.1, §7.3, §7.4, §10, §11.
 | **Longues réunions en 1 requête ?** | **OUI, PAS de découpage nécessaire** : la piste de **37,6 min** a été transcrite en **un seul appel** (88 s, 31201 car / 682 segments), format accepté. La limite « ~15 min » de la doc ne s'applique pas à l'endpoint multipart. Le découpage est **relégué en repli** (§10). |
 | **Séparation Moi/Participants sans `diarize` ?** | OK, mais valable surtout en **visio** (voir « présentiel vs visio »). |
 | **Qualité FR + noms ?** | **Excellente** avec `mistral-small-latest` : CR structuré (titre, participants, contexte, points numérotés, **Actions par responsable**), noms bien orthographiés. |
-| **Coût ?** | **~0,125 $ pour 41,3 min d'audio** — dont ~99 % transcription, **CR ≈ 0,001 $**. |
-
-### Chiffres de coût réels (base de §11)
-- Facturation transcription **à la minute d'audio** (~0,003 $/min) ; CR = 8902 tokens in +
-  1255 out ≈ **0,001 $**. **Le CR (LLM) est quasi gratuit ; tout le coût = minutes d'audio.**
-- Extrapolation **1 h** : **~0,18 $** en présentiel (1 piste utile) ; **~0,36 $** en visio
-  (micro + système, 2 pistes pleines). Le coût suit les *minutes audio envoyées*, pas la
-  durée de la réunion → sauter les pistes silencieuses (§7.4) divise le coût en présentiel.
-- ⚠️ Tarif 0,003 $/min issu de la recherche, **à reconfirmer** sur mistral.ai/pricing.
 
 ### Format & découpage (tranche §7.1 + §10)
 - L'endpoint **accepte l'Ogg Opus directement, piste entière** → on envoie l'`.opus` tel
@@ -121,8 +112,8 @@ enregistrée en **compte-rendu Markdown fini**. L'étape CR est toujours la mêm
 
 1. **Source du transcript** :
    - **par défaut → le transcript local** déjà produit par l'app (le `.md` de la réunion,
-     ou `<stem>_locuteurs.md` s'il existe) : rapide (~15 s), quasi gratuit (~0,001 $), et
-     **seul le texte** part au cloud (pas l'audio) ;
+     ou `<stem>_locuteurs.md` s'il existe) : rapide (~15 s) et **seul le texte** part au
+     cloud (pas l'audio) ;
    - **repli automatique → transcription Voxtral** des pistes Opus (endpoint à la minute)
      quand il **n'y a pas** de transcript local exploitable (mode enregistrement-seul) ;
    - **forçable** (option avancée) vers Voxtral si le local est médiocre / pour diariser.
@@ -131,12 +122,11 @@ enregistrée en **compte-rendu Markdown fini**. L'étape CR est toujours la mêm
 
 Résultat écrit dans un fichier `<stem>_CR.md` à côté de la réunion.
 
-> **Note sur « minimum de token » et coût.** Le CR (LLM texte) est **quasi gratuit**
-> (~0,001 $) ; le coût, quand on transcrit via Voxtral, vient des **minutes d'audio**
-> (~0,003 $/min, facturation à la durée — pas au poids du fichier ni au token). Réutiliser
-> le transcript local **supprime** ce coût. Quand une transcription cloud est nécessaire,
-> on passe par l'**endpoint transcription** (à la minute), **jamais** le chat multimodal
-> audio→CR (qui facture des *tokens audio*, plus cher).
+> **Pourquoi réutiliser le transcript local par défaut.** Le CR (appel texte) est **rapide**
+> et n'envoie que du texte ; re-transcrire l'audio via Voxtral est l'étape lente. Réutiliser
+> le transcript local **évite** cette étape. Quand une transcription cloud est nécessaire,
+> on passe par l'**endpoint transcription**, **jamais** le chat multimodal audio→CR (limité
+> à ~20 min et sans séparation Moi/Participants).
 
 ### 1.1 Pourquoi ce n'est PAS un `MoteurTranscription`
 
@@ -239,9 +229,9 @@ vit dans `ui/`.
 
 ## 5. Détails API Mistral (vérifiés 2026-07-20)
 
-> ⚠️ Les **IDs de modèles** et **tarifs** évoluent. Sonnet doit **reconfirmer** les IDs
-> exacts sur https://docs.mistral.ai au moment de l'implémentation (les `*-latest`
-> ci-dessous sont stables mais un modèle daté peut être préféré).
+> ⚠️ Les **IDs de modèles** évoluent. Sonnet doit **reconfirmer** les IDs exacts sur
+> https://docs.mistral.ai au moment de l'implémentation (les `*-latest` ci-dessous sont
+> stables mais un modèle daté peut être préféré).
 
 ### 5.1 Endpoint transcription (étape 1)
 - **Route** : `POST /v1/audio/transcriptions` — SDK : `client.audio.transcriptions.complete(...)`.
@@ -260,8 +250,6 @@ vit dans `ui/`.
   **37,6 min en un seul appel** → cette limite **ne s'applique pas** à l'endpoint multipart.
   On envoie la piste entière ; le découpage n'est qu'un repli (§10). Plafond exact inconnu
   (batch documenté ~3 h, fichier ≤ 1 Go).
-- **Tarif** : facturé à la **minute d'audio** (~0,003 $/min), **pas au token** (confirmé :
-  ~0,125 $ pour 41,3 min).
 
 ### 5.2 Endpoint chat texte (étape 2 — rédaction du CR)
 - **Route** : `POST /v1/chat/completions` — SDK : `client.chat.complete(...)`.
@@ -271,7 +259,6 @@ vit dans `ui/`.
   **Ne pas** utiliser un modèle Voxtral ici : c'est du texte pur.
 - **Messages** : soit `system` = prompt CR + `user` = transcript, soit `user` unique
   reprenant `prompts.prefixer(transcript, contenu)`. Tester les deux ; garder le plus propre.
-- **Tarif** (ordre de grandeur mistral-small) : ~0,10 $/M tokens in, ~0,30 $/M out.
 
 ### 5.3 Auth & base URL
 - Header `Authorization: Bearer <mistral_cle_api>`.
@@ -456,24 +443,17 @@ eux aussi, en séquentiel.
 
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
-> **Contrainte transverse (décision Sylvain, 2026-07-20) : l'application ne mentionne
-> JAMAIS de coût, prix, tarif, montant (€, $) — nulle part.** Ni UI, ni didacticiel (§9.4),
-> ni section Préférences (§9.1), ni logs, ni récap de fin de génération. Ne pas coder de
-> module `couts.py`, ne pas afficher de « ~0,12 $ », ne pas convertir minutes/tokens en
-> argent dans le produit.
+> **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle
+> part.** Ni UI, ni didacticiel (§9.4), ni section Préférences (§9.1), ni logs, ni récap de
+> fin de génération. Pas de module de coût, pas de conversion minutes/tokens en argent. Le
+> sujet tarif est **hors périmètre** (sans intérêt pour le projet).
 
-**Ce que l'app fait à la place** — observabilité d'**usage neutre** (utile au diagnostic,
-sans dimension monétaire) :
+**Observabilité à la place** — **usage neutre** (utile au diagnostic, sans dimension
+monétaire) :
 - log (niveau INFO/DEBUG, cf. docs/31) : source du transcript (local/Voxtral), minutes
   d'audio transcrites par piste, tokens `usage` (in/out) renvoyés par l'API ;
-- récap de fin de génération **sans coût** : p. ex. « CR généré · source : Voxtral ·
-  ~41 min audio » ou, en mode local, « CR généré depuis la transcription locale ».
-
-**Analyse de coût — CADRAGE UNIQUEMENT (jamais dans l'app).** Pour info de Sylvain/Sonnet,
-d'après le spike : ~0,003 $/min de transcription, CR négligeable → une réunion d'1 h
-coûterait ~0,18 $ (présentiel, 1 piste) à ~0,36 $ (visio, 2 pistes) ; en mode transcript
-local, quasi nul. Ces chiffres servent à cadrer le garde-fou de durée (`mistral_duree_max_min`)
-et **ne doivent apparaître ni dans l'UI ni dans les logs**.
+- récap de fin de génération : p. ex. « CR généré · source : Voxtral · ~41 min audio » ou,
+  en mode local, « CR généré depuis la transcription locale ».
 
 ## 12. Tests (`tests/test_mistral_*.py`)
 
