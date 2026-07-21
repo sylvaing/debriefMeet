@@ -73,6 +73,8 @@ spike/backends_windows/assets/models/
 resultats_benchmark/
 spike/diarization/sorties/
 spike/diarization/*.log
+# Spike Mistral (docs/42) : transcripts + CR de vraies réunions renvoyés par l'API.
+spike/mistral-cr/sorties/
 # Rapports de spike renvoyés par Bastien/Alix : zip + toute extraction
 # (transcriptions verbatim de réunions réelles). Voir docs/18.
 spike/backends_windows/resultats/
