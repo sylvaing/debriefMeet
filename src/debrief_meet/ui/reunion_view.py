@@ -569,6 +569,7 @@ class ReunionView(QWidget):
 
     def _supprimer_un(self, chemin: Path) -> None:
         a_supprimer = [chemin, chemin_locuteurs(chemin), chemin_cr_mistral(chemin),
+                       bluemind_association.chemin_sidecar(chemin),
                        *pistes_audio_existantes(chemin)]
         for p in a_supprimer:
             try:

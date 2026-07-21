@@ -280,6 +280,20 @@ def test_tout_supprimer_retire_aussi_le_cr_mistral(qapp, machine, tmp_path, monk
     assert not cr.exists()
 
 
+def test_tout_supprimer_retire_aussi_le_sidecar_bluemind(qapp, machine, tmp_path, monkeypatch):
+    """Le sidecar d'association BlueMind (`*.bluemind.json`, docs/40) est un dérivé
+    de la réunion — il doit disparaître avec elle."""
+    from debrief_meet.core.bluemind import association as bluemind_association
+    md = _reunion_avec_audio(tmp_path)
+    sidecar = bluemind_association.chemin_sidecar(md)
+    sidecar.write_text('{"event_uid": "x", "cal_uid": "y"}', encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._tout_supprimer_un(md)
+    assert not md.exists()
+    assert not sidecar.exists()
+
+
 def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch):
     a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
     b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
