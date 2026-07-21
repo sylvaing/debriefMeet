@@ -172,7 +172,9 @@ core/mistral/                 ← pur Python : aucun import OS-specific ni Qt (r
 └── couts.py                  # estimation coût (minutes audio, tokens) pour le log
 
 ui/
-├── preferences_view.py       # + section « Mistral » (clé API, modèles, test connexion) — §9.1
+├── preferences_view.py       # + section « Remote IA » (avant Journalisation), extensible — §9.1
+├── remote_ia_view.py         # widget de la section : bloc par fournisseur (Mistral en v1) — §9.1
+├── assistant_mistral.py      # mini-didacticiel création compte + clé API (miroir assistant_diarization.py) — §9.4
 ├── testeur_connexion_mistral.py  # bouton « Tester la connexion » (miroir testeur_connexion_bluemind.py)
 ├── reunion_view.py           # + action « Générer le CR (Mistral) » par réunion — §9.2
 └── generateur_cr_mistral.py  # QThread worker + QProgressDialog (miroir gestionnaire_diarization.py)
@@ -275,6 +277,7 @@ vit dans `ui/`.
 | Prompt CR actif | `core/prompts.contenu_actif` + `prefixer` |
 | Noms d'invités (context_bias) | sidecar `<stem>.bluemind.json` (docs/40, `core/bluemind/association.py`) |
 | Section Préférences + test connexion | `ui/preferences_view.py` section BlueMind + `ui/testeur_connexion_bluemind.py` |
+| Assistant/didacticiel guidé (création compte + clé) | `ui/assistant_diarization.py` + docs/13-diarization-onboarding.md |
 | Worker de fond + progress | `ui/gestionnaire_diarization.py`, `ui/chargeur_modele.py` (QThread + QProgressDialog) |
 | Persistance réglages | `core/config.py` (`_DEFAUTS` + get/set validés) |
 | Mock HTTP en test | `respx` (déjà en dépendance `dev`) |
@@ -347,17 +350,29 @@ existe, repli Voxtral sinon (défaut) ; `"voxtral"` = toujours re-transcrire via
 
 ## 9. UI
 
-### 9.1 Préférences — nouvelle section « Mistral »
-Ajouter une 9ᵉ entrée à `_SECTIONS` (`preferences_view.py` l.68). Contenu (auto-save,
-comme le reste) :
-- Champ **clé API** (echo masqué / `QLineEdit.Password`), lié à `mistral_cle_api`.
+### 9.1 Préférences — nouvelle section « Remote IA »
+Ajouter une entrée `_SECTIONS` (`preferences_view.py` l.68) intitulée **« Remote IA »**,
+**placée juste AVANT « Journalisation »** (donc avant-dernière). Elle regroupe les
+**fournisseurs d'IA distante** ; le contenu vit dans un widget dédié `remote_ia_view.py`.
+
+**Conçue extensible** : la section est une liste de **blocs par fournisseur**. En v1, **un
+seul bloc : Mistral**. Ajouter un fournisseur plus tard (ex. OpenAI, Anthropic…) = ajouter
+un bloc + ses clés `*_cle_api` dans `_DEFAUTS` (préfixe par fournisseur, comme `mistral_*`),
+sans toucher la structure. Ne pas sur-concevoir un système de plugins en v1 — un simple
+empilement de `QGroupBox` par fournisseur suffit.
+
+**Bloc « Mistral »** (auto-save, comme le reste) :
+- **Choix du fournisseur / activation** : titre du bloc + court texte « Génère des
+  comptes-rendus via l'API Mistral (Voxtral + modèles texte, serveurs UE) ».
+- Champ **clé API** (echo masqué / `QLineEdit.Password`), lié à `mistral_cle_api`, avec un
+  **bouton « Obtenir une clé »** ouvrant l'assistant §9.4.
 - Champ **base URL** (avancé, repliable), validé.
 - **Combo modèle transcription** (`voxtral-mini-latest`) et **combo modèle CR**
   (`mistral-small/medium/large-latest`).
-- **Source du transcript** (`mistral_source_transcription`) : case/combo « Réutiliser la
-  transcription locale quand elle existe (recommandé) » vs « Toujours transcrire via
-  Voxtral ». Aide : le local est instantané et quasi gratuit ; Voxtral n'est utile qu'en
-  enregistrement-seul ou si le local est médiocre.
+- **Source du transcript** (`mistral_source_transcription`) : « Réutiliser la transcription
+  locale quand elle existe (recommandé) » vs « Toujours transcrire via Voxtral ». Aide : le
+  local est instantané et quasi gratuit ; Voxtral n'est utile qu'en enregistrement-seul ou
+  si le local est médiocre.
 - **Bouton « Tester la connexion »** → `testeur_connexion_mistral.py` (miroir de
   `testeur_connexion_bluemind.py`) : ping léger (ex. `GET /v1/models`) en worker, message
   vert/rouge.
@@ -374,6 +389,32 @@ QThread (jamais le thread UI), `QProgressDialog` non bloquant avec les 4 étapes
 annulable. Signaux Qt pour : progression, succès (chemin du `_CR.md`), erreur (message).
 Reprendre le pattern de `gestionnaire_diarization.py` (protection thread, arrêt propre —
 attention aux crashs QThread déjà corrigés, docs/26).
+
+### 9.4 Mini-didacticiel « obtenir une clé API Mistral » (`assistant_mistral.py`)
+**Calqué sur l'onboarding diarisation** (`ui/assistant_diarization.py`, docs/13) : un
+assistant guidé qui accompagne un utilisateur non technique de « je n'ai rien » à « ma clé
+est saisie et testée ».
+
+- **Déclenchement** : bouton « Obtenir une clé » du bloc Mistral (§9.1) **et** ouverture
+  automatique de l'assistant quand l'utilisateur active/ouvre le bloc Mistral **sans clé
+  configurée** (comme la diarisation propose son assistant quand le modèle manque).
+- **Étapes** (avec liens cliquables `QDesktopServices.openUrl`, boutons « J'ai fait cette
+  étape ») :
+  1. **Créer un compte Mistral** → lien `https://console.mistral.ai` (« La Plateforme »).
+  2. **Ouvrir la page des clés** → lien direct `https://console.mistral.ai/api-keys`.
+  3. **Générer une clé** (« Create new key »), **la copier** (rappel : elle n'est affichée
+     qu'une fois).
+  4. **Coller la clé** dans le champ de l'assistant → écrit dans `mistral_cle_api`.
+  5. **Tester** (réutilise `testeur_connexion_mistral.py`) → coche verte / message d'erreur.
+- **Informations à afficher** (sans être bloquant) : mention **serveurs UE / RGPD**, rappel
+  **confidentialité** (audio/texte envoyés au cloud), et **ordre de grandeur du coût**
+  (~0,001 $ en mode transcript local ; ~0,18-0,36 $/h si transcription Voxtral). Mentionner
+  l'existence d'un **tier gratuit** avec limites (cf. §7.3) sans promettre de chiffres.
+- **Style** : réutiliser les composants/États de `assistant_diarization.py` (mêmes patterns
+  Qt, mêmes helpers de thread, pas de `QObject`/`QTimer` sans parent — docs/26). Textes en
+  français, ton pédagogique.
+- **Extensible** : l'assistant est **propre à Mistral** ; un futur fournisseur aura le sien
+  (`assistant_<fournisseur>.py`). Pas de généralisation prématurée en v1.
 
 ## 10. Découpage des longues réunions (`decoupage.py`) — méthode validée au spike
 
@@ -471,6 +512,8 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 
 - `core/mistral/` **pur Python** (aucun import Qt ni OS-specific).
 - Fonctionnalité **invisible** sans clé API ; confirmation confidentialité au 1ᵉʳ envoi.
+- **Section Préférences « Remote IA »** (avant Journalisation), extensible, bloc Mistral en
+  v1 ; **assistant guidé** de création de clé (§9.4) accessible et ouvert quand aucune clé.
 - **Défaut adaptatif** (décision 1) : CR depuis le transcript local quand il existe ;
   repli Voxtral si absent ; forçage Voxtral via `mistral_source_transcription="voxtral"`.
 - Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
