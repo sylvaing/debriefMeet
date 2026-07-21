@@ -24,10 +24,11 @@ def _flush(vue: PreferencesView) -> None:
 
 # ── Sections & navigation ────────────────────────────────────────────────────
 
-def test_huit_sections(qapp, tmp_path):
+def test_neuf_sections(qapp, tmp_path):
+    """8 sections historiques + « Remote IA » (interco Mistral, docs/42 §9.1)."""
     vue = PreferencesView(_config(tmp_path))
-    assert vue._pages.count() == 8
-    assert vue._nav.count() == 8
+    assert vue._pages.count() == 9
+    assert vue._nav.count() == 9
 
 
 def test_navigation_change_la_page_active(qapp, tmp_path):

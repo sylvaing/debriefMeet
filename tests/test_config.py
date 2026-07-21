@@ -22,6 +22,16 @@ class TestDefauts:
         assert config_tmp.get("demarrage_auto") is False
         assert config_tmp.get("backend") == "auto"
 
+    def test_valeurs_defaut_mistral(self, config_tmp):
+        """Interco Mistral (docs/42) — clé vide = fonctionnalité invisible."""
+        assert config_tmp.get("mistral_cle_api") == ""
+        assert config_tmp.get("mistral_base_url") == "https://api.mistral.ai"
+        assert config_tmp.get("mistral_source_transcription") == "auto"
+        assert config_tmp.get("mistral_modele_transcription") == "voxtral-mini-latest"
+        assert config_tmp.get("mistral_modele_cr") == "mistral-small-latest"
+        assert config_tmp.get("mistral_duree_max_min") == 180
+        assert config_tmp.get("mistral_confidentialite_acceptee") is False
+
     def test_version_defaut(self, config_tmp):
         assert config_tmp.get("version") == VERSION_COURANTE
 

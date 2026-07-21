@@ -37,6 +37,11 @@ Avec extras macOS complets **et** `.venv-build`/`packaging/vendor/ffmpeg` constr
 (après docs/16, 2026-07-12) : **939 passed** (`pytest -m "not integration"`), 949 en
 suite complète — seul `test_audio_canonique_present` échoue sur un clone frais
 (fixture WAV du benchmark, non liée au packaging, cf. docs/08 § « Audio de test »).
+Après l'interco Mistral (docs/42, 2026-07-21) : +75 tests unitaires (`test_mistral_*.py`,
+`test_generateur_cr_mistral.py`, `test_testeur_connexion_mistral.py`,
+`test_remote_ia_view.py`, `test_assistant_mistral.py`) — **1032 passed** en environnement
+extras macOS + pyannote complets, sans `.venv-build`/`packaging/vendor/ffmpeg` (2 échecs
+attendus : helper Swift non compilé, audio canonique absent sur ce clone).
 
 ## Environnements Python — ne pas confondre
 
@@ -76,6 +81,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Fix crash QThread à l'arrêt (docs/26)** | ✅ TERMINÉ (2026-07-03, 589 passed) — registre workers MLX + kill forcé, helper `arreter_thread`/`proteger_thread` |
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10) |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
+| **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | 🔄 spike validé + code + tests unitaires ✅ TERMINÉS (2026-07-21, +75 tests, 1032 passed sans réseau) — reste : validation manuelle avec Sylvain + clé API Mistral réelle (les deux branches : transcript local et repli Voxtral) |
 
 ## Packaging macOS (Phase 4) — pièges
 
@@ -179,3 +185,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits, intégration/validation manuelle restantes** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — 🔄 code+tests faits, validation manuelle avec clé réelle restante** | `docs/42` |

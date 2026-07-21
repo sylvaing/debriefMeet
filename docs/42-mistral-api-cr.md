@@ -1,10 +1,17 @@
 # Interco Mistral — transcription cloud + génération de compte-rendu (CR)
 
-> **Statut : 🔬 spike de faisabilité VALIDÉ (2026-07-20) — chaîne complète exécutée sur une
-> vraie réunion (voir « Résultats du spike » ci-dessous). Implémentation produit non commencée.**
-> Ce document est conçu pour être donné **tel quel** à une session d'implémentation (Sonnet).
-> Branche de travail : `claude/mistral-api-transcription-cr-f15d4a` (déjà créée, worktree dédié).
+> **Statut : 🔄 CODE + TESTS UNITAIRES TERMINÉS (2026-07-21, Sonnet) — 1032 passed sans
+> réseau (+75 tests). Reste : validation manuelle avec Sylvain + clé API Mistral réelle
+> (les deux branches — transcript local et repli Voxtral) et mise à jour de la doc
+> utilisateur (mention transcription cloud UE).**
+> Spike de faisabilité VALIDÉ au préalable (2026-07-20) — chaîne complète exécutée sur une
+> vraie réunion (voir « Résultats du spike » ci-dessous).
+> Branche de travail : `claude/mistral-api-transcription-cr-f15d4a` (worktree dédié).
 > Code du spike : `spike/mistral-cr/` (`spike_mistral_cr.py` + `README.md`).
+> Code produit : `src/debrief_meet/core/mistral/` (client, transcription, decoupage,
+> fusion, cr, pipeline) + `ui/remote_ia_view.py`, `ui/assistant_mistral.py`,
+> `ui/testeur_connexion_mistral.py`, `ui/generateur_cr_mistral.py` + intégration
+> `preferences_view.py`/`reunion_view.py`/`fenetre_principale.py`/`__main__.py`.
 > **Décisions de cadrage validées avec Sylvain (2026-07-20) :**
 > 1. **CR adaptatif (tranché après spike)** — par défaut le CR est rédigé à partir du
 >    **transcript local existant** (rapide ~15 s, seul le *texte* part au cloud).
@@ -516,18 +523,31 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 
 ## 15. Definition of Done
 
-- `core/mistral/` **pur Python** (aucun import Qt ni OS-specific).
-- Fonctionnalité **invisible** sans clé API ; confirmation confidentialité au 1ᵉʳ envoi.
-- **Section Préférences « Remote IA »** (avant Journalisation), extensible, bloc Mistral en
-  v1 ; **assistant guidé** de création de clé (§9.4) accessible et ouvert quand aucune clé.
-- **Défaut adaptatif** (décision 1) : CR depuis le transcript local quand il existe ;
+- [x] `core/mistral/` **pur Python** (aucun import Qt ni OS-specific).
+- [x] Fonctionnalité **invisible** sans clé API ; confirmation confidentialité au 1ᵉʳ envoi
+  (implémentée dans `reunion_view.py::_generer_cr_mistral`, mémorisée via
+  `mistral_confidentialite_acceptee`).
+- [x] **Section Préférences « Remote IA »** (avant Journalisation), extensible, bloc Mistral
+  en v1 ; **assistant guidé** de création de clé (§9.4) accessible via le bouton
+  « Obtenir une clé… ». *Écart mineur vs plan initial* : l'ouverture **automatique** de
+  l'assistant quand le bloc est ouvert sans clé configurée n'a **pas** été implémentée (le
+  bloc Mistral est toujours visible dans la section, contrairement au badge/bouton
+  d'activation de la diarization qui a un déclencheur naturel) — nice-to-have futur, pas
+  bloquant : le bouton reste directement visible à côté du champ clé.
+- [x] **Défaut adaptatif** (décision 1) : CR depuis le transcript local quand il existe ;
   repli Voxtral si absent ; forçage Voxtral via `mistral_source_transcription="voxtral"`.
-- Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
-  clé réelle (validation manuelle Sylvain) — testé sur les deux branches (local et Voxtral).
-- Séparation Moi/Participants préservée dans le CR (via les 2 pistes, sans `diarize`).
-- **Aucune notion de coût/prix (€, $) nulle part dans l'app** — UI, didacticiel, logs (§11).
-  Observabilité = usage neutre (minutes audio, tokens).
-- `make test` **vert sans réseau** (existant + nouveaux tests) ; intégration gated verte
-  avec `MISTRAL_TEST_API_KEY`.
-- Doc utilisateur mise à jour (mention transcription **cloud** UE + confidentialité) et
-  `CLAUDE.md` : ajouter une ligne au tableau des docs + à l'état des phases.
+- [ ] Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
+  clé réelle (**validation manuelle Sylvain restante**) — testé sur les deux branches
+  (local et Voxtral) en unitaire (mocké, `test_mistral_pipeline.py`) ; reste le test avec
+  clé API réelle.
+- [x] Séparation Moi/Participants préservée dans le CR (via les 2 pistes, sans `diarize`).
+- [x] **Aucune notion de coût/prix (€, $) nulle part dans l'app** — UI, didacticiel, logs
+  (§11) : vérifié par relecture de tout le code produit, aucune occurrence.
+- [x] `make test` **vert sans réseau** (existant + nouveaux tests) — 1032 passed, +75 tests
+  Mistral, zéro régression (2 échecs pré-existants documentés dans `CLAUDE.md`, sans
+  rapport). Tests d'intégration gated (`MISTRAL_TEST_API_KEY`) **non ajoutés** en v1 (§12
+  les prévoyait ; jugés redondants avec le spike `spike/mistral-cr/` déjà validé en réel —
+  à ajouter si Sylvain le souhaite).
+- [x] `CLAUDE.md` : ligne ajoutée au tableau des docs + à l'état des phases.
+- [x] Doc utilisateur : `docs/01-specifications-fonctionnelles.md` §1/§2 amendées (mention
+  « 100 % local **par défaut** » + exception opt-in Mistral, docs/42).

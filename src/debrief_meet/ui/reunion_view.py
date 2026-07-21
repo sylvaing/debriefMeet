@@ -44,6 +44,7 @@ from debrief_meet.ui.capture_model import (
     CaptureModel,
 )
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
+from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
 from debrief_meet.ui.icon_delegate import IconeColonneDelegate
 from debrief_meet.ui.status_pill import StatusPillDelegate
 from debrief_meet.ui.survol_ligne import TableAvecSurvolLigne
@@ -61,6 +62,7 @@ _ICONE_TOUT_SUPPR = "trash"
 _ICONE_BLUEMIND_ASSOCIER = "calendar-plus"
 _ICONE_BLUEMIND_ASSOCIE = "calendar-check"
 _ICONE_NOMMER_LOCUTEURS = "chat-text"
+_ICONE_CR_MISTRAL = "notebook"
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class ReunionView(QWidget):
         presse_papiers: PressePapiers | None = None,
         gestionnaire: GestionnaireDiarization | None = None,
         store_bluemind: StoreCalendrier | None = None,
+        gestionnaire_cr_mistral: GestionnaireCRMistral | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -90,6 +93,7 @@ class ReunionView(QWidget):
         self._presse_papiers = presse_papiers
         self._gestionnaire = gestionnaire
         self._store_bluemind = store_bluemind
+        self._gestionnaire_cr_mistral = gestionnaire_cr_mistral
 
         self._modele = CaptureModel(self._dossier(), est_reunion=True, parent=self)
         self._proxy = QSortFilterProxyModel(self)
@@ -101,6 +105,7 @@ class ReunionView(QWidget):
 
         self._construire_ui(machine)
         self._cabler_gestionnaire()
+        self._cabler_gestionnaire_cr_mistral()
         self._installer_surveillance()
         self.recharger()
 
@@ -246,6 +251,23 @@ class ReunionView(QWidget):
             actions.append(ActionSpec(
                 _ICONE_NOMMER_LOCUTEURS, "Nommer les locuteurs", True,
                 lambda c=chemin: self._nommer_locuteurs(c)))
+
+        if self._gestionnaire_cr_mistral is not None and self._gestionnaire_cr_mistral.disponible():
+            job_mistral = self._gestionnaire_cr_mistral.job_en_cours()
+            if chemin == job_mistral:
+                actions.append(ActionSpec(
+                    _ICONE_EN_COURS, "Génération du CR en cours…", False, lambda: None))
+            else:
+                a_de_quoi_generer = (not ligne.en_attente) or bool(ligne.audio)
+                un_autre_job_tourne = un_job_tourne or job_mistral is not None
+                actif = a_de_quoi_generer and not un_autre_job_tourne
+                tooltip = "Générer le CR (Mistral)"
+                if not a_de_quoi_generer:
+                    tooltip = "Aucune transcription ni audio disponible"
+                elif un_autre_job_tourne:
+                    tooltip = "Une tâche est déjà en cours"
+                actions.append(ActionSpec(_ICONE_CR_MISTRAL, tooltip, actif,
+                                          lambda c=chemin: self._generer_cr_mistral(c)))
 
         actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir la transcription", True,
                                   lambda c=chemin: self._ouvrir(c)))
@@ -446,6 +468,53 @@ class ReunionView(QWidget):
         if self.isVisible():
             dialogues.avertir(self, titre="Diarization — échec",
                               description=f"La génération des locuteurs a échoué :\n{message}")
+
+    # ── CR Mistral (déléguée au gestionnaire persistant, docs/42) ───────────────
+
+    def _generer_cr_mistral(self, chemin: Path) -> None:
+        if self._gestionnaire_cr_mistral is None or not self._gestionnaire_cr_mistral.disponible():
+            return
+        if not self._config.get("mistral_confidentialite_acceptee"):
+            # Confirmation au premier envoi (docs/42 §2) — mémorisée ensuite (vaut
+            # « ne plus demander », pas de case à cocher dédiée en v1).
+            confirme = dialogues.confirmer(
+                self, titre="Générer le CR via Mistral ?",
+                description="Cet enregistrement va être envoyé aux serveurs Mistral (UE) : "
+                "la transcription locale si elle existe, sinon l'audio retenu pour "
+                "transcription. Continuer ?",
+                label_action="Envoyer", icone="notebook", intention=dialogues.Intention.ACCENT)
+            if not confirme:
+                return
+            self._config.set("mistral_confidentialite_acceptee", True)
+            self._config.sauvegarder()
+        if not self._gestionnaire_cr_mistral.lancer(chemin):
+            dialogues.avertir(self, titre="CR Mistral", description="Une tâche est déjà en cours.")
+
+    def _cabler_gestionnaire_cr_mistral(self) -> None:
+        if self._gestionnaire_cr_mistral is None:
+            return
+        self._gestionnaire_cr_mistral.demarre.connect(self._sur_cr_mistral_change)
+        self._gestionnaire_cr_mistral.termine.connect(self._sur_cr_mistral_termine)
+        self._gestionnaire_cr_mistral.echoue.connect(self._sur_cr_mistral_echoue)
+
+    def _sur_cr_mistral_change(self, *_args) -> None:
+        self._modele.recharger()
+
+    def _sur_cr_mistral_termine(self, _md: object, sortie: Path) -> None:
+        self._modele.recharger()
+        if self.isVisible():
+            ouvrir = dialogues.confirmer(
+                self, titre="CR généré",
+                description=f"Le compte-rendu « {sortie.name} » a été généré.",
+                label_action="Ouvrir", icone="notebook", intention=dialogues.Intention.ACCENT)
+            if ouvrir:
+                self._ouvrir(sortie)
+
+    def _sur_cr_mistral_echoue(self, _md: object, message: str) -> None:
+        self._modele.recharger()
+        if self.isVisible():
+            dialogues.avertir(self, titre="CR Mistral — échec",
+                              description=f"La génération du CR a échoué :\n{message}")
 
     # ── Suppressions ────────────────────────────────────────────────────────────
 
