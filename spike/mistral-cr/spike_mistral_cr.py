@@ -205,24 +205,27 @@ _CODES_FORMAT = {400, 415, 422}
 
 def transcrire_avec_repli(client: httpx.Client, chemin: Path, modele: str,
                           langue: str | None, context_bias: list[str], offset: float,
-                          tmp: Path, tentatives: int = 3) -> tuple[dict, bool]:
+                          tmp: Path, tentatives: int = 3,
+                          repli_wav: bool = True) -> tuple[dict, bool]:
     """Transcrit une unité, avec reprises réseau + repli WAV si le format est refusé.
 
     Retourne (payload, format_origine_ok). `format_origine_ok` = True si le fichier a
     été accepté tel quel (sans transcodage), None-équivalent False sinon.
+    `repli_wav=False` (mode diagnostic --pas-de-decoupage) : on remonte l'erreur brute
+    au lieu de transcoder, pour observer la vraie réponse de l'API.
     """
     cible, format_ok = chemin, True
     for essai in range(1, tentatives + 1):
         try:
             return transcrire_unite(client, cible, modele, langue, context_bias, offset), format_ok
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in _CODES_FORMAT and format_ok:
+            if repli_wav and e.response.status_code in _CODES_FORMAT and format_ok:
                 log(f"    format refusé ({e.response.status_code}) → repli transcodage WAV 16k")
                 wav = tmp / (cible.stem + "_16k.wav")
                 transcoder_wav16k(cible, wav)
                 cible, format_ok = wav, False
                 continue  # réessaie immédiatement en WAV
-            raise  # autre erreur HTTP (auth, quota…) : on remonte
+            raise  # autre erreur HTTP (auth, quota, durée…) : on remonte
         except httpx.TransportError as e:  # broken pipe, read/connect error, veille…
             if essai == tentatives:
                 raise
@@ -242,11 +245,18 @@ class Unite:
     index: int  # ordre au sein de la piste (pour recoller texte + segments)
 
 
-def preparer_unites(chemin: Path, locuteur: str, limite_s: int, tmp: Path
-                    ) -> tuple[float, list[Unite]]:
-    """Découpe si nécessaire et renvoie (minutes, unités). Aucun appel réseau ici."""
+def preparer_unites(chemin: Path, locuteur: str, limite_s: int, tmp: Path,
+                    decouper: bool = True) -> tuple[float, list[Unite]]:
+    """Découpe si nécessaire et renvoie (minutes, unités). Aucun appel réseau ici.
+
+    `decouper=False` (--pas-de-decoupage) : envoie TOUJOURS le fichier entier en 1 unité,
+    même > limite → sert à tester si Voxtral accepte une longue piste sans découpage.
+    """
     duree = duree_secondes(chemin)
     log(f"{locuteur} : {chemin.name} ({duree / 60:.1f} min)")
+    if not decouper:
+        log(f"  → 1 unité SANS découpage ({chemin.suffix}, {duree / 60:.1f} min) — test direct")
+        return duree / 60, [Unite(locuteur, chemin, 0.0, 0)]
     if duree <= limite_s:
         log(f"  → 1 unité (upload direct {chemin.suffix})")
         return duree / 60, [Unite(locuteur, chemin, 0.0, 0)]
@@ -260,11 +270,12 @@ def preparer_unites(chemin: Path, locuteur: str, limite_s: int, tmp: Path
 
 def transcrire_unite_chrono(client: httpx.Client, u: Unite, modele: str,
                             langue: str | None, context_bias: list[str],
-                            tmp: Path) -> tuple[Unite, dict, bool, float]:
+                            tmp: Path, repli_wav: bool = True
+                            ) -> tuple[Unite, dict, bool, float]:
     """Transcrit une unité (avec reprises/repli) en la chronométrant. Pour le pool."""
     t = time.perf_counter()
     payload, format_ok = transcrire_avec_repli(
-        client, u.chemin, modele, langue, context_bias, u.offset, tmp)
+        client, u.chemin, modele, langue, context_bias, u.offset, tmp, repli_wav=repli_wav)
     dt = time.perf_counter() - t
     log(f"  ⇠ [{u.locuteur} #{u.index + 1}] {dt:.1f}s "
         f"({len(payload.get('text') or '')} car.)")
@@ -347,6 +358,9 @@ def main() -> int:
     ap.add_argument("--modele-cr", default="mistral-small-latest")
     ap.add_argument("--limite-min", type=int, default=14, help="taille max d'un segment (min)")
     ap.add_argument("--paralleles", type=int, default=4, help="appels transcription simultanés")
+    ap.add_argument("--pas-de-decoupage", action="store_true",
+                    help="envoyer chaque piste entière sans découpage (test de la limite Voxtral) ; "
+                         "désactive aussi le repli WAV pour voir la réponse brute de l'API")
     ap.add_argument("--sortie", type=Path, default=Path(__file__).parent / "sorties")
     args = ap.parse_args()
 
@@ -371,18 +385,23 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="spike_mistral_") as tmpdir:
         tmp = Path(tmpdir)
         # Découpage (local, rapide) puis fan-out : toutes les unités des 2 pistes en parallèle.
-        min_moi, u_moi = preparer_unites(args.moi, "Moi", limite_s, tmp)
-        min_part, u_part = preparer_unites(args.participants, "Participants", limite_s, tmp)
+        decouper = not args.pas_de_decoupage
+        min_moi, u_moi = preparer_unites(args.moi, "Moi", limite_s, tmp, decouper=decouper)
+        min_part, u_part = preparer_unites(args.participants, "Participants", limite_s, tmp,
+                                           decouper=decouper)
         toutes = u_moi + u_part
         par_locuteur: dict[str, dict[int, tuple[dict, bool]]] = {"Moi": {}, "Participants": {}}
 
         with httpx.Client(base_url=BASE_URL, headers=headers, timeout=timeout) as client:
             t_trans = time.perf_counter()
+            if args.pas_de_decoupage:
+                log("mode --pas-de-decoupage : pistes entières, repli WAV désactivé (réponse brute)")
             log(f"transcription de {len(toutes)} unité(s), {args.paralleles} en parallèle …")
             with concurrent.futures.ThreadPoolExecutor(
                     max_workers=max(1, min(args.paralleles, len(toutes)))) as ex:
                 futs = [ex.submit(transcrire_unite_chrono, client, u,
-                                  args.modele_transcription, langue, context_bias, tmp)
+                                  args.modele_transcription, langue, context_bias, tmp,
+                                  not args.pas_de_decoupage)
                         for u in toutes]
                 try:
                     for fut in concurrent.futures.as_completed(futs):
