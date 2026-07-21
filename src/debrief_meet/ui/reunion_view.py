@@ -30,7 +30,13 @@ from debrief_meet.core.bluemind import association as bluemind_association
 from debrief_meet.core.bluemind.matching import evenements_correspondants
 from debrief_meet.core.bluemind.store import StoreCalendrier
 from debrief_meet.core.config import Config
-from debrief_meet.core.fichiers import chemin_locuteurs, date_heure_reunion, duree_reunion, pistes_audio_existantes
+from debrief_meet.core.fichiers import (
+    chemin_cr_mistral,
+    chemin_locuteurs,
+    date_heure_reunion,
+    duree_reunion,
+    pistes_audio_existantes,
+)
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui import dialogues
@@ -562,7 +568,8 @@ class ReunionView(QWidget):
         self._modele.recharger()
 
     def _supprimer_un(self, chemin: Path) -> None:
-        a_supprimer = [chemin, chemin_locuteurs(chemin), *pistes_audio_existantes(chemin)]
+        a_supprimer = [chemin, chemin_locuteurs(chemin), chemin_cr_mistral(chemin),
+                       *pistes_audio_existantes(chemin)]
         for p in a_supprimer:
             try:
                 if p.exists():

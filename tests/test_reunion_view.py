@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from scipy.io import wavfile
 
 from debrief_meet.core.config import Config
-from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, chemin_locuteurs
+from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, chemin_cr_mistral, chemin_locuteurs
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.ui import reunion_view as rv_module
 from debrief_meet.ui.reunion_view import ReunionView
@@ -265,6 +265,19 @@ def test_tout_supprimer_retire_md_locuteurs_audio(qapp, machine, tmp_path, monke
     assert not md.exists()
     assert not loc.exists()
     assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
+
+
+def test_tout_supprimer_retire_aussi_le_cr_mistral(qapp, machine, tmp_path, monkeypatch):
+    """Le CR Mistral (`*_CR.md`, docs/42) est un dérivé de la réunion — il doit
+    disparaître avec elle, comme le débrief locuteurs."""
+    md = _reunion_avec_audio(tmp_path)
+    cr = chemin_cr_mistral(md)
+    cr.write_text("# CR — Sujet — 2026-01-01", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._tout_supprimer_un(md)
+    assert not md.exists()
+    assert not cr.exists()
 
 
 def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch):
