@@ -224,10 +224,17 @@ vit dans `ui/`.
 6. **[branche Voxtral uniquement] Fusion** (`fusion.py`) : entrelacer les segments Moi +
    Participants par timestamp → transcript étiqueté `**Moi :**` / `**Participants :**`
    (réutiliser `core/fichiers.py::_entrelaces`, l.455).
+   → **Récupération en local** : si la réunion était un **placeholder « audio seul »**
+   (transcription pas encore faite), la transcription Voxtral est **réécrite dans le `.md`
+   local** (remplace le placeholder), avec la mention « Transcription générée par Voxtral
+   (Mistral) » et préservation du titre + de la durée. On **n'écrase jamais** un transcript
+   local déjà présent (cas forçage Voxtral).
 7. **Rédaction CR** (`cr.py`, commun aux deux branches) : `POST /v1/chat/completions` avec
    un modèle **texte** (`mistral_modele_cr`), message = `prompts.contenu_actif(...)` +
-   transcript. `cr.py` prend **du texte en entrée** (source-agnostique) → même code que la
-   source vienne du local ou de Voxtral.
+   transcript, **+ éléments d'association BlueMind s'ils existent** : sujet (= titre de
+   l'événement) et liste des **participants cochés**, injectés dans le prompt pour un CR
+   mieux cadré, quelle que soit la source du transcript. `cr.py` prend **du texte en
+   entrée** (source-agnostique) → même code que la source vienne du local ou de Voxtral.
 8. **Écriture** : `<stem>_CR.md` à côté du `.md`. Rafraîchir l'Historique, proposer
    « Ouvrir » / « Copier ». Logger l'**usage** (source, minutes, tokens) — **jamais de coût**
    (§11).

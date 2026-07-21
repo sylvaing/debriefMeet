@@ -40,6 +40,21 @@ def test_generer_cr_ajoute_le_sujet_si_fourni():
 
 
 @respx.mock
+def test_generer_cr_injecte_les_participants():
+    """Éléments d'association BlueMind (docs/40) — les invités sont passés au CR."""
+    route = respx.post(f"{URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "CR"}}]}))
+    client = ClientMistral(URL, "cle")
+
+    generer_cr(client, "transcript", "prompt", "mistral-small-latest",
+               participants=["Alice Martin", "Bob Durand"])
+
+    corps = route.calls.last.request.content
+    assert b"Participants" in corps
+    assert b"Alice Martin" in corps and b"Bob Durand" in corps
+
+
+@respx.mock
 def test_generer_cr_sans_usage_renvoie_dict_vide():
     respx.post(f"{URL}/v1/chat/completions").mock(
         return_value=httpx.Response(200, json={"choices": [{"message": {"content": "CR"}}]}))

@@ -14,6 +14,7 @@ Dans tous les cas, la rédaction du CR (`cr.py`) est identique (source-agnostiqu
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,9 @@ from debrief_meet.core.fichiers import (
     chemin_cr_mistral,
     chemin_locuteurs,
     chemins_audio_reunion,
+    date_heure_reunion,
+    definir_duree,
+    duree_reunion,
     titre_reunion,
     transcription_en_attente,
 )
@@ -34,6 +38,29 @@ if TYPE_CHECKING:
     from debrief_meet.core.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+# Mention ajoutée au .md quand la transcription vient de Voxtral (et non du moteur local).
+_NOTE_VOXTRAL = "> Transcription générée par Voxtral (Mistral) depuis l'audio retenu."
+
+
+@dataclass
+class _ResultatVoxtral:
+    transcript: str
+    avec_moi: bool
+    avec_systeme: bool
+
+
+@dataclass
+class _InfosEvenement:
+    """Éléments d'association BlueMind exploités pour la transcription et le CR (§7.5)."""
+    titre: str | None = None
+    noms_invites: list[str] = None  # tous les invités (context_bias transcription)
+    participants: list[str] = None  # invités cochés (injectés dans le prompt CR)
+
+    def __post_init__(self) -> None:
+        self.noms_invites = self.noms_invites or []
+        self.participants = self.participants or []
 
 
 def disponible(config: "Config") -> bool:
@@ -65,16 +92,21 @@ def _lire_transcript_local(chemin_md: Path) -> str | None:
     return texte or None
 
 
-def _context_bias(chemin_md: Path) -> list[str]:
-    """Noms d'invités BlueMind (sidecar `<stem>.bluemind.json`, §7.5) — [] si absent."""
+def _infos_evenement(chemin_md: Path) -> _InfosEvenement:
+    """Éléments d'association BlueMind (sidecar `<stem>.bluemind.json`, docs/40) —
+    titre de l'événement + invités. Vide si aucune association ou module absent."""
     try:
         from debrief_meet.core.bluemind import association
     except ImportError:
-        return []
+        return _InfosEvenement()
     asso = association.lire(chemin_md)
     if asso is None:
-        return []
-    return [i.nom for i in asso.invites if i.nom]
+        return _InfosEvenement()
+    return _InfosEvenement(
+        titre=asso.titre or None,
+        noms_invites=[i.nom for i in asso.invites if i.nom],
+        participants=[i.nom for i in asso.invites if i.coche and i.nom],
+    )
 
 
 def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
@@ -84,7 +116,8 @@ def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
     return transcrire_fichier(client, piste, modele, langue, context_bias)
 
 
-def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Config") -> str:
+def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Config",
+                            context_bias: list[str]) -> _ResultatVoxtral:
     """Branche repli (§4 étapes 5-6) : transcrit les pistes retenues puis les fusionne."""
     base_moi, base_systeme = chemins_audio_reunion(chemin_md)
     piste_moi = _localiser_piste(base_moi)
@@ -108,13 +141,35 @@ def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Con
 
     langue = config.get("langue")
     modele = config.get("mistral_modele_transcription")
-    context_bias = _context_bias(chemin_md)
 
     res_moi = _transcrire_si_utile(client, piste_moi, analyse_moi, modele, langue, context_bias)
     res_systeme = _transcrire_si_utile(client, piste_systeme, analyse_systeme, modele, langue, context_bias)
     if res_moi is None and res_systeme is None:
         raise ErreurMistral("Transcription Mistral : aucune piste exploitable (silence ou échec).")
-    return fusionner(res_moi, res_systeme)
+    return _ResultatVoxtral(
+        transcript=fusionner(res_moi, res_systeme),
+        avec_moi=res_moi is not None and bool(res_moi.texte.strip()),
+        avec_systeme=res_systeme is not None and bool(res_systeme.texte.strip()),
+    )
+
+
+def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
+    """Réécrit le `.md` local avec la transcription Voxtral (remplace le placeholder
+    « audio seul »), en mentionnant que la transcription vient de Voxtral. Préserve le
+    titre et la durée. Miroir de `core.transcription_differee._ecrire_md`."""
+    dh = date_heure_reunion(chemin_md)
+    titre = titre_reunion(chemin_md) or (
+        f"Réunion — {dh.strftime('%Y-%m-%d %H:%M')}" if dh else chemin_md.stem)
+    duree = duree_reunion(chemin_md)              # lu AVANT réécriture (le commentaire est perdu)
+    lignes = [f"# {titre}", "", _NOTE_VOXTRAL]
+    if not res.avec_systeme:
+        lignes.append("> ⚠️ Audio système non disponible — transcription micro uniquement.")
+    if not res.avec_moi:
+        lignes.append("> ⚠️ Microphone non disponible — transcription audio système uniquement.")
+    lignes += ["", "---", "", res.transcript]
+    chemin_md.write_text("\n".join(lignes).rstrip() + "\n", encoding="utf-8")
+    if duree is not None:
+        definir_duree(chemin_md, duree)
 
 
 def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
@@ -128,19 +183,28 @@ def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
         raise ErreurMistral("Aucune clé API Mistral configurée (Préférences › Remote IA).")
 
     prompt = contenu_actif(config.get("prompts"), config.get("prompt_actif")) or CR_SIMPLE_CONTENU
+    infos = _infos_evenement(chemin_md)                       # éléments d'association (§7.5)
+    sujet = infos.titre or titre_reunion(chemin_md)
     forcer_voxtral = config.get("mistral_source_transcription") == "voxtral"
+    # « transcription pas encore réalisée » = placeholder audio-seul : dans ce cas la
+    # transcription Voxtral est réécrite dans le .md local (avec mention Voxtral).
+    en_attente = transcription_en_attente(chemin_md)
     transcript = None if forcer_voxtral else _lire_transcript_local(chemin_md)
     source = "local"
 
     with ClientMistral(config.get("mistral_base_url"), cle_api) as client:
         if transcript is None:
-            transcript = _transcrire_via_voxtral(chemin_md, client, config)
+            res = _transcrire_via_voxtral(chemin_md, client, config, infos.noms_invites)
+            transcript = res.transcript
             source = "voxtral"
+            if en_attente:
+                _ecrire_transcript_local(chemin_md, res)      # récupère la transcription en local
         cr_markdown, _usage_cr = generer_cr(
             client, transcript, prompt, config.get("mistral_modele_cr"),
-            sujet=titre_reunion(chemin_md))
+            sujet=sujet, participants=infos.participants)
 
     chemin_cr = chemin_cr_mistral(chemin_md)
     chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")
-    logger.info("CR Mistral généré (source=%s) : %s", source, chemin_cr)
+    logger.info("CR Mistral généré (source=%s, %d invité(s)) : %s",
+                source, len(infos.participants), chemin_cr)
     return chemin_cr

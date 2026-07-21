@@ -111,6 +111,43 @@ def test_repli_voxtral_si_placeholder_audio_seul(tmp_path, config_tmp):
     assert b"transcription voxtral" in route_cr.calls.last.request.content
 
 
+@respx.mock
+def test_voxtral_reecrit_le_transcript_local_avec_mention(tmp_path, config_tmp):
+    """Placeholder « audio seul » → la transcription Voxtral est récupérée dans le .md
+    local, avec la mention Voxtral et sans le marqueur d'attente."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, md.stem, "moi")
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "compte rendu de la réunion"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    contenu = md.read_text(encoding="utf-8")
+    assert MARQUEUR_EN_ATTENTE not in contenu           # placeholder remplacé
+    assert "Voxtral" in contenu                          # mention de la source
+    assert "compte rendu de la réunion" in contenu       # transcription récupérée
+    assert "**Moi :**" in contenu
+
+
+@respx.mock
+def test_forcer_voxtral_n_ecrase_pas_le_transcript_local_existant(tmp_path, config_tmp):
+    """Si un transcript local existe déjà (pas un placeholder) et qu'on force Voxtral,
+    le .md local ne doit PAS être écrasé — on ne détruit pas la transcription locale."""
+    md = _md_avec_transcript(tmp_path)
+    original = md.read_text(encoding="utf-8")
+    _piste(tmp_path, md.stem, "moi")
+    _configurer(config_tmp, mistral_source_transcription="voxtral")
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "voxtral"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert md.read_text(encoding="utf-8") == original    # transcript local intact
+
+
 def test_repli_voxtral_leve_si_aucune_piste(tmp_path, config_tmp):
     md = _md_placeholder(tmp_path)
     _configurer(config_tmp)
@@ -179,3 +216,50 @@ def test_echec_cr_n_ecrit_rien(tmp_path, config_tmp):
         pipeline.generer_cr_reunion(md, config_tmp)
 
     assert not md.with_name(md.stem + "_CR.md").exists()
+
+
+# ── Association BlueMind exploitée (docs/40, §7.5) ───────────────────────────────
+
+def _ecrire_association(md, titre="Point produit hebdo",
+                        invites=(("Alice Martin", True), ("Bob Durand", True), ("Carol Absente", False))):
+    from debrief_meet.core.bluemind import association
+    asso = association.Association(
+        event_uid="evt-1", cal_uid="cal-1", titre=titre, debut="2026-01-01T10:00:00",
+        invites=[association.InviteAssocie(nom=nom, email=f"{nom}@x.fr", part_status="accepted",
+                                           organisateur=False, coche=coche)
+                 for nom, coche in invites])
+    association.ecrire(md, asso)
+
+
+@respx.mock
+def test_association_injecte_sujet_et_participants_dans_le_cr(tmp_path, config_tmp):
+    """Titre de l'événement + invités cochés → passés au CR (indépendant de la source)."""
+    md = _md_avec_transcript(tmp_path)
+    _ecrire_association(md)
+    _configurer(config_tmp)
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    corps = route_cr.calls.last.request.content
+    assert b"Point produit hebdo" in corps           # sujet = titre de l'événement
+    assert b"Alice Martin" in corps and b"Bob Durand" in corps
+    assert b"Carol Absente" not in corps             # invité NON coché exclu des participants
+
+
+@respx.mock
+def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, config_tmp):
+    """En repli Voxtral, les noms d'invités (tous) servent de context_bias (orthographe)."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, md.stem, "moi")
+    _ecrire_association(md)
+    _configurer(config_tmp)
+    route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    corps = route_t.calls.last.request.content
+    assert corps.count(b'name="context_bias"') == 3   # tous les invités (même non cochés)
+    assert b"Alice Martin" in corps and b"Carol Absente" in corps
