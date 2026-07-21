@@ -6,10 +6,13 @@
 > Branche de travail : `claude/mistral-api-transcription-cr-f15d4a` (déjà créée, worktree dédié).
 > Code du spike : `spike/mistral-cr/` (`spike_mistral_cr.py` + `README.md`).
 > **Décisions de cadrage validées avec Sylvain (2026-07-20) :**
-> 1. **Transcription d'abord** (2 étapes) — l'audio Opus passe par l'endpoint transcription
->    Voxtral (facturé à la minute), puis le texte part vers un modèle *texte* pour le CR.
->    Pas de tout-en-un audio→CR (plus cher en tokens audio, limité à ~20 min, perd la
->    séparation Moi/Participants).
+> 1. **CR adaptatif (tranché après spike)** — par défaut le CR est rédigé à partir du
+>    **transcript local existant** (rapide ~15 s, ~0,001 $, seul le *texte* part au cloud).
+>    **Repli automatique** sur la **transcription Voxtral** (endpoint à la minute) quand il
+>    n'y a pas de transcript local (mode enregistrement-seul). **Option avancée** pour
+>    forcer Voxtral (local médiocre, ou envie de diarisation). Dans tous les cas, l'étape CR
+>    utilise un modèle *texte* Mistral — **jamais** le chat multimodal audio→CR (plus cher
+>    en tokens audio, limité à ~20 min, perd la séparation Moi/Participants).
 > 2. **Ajout strictement optionnel** — le moteur de transcription **local reste le défaut**
 >    et le mode 100 % hors-ligne intact. Mistral **n'est PAS** une implémentation de
 >    `MoteurTranscription` et **ne touche pas** `platform/factory.py`. C'est un service
@@ -103,20 +106,28 @@ externe. Chaque réunion conserve par ailleurs **deux pistes audio Opus** retenu
 (`<stem>_moi.opus`, `<stem>_systeme.opus`, mono 16 kHz, 24 kbps — cf. `core/fichiers.py`).
 
 Objectif : ajouter un chemin **cloud Mistral** qui, à la demande, transforme une réunion
-enregistrée en **compte-rendu Markdown fini**, en **deux étapes** :
+enregistrée en **compte-rendu Markdown fini**. L'étape CR est toujours la même (modèle
+*texte* + prompt CR) ; ce qui varie, c'est **d'où vient le transcript** — logique
+**adaptative** (décision 1) :
 
-1. **Transcription** des pistes Opus via l'endpoint transcription Voxtral de Mistral
-   (facturé à la minute, pas au token → le plus économique pour la partie audio) ;
-2. **Rédaction du CR** en envoyant la transcription fusionnée + le **prompt CR actif**
-   (`prompts.contenu_actif`) à un modèle *texte* Mistral.
+1. **Source du transcript** :
+   - **par défaut → le transcript local** déjà produit par l'app (le `.md` de la réunion,
+     ou `<stem>_locuteurs.md` s'il existe) : rapide (~15 s), quasi gratuit (~0,001 $), et
+     **seul le texte** part au cloud (pas l'audio) ;
+   - **repli automatique → transcription Voxtral** des pistes Opus (endpoint à la minute)
+     quand il **n'y a pas** de transcript local exploitable (mode enregistrement-seul) ;
+   - **forçable** (option avancée) vers Voxtral si le local est médiocre / pour diariser.
+2. **Rédaction du CR** : transcript (quelle qu'en soit la source) + **prompt CR actif**
+   (`prompts.contenu_actif`) → modèle *texte* Mistral.
 
 Résultat écrit dans un fichier `<stem>_CR.md` à côté de la réunion.
 
-> **Note sur « minimum de token ».** Un fichier Opus compact ne réduit pas les tokens :
-> l'audio est facturé à la **durée**, pas au poids du fichier. Le coût minimal pour la
-> partie audio = l'**endpoint transcription** (facturation à la minute, ~0,003 $/min),
-> pas le chat multimodal (qui facture des *tokens audio*, plus cher). D'où l'architecture
-> en deux étapes retenue.
+> **Note sur « minimum de token » et coût.** Le CR (LLM texte) est **quasi gratuit**
+> (~0,001 $) ; le coût, quand on transcrit via Voxtral, vient des **minutes d'audio**
+> (~0,003 $/min, facturation à la durée — pas au poids du fichier ni au token). Réutiliser
+> le transcript local **supprime** ce coût. Quand une transcription cloud est nécessaire,
+> on passe par l'**endpoint transcription** (à la minute), **jamais** le chat multimodal
+> audio→CR (qui facture des *tokens audio*, plus cher).
 
 ### 1.1 Pourquoi ce n'est PAS un `MoteurTranscription`
 
@@ -178,35 +189,40 @@ vit dans `ui/`.
 
 ## 4. Flux de bout en bout (le bouton « Générer le CR »)
 
-1. **Pré-conditions.** Clé API configurée (sinon bouton absent). Retrouver les 2 pistes de
-   la réunion via `core.fichiers.chemins_audio_reunion(stem)` → `_moi.opus`/`_systeme.opus`
-   (repli `.wav` s'il n'y a pas d'Opus). Si aucune piste retenue → message « pas d'audio
-   conservé pour cette réunion » (cas `retention_audio` off).
-2. **Confirmation confidentialité** (§2) au premier envoi.
-3. **Worker de fond démarré** (`generateur_cr_mistral.py`, QThread) avec `QProgressDialog`
-   (étapes : découpage → transcription Moi → transcription Participants → rédaction CR).
-4. **Découpage** (`decoupage.py`) : pour chaque piste, si durée > ~14 min, découper en
-   segments (§10). Sinon un seul segment.
-5. **Transcription** (`transcription.py`) : chaque segment → `client.audio.transcriptions`
-   (`voxtral-mini-latest`), `language` = config `langue`, `context_bias` = noms d'invités
-   BlueMind si le sidecar `<stem>.bluemind.json` existe (§7.5 — synergie docs/40),
-   `timestamp_granularities=["segment"]`. On récupère `text` + `segments` (avec offset de
-   temps réappliqué par segment découpé).
-   → **En visio, on n'active PAS `diarize`** : la séparation locuteurs vient déjà des deux
-   pistes (Moi = micro, Participants = système). **En présentiel** (piste système
-   silencieuse, cf. spike), tout est sur le micro → activer `diarize` ou la diarisation
-   pyannote si on veut des étiquettes de locuteur (§14). Détecter/sauter les pistes vides (§7.4).
-6. **Fusion** (`fusion.py`) : entrelacer les segments des deux pistes par timestamp en un
-   transcript étiqueté `**Moi :**` / `**Participants :**` (réutiliser la logique de
-   `core/fichiers.py::_entrelaces`, l.455 — factoriser si pertinent).
-7. **Rédaction CR** (`cr.py`) : `client.chat.completions` avec un modèle **texte**
-   (`mistral_modele_cr`), message construit à partir de `prompts.contenu_actif(...)` +
-   transcript fusionné. `cr.py` prend **du texte en entrée** (source-agnostique) → réutilisable
-   plus tard pour le transcript local (extension §14).
-8. **Écriture** : `<stem>_CR.md` à côté du `.md` de la réunion. Rafraîchir la liste
-   Historique, proposer « Ouvrir » / « Copier ». Logger le coût (§11).
-9. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
-   réseau, format refusé, durée dépassée), rien n'est écrit sur disque à moitié.
+1. **Pré-conditions.** Clé API configurée (sinon bouton absent).
+2. **Choix de la source du transcript** (logique adaptative, décision 1) :
+   - **par défaut** : chercher un **transcript local** — le `.md` de la réunion (ou
+     `<stem>_locuteurs.md` si présent). Non vide → c'est la source, **on saute la
+     transcription cloud** (pas d'upload audio).
+   - **sinon** (pas de `.md`, ou vide → enregistrement-seul) : **repli Voxtral**. Retrouver
+     les pistes via `core.fichiers.chemins_audio_reunion(stem)` → `_moi.opus`/`_systeme.opus`
+     (repli `.wav`). Aucune piste ni transcript → message « rien à exploiter pour cette
+     réunion ».
+   - **forçage Voxtral** (option avancée, §9) : ignore le transcript local et re-transcrit.
+3. **Confirmation confidentialité** (§2) au premier envoi — le message précise ce qui part
+   (texte seul, ou audio si transcription Voxtral).
+4. **Worker de fond** (`generateur_cr_mistral.py`, QThread) + `QProgressDialog`.
+5. **[branche Voxtral uniquement] Découpage** (`decoupage.py`) : par piste, si durée
+   > ~14 min, segments Opus par copie (§10). Sinon 1 unité.
+6. **[branche Voxtral uniquement] Transcription** (`transcription.py`) : chaque unité →
+   `POST /v1/audio/transcriptions` (`voxtral-mini-latest`), `language` = config `langue`,
+   `context_bias` = noms d'invités BlueMind si `<stem>.bluemind.json` existe (§7.5),
+   `timestamp_granularities=["segment"]` ; offset réappliqué par segment (§10). **En
+   séquentiel** (§7.3). Détecter/sauter les pistes silencieuses (§7.4).
+   → **En visio, PAS de `diarize`** (séparation via les 2 pistes). **En présentiel** (piste
+   système silencieuse), tout est sur le micro → `diarize` ou diarisation pyannote si on
+   veut des étiquettes de locuteur (§14).
+7. **[branche Voxtral uniquement] Fusion** (`fusion.py`) : entrelacer les segments Moi +
+   Participants par timestamp → transcript étiqueté `**Moi :**` / `**Participants :**`
+   (réutiliser `core/fichiers.py::_entrelaces`, l.455).
+8. **Rédaction CR** (`cr.py`, commun aux deux branches) : `POST /v1/chat/completions` avec
+   un modèle **texte** (`mistral_modele_cr`), message = `prompts.contenu_actif(...)` +
+   transcript. `cr.py` prend **du texte en entrée** (source-agnostique) → même code que la
+   source vienne du local ou de Voxtral.
+9. **Écriture** : `<stem>_CR.md` à côté du `.md`. Rafraîchir l'Historique, proposer
+   « Ouvrir » / « Copier ». Logger le coût (§11 — nul/quasi-nul en branche local).
+10. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
+    429, réseau, format refusé, durée dépassée), rien d'écrit à moitié sur disque.
 
 ## 5. Détails API Mistral (vérifiés 2026-07-20)
 
@@ -316,11 +332,15 @@ par le projet) ; le documenter, ne pas sur-ingénier un coffre en v1.
 ```python
 "mistral_cle_api": "",                        # secret ; vide = interco invisible
 "mistral_base_url": "https://api.mistral.ai", # surchargeable (tests/proxy) ; validée
+"mistral_source_transcription": "auto",       # "auto" (local sinon Voxtral) | "voxtral" (forcer)
 "mistral_modele_transcription": "voxtral-mini-latest",
 "mistral_modele_cr": "mistral-small-latest",
 "mistral_duree_max_min": 180,                 # garde-fou (minutes) contre envoi accidentel géant
 "mistral_confidentialite_acceptee": False,    # posé à True après confirmation §2
 ```
+
+`mistral_source_transcription` porte la décision 1 : `"auto"` = transcript local s'il
+existe, repli Voxtral sinon (défaut) ; `"voxtral"` = toujours re-transcrire via Voxtral.
 
 `set`/`get` valident déjà contre `_DEFAUTS` et la migration JSON est générique
 (cf. `config.py` l.111). Rien d'autre à câbler côté persistance.
@@ -334,6 +354,10 @@ comme le reste) :
 - Champ **base URL** (avancé, repliable), validé.
 - **Combo modèle transcription** (`voxtral-mini-latest`) et **combo modèle CR**
   (`mistral-small/medium/large-latest`).
+- **Source du transcript** (`mistral_source_transcription`) : case/combo « Réutiliser la
+  transcription locale quand elle existe (recommandé) » vs « Toujours transcrire via
+  Voxtral ». Aide : le local est instantané et quasi gratuit ; Voxtral n'est utile qu'en
+  enregistrement-seul ou si le local est médiocre.
 - **Bouton « Tester la connexion »** → `testeur_connexion_mistral.py` (miroir de
   `testeur_connexion_bluemind.py`) : ping léger (ex. `GET /v1/models`) en worker, message
   vert/rouge.
@@ -428,15 +452,12 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 - **IDs de modèles / tarifs** à reconfirmer sur les docs Mistral au moment du code (§5).
 - **Coût accidentel** : garde-fou `mistral_duree_max_min` + confirmation avant envoi.
 
-## 14. Extensions / arbitrages à reconsidérer (éclairés par le spike)
+## 14. Extensions futures (hors périmètre v1)
 
-- **⭐ Réutiliser la transcription locale pour le CR (fortement recommandé).** Le spike
-  montre que la transcription cloud est **la** partie lente (~3 min) et coûteuse (~99 % du
-  coût). Or l'app a déjà un transcript local (fait en direct). Comme `cr.py` est
-  source-agnostique, un mode « CR depuis le transcript local » donnerait le CR en **~15 s
-  pour ~0,001 $**, sans upload ni rate-limit. → envisager d'en faire le **défaut**, la
-  transcription Voxtral devenant l'option (enregistrement-seul, ou qualité Voxtral voulue).
-  (Décision produit à valider avec Sylvain.)
+> **Réutiliser la transcription locale = tranché (décision 1), plus une extension.** C'est
+> le **défaut** de la v1 : CR depuis le transcript local, repli Voxtral si absent. Voir §1,
+> §4, §8 (`mistral_source_transcription`). Ce qui suit reste hors périmètre v1 :
+
 - **Diarisation en présentiel** : quand la piste système est silencieuse (réunion physique),
   tout est sur le micro → activer `diarize` (Voxtral) ou la diarisation pyannote (docs/07)
   pour étiqueter les intervenants. Sinon le CR n'a pas de séparation de locuteurs fiable.
@@ -450,8 +471,10 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 
 - `core/mistral/` **pur Python** (aucun import Qt ni OS-specific).
 - Fonctionnalité **invisible** sans clé API ; confirmation confidentialité au 1ᵉʳ envoi.
+- **Défaut adaptatif** (décision 1) : CR depuis le transcript local quand il existe ;
+  repli Voxtral si absent ; forçage Voxtral via `mistral_source_transcription="voxtral"`.
 - Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
-  clé réelle (validation manuelle Sylvain).
+  clé réelle (validation manuelle Sylvain) — testé sur les deux branches (local et Voxtral).
 - Séparation Moi/Participants préservée dans le CR (via les 2 pistes, sans `diarize`).
 - Coût loggé à chaque génération.
 - `make test` **vert sans réseau** (existant + nouveaux tests) ; intégration gated verte
