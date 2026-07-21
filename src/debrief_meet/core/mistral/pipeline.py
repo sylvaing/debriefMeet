@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from debrief_meet.core.fichiers import (
+    chemin_cr_mistral,
     chemin_locuteurs,
     chemins_audio_reunion,
     titre_reunion,
@@ -139,7 +140,7 @@ def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
             client, transcript, prompt, config.get("mistral_modele_cr"),
             sujet=titre_reunion(chemin_md))
 
-    chemin_cr = chemin_md.with_name(chemin_md.stem + "_CR.md")
+    chemin_cr = chemin_cr_mistral(chemin_md)
     chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")
     logger.info("CR Mistral généré (source=%s) : %s", source, chemin_cr)
     return chemin_cr

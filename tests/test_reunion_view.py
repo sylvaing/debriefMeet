@@ -445,6 +445,10 @@ def test_cr_mistral_termine_propose_ouvrir(qapp, machine, tmp_path, monkeypatch)
     monkeypatch.setattr(vue, "_ouvrir", lambda c: ouverts.append(c))
     vue._sur_cr_mistral_termine(md, sortie)
     assert ouverts == [sortie]
+    # Le CR généré ne doit PAS apparaître comme une ligne fantôme dans l'Historique
+    # (sans date/durée, impossible à associer ou diariser) — cf. core/fichiers.py
+    # lister_enregistrements, qui l'exclut comme les fichiers _locuteurs.md.
+    assert vue._modele.rowCount() == 1
 
 
 def test_cr_mistral_echoue_affiche_message(qapp, machine, tmp_path, monkeypatch):
