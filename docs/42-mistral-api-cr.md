@@ -154,9 +154,10 @@ Au même rang que la règle d'or des couches :
 - **Toute I/O réseau vit dans un worker en tâche de fond** (jamais le thread UI). Comme
   l'action est **déclenchée par l'utilisateur**, les erreurs s'affichent clairement **au
   clic** (contrairement à BlueMind qui est silencieux) : message actionnable + log.
-- **Coût maîtrisé.** Chaque génération logge minutes audio transcrites, tokens CR in/out
-  et coût estimé (cf. §11). Un garde-fou de durée max (réglable) évite les envois géants
-  accidentels.
+- **Aucune notion de coût dans l'app.** L'application n'affiche/loggue **jamais** de
+  prix/coût/tarif (€, $) — ni UI, ni didacticiel, ni logs (§11). Observabilité = usage
+  neutre (minutes audio, tokens). Un garde-fou de **durée max** (réglable) évite les envois
+  géants accidentels.
 
 ## 3. Architecture
 
@@ -168,8 +169,8 @@ core/mistral/                 ← pur Python : aucun import OS-specific ni Qt (r
 ├── cr.py                     # generer_cr(transcription, prompt, modele) → markdown (source-agnostique)
 ├── decoupage.py              # découpe Opus > limite en segments ≤ 14 min par COPIE ffmpeg (pas de ré-encodage)
 ├── fusion.py                 # entrelace les segments Moi + Participants par timestamp → transcript étiqueté
-├── pipeline.py               # orchestration bout-en-bout (2 pistes → CR → <stem>_CR.md)
-└── couts.py                  # estimation coût (minutes audio, tokens) pour le log
+└── pipeline.py               # orchestration bout-en-bout (2 pistes → CR → <stem>_CR.md)
+                              # (PAS de module de coût : aucune notion de prix dans l'app, §11)
 
 ui/
 ├── preferences_view.py       # + section « Remote IA » (avant Journalisation), extensible — §9.1
@@ -222,7 +223,8 @@ vit dans `ui/`.
    transcript. `cr.py` prend **du texte en entrée** (source-agnostique) → même code que la
    source vienne du local ou de Voxtral.
 9. **Écriture** : `<stem>_CR.md` à côté du `.md`. Rafraîchir l'Historique, proposer
-   « Ouvrir » / « Copier ». Logger le coût (§11 — nul/quasi-nul en branche local).
+   « Ouvrir » / « Copier ». Logger l'**usage** (source, minutes, tokens) — **jamais de coût**
+   (§11).
 10. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
     429, réseau, format refusé, durée dépassée), rien d'écrit à moitié sur disque.
 
@@ -316,8 +318,9 @@ Segments **Opus** (`.ogg`, copie sans ré-encodage) dans le dossier scratch/temp
 ### 7.4 Piste vide / silencieuse — CAS RÉEL confirmé
 Confirmé par le spike : la piste système était à **−91 dB (silence numérique total)** →
 Voxtral a renvoyé **0 caractère**. Détecter en amont (durée nulle, RMS ≈ silence, ou `text`
-vide) et **ne pas envoyer** / étiqueter la piste comme absente — **économise la moitié du
-coût en présentiel** et évite d'ajouter du vide au CR. Ne pas planter la fusion.
+vide) et **ne pas envoyer** / étiqueter la piste comme absente — évite de transcrire du
+silence (moitié des minutes audio en présentiel) et d'ajouter du vide au CR. Ne pas planter
+la fusion.
 
 ### 7.5 Synergie BlueMind (context_bias)
 Si `<stem>.bluemind.json` existe (réunion associée à un événement, docs/40), extraire les
@@ -376,7 +379,7 @@ empilement de `QGroupBox` par fournisseur suffit.
 - **Bouton « Tester la connexion »** → `testeur_connexion_mistral.py` (miroir de
   `testeur_connexion_bluemind.py`) : ping léger (ex. `GET /v1/models`) en worker, message
   vert/rouge.
-- Ligne d'aide : rappel confidentialité + ordre de grandeur du coût.
+- Ligne d'aide : rappel confidentialité (serveurs UE). **Aucune mention de coût** (§11).
 
 ### 9.2 Historique — action « Générer le CR (Mistral) »
 Dans `reunion_view.py`, à côté des actions existantes (`_copier` l.366, diarization,
@@ -433,26 +436,26 @@ est saisie et testée ».
 - (Optionnel, non requis en v1) découper sur un creux d'énergie proche de la frontière pour
   éviter de couper un mot ; un découpage à durée fixe est acceptable (validé au spike).
 
-## 11. Coût & observabilité (`couts.py`, cf. docs/31)
+## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
-**Données réelles du spike** : 41,3 min d'audio → **~0,125 $** (transcription ~0,124 $ à
-~0,003 $/min ; CR 8902+1255 tokens ≈ **0,001 $**). **Le coût est piloté par les minutes
-d'audio ; le CR (LLM) est négligeable.**
+> **Contrainte transverse (décision Sylvain, 2026-07-20) : l'application ne mentionne
+> JAMAIS de coût, prix, tarif, montant (€, $) — nulle part.** Ni UI, ni didacticiel (§9.4),
+> ni section Préférences (§9.1), ni logs, ni récap de fin de génération. Ne pas coder de
+> module `couts.py`, ne pas afficher de « ~0,12 $ », ne pas convertir minutes/tokens en
+> argent dans le produit.
 
-Estimation pour **1 h de réunion** :
+**Ce que l'app fait à la place** — observabilité d'**usage neutre** (utile au diagnostic,
+sans dimension monétaire) :
+- log (niveau INFO/DEBUG, cf. docs/31) : source du transcript (local/Voxtral), minutes
+  d'audio transcrites par piste, tokens `usage` (in/out) renvoyés par l'API ;
+- récap de fin de génération **sans coût** : p. ex. « CR généré · source : Voxtral ·
+  ~41 min audio » ou, en mode local, « CR généré depuis la transcription locale ».
 
-| Cas | Minutes audio | Transcription | CR | **Total** |
-|-----|---------------|---------------|-----|-----------|
-| Présentiel (1 piste utile, l'autre silencieuse → sautée §7.4) | ~60 | ~0,18 $ | ~0,002 $ | **~0,18 $** (~0,17 €) |
-| Visio (micro + système, 2 pistes pleines) | ~120 | ~0,36 $ | ~0,002 $ | **~0,36 $** (~0,33 €) |
-
-⚠️ Tarif 0,003 $/min **à reconfirmer** sur mistral.ai/pricing avant d'annoncer un chiffre à
-l'utilisateur.
-
-À chaque génération, logger (niveau INFO) : minutes d'audio transcrites (par piste), tokens
-CR `usage` (in/out), **coût estimé** (constantes de tarif documentées, révisées à la main —
-pas d'appel de pricing). Récap discret en fin de génération
-(« CR généré · ~41 min audio · ~0,12 $ »).
+**Analyse de coût — CADRAGE UNIQUEMENT (jamais dans l'app).** Pour info de Sylvain/Sonnet,
+d'après le spike : ~0,003 $/min de transcription, CR négligeable → une réunion d'1 h
+coûterait ~0,18 $ (présentiel, 1 piste) à ~0,36 $ (visio, 2 pistes) ; en mode transcript
+local, quasi nul. Ces chiffres servent à cadrer le garde-fou de durée (`mistral_duree_max_min`)
+et **ne doivent apparaître ni dans l'UI ni dans les logs**.
 
 ## 12. Tests (`tests/test_mistral_*.py`)
 
@@ -519,7 +522,8 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 - Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
   clé réelle (validation manuelle Sylvain) — testé sur les deux branches (local et Voxtral).
 - Séparation Moi/Participants préservée dans le CR (via les 2 pistes, sans `diarize`).
-- Coût loggé à chaque génération.
+- **Aucune notion de coût/prix (€, $) nulle part dans l'app** — UI, didacticiel, logs (§11).
+  Observabilité = usage neutre (minutes audio, tokens).
 - `make test` **vert sans réseau** (existant + nouveaux tests) ; intégration gated verte
   avec `MISTRAL_TEST_API_KEY`.
 - Doc utilisateur mise à jour (mention transcription **cloud** UE + confidentialité) et
