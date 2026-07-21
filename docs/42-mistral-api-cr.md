@@ -406,10 +406,10 @@ est saisie et testée ».
      qu'une fois).
   4. **Coller la clé** dans le champ de l'assistant → écrit dans `mistral_cle_api`.
   5. **Tester** (réutilise `testeur_connexion_mistral.py`) → coche verte / message d'erreur.
-- **Informations à afficher** (sans être bloquant) : mention **serveurs UE / RGPD**, rappel
-  **confidentialité** (audio/texte envoyés au cloud), et **ordre de grandeur du coût**
-  (~0,001 $ en mode transcript local ; ~0,18-0,36 $/h si transcription Voxtral). Mentionner
-  l'existence d'un **tier gratuit** avec limites (cf. §7.3) sans promettre de chiffres.
+- **Informations à afficher** (sans être bloquant) : mention **serveurs UE / RGPD** et
+  rappel **confidentialité** (audio/texte envoyés au cloud). **Ne PAS afficher d'ordre de
+  grandeur de coût** dans le didacticiel. Mentionner l'existence d'un **tier gratuit** avec
+  limites (cf. §7.3) sans promettre de chiffres.
 - **Style** : réutiliser les composants/États de `assistant_diarization.py` (mêmes patterns
   Qt, mêmes helpers de thread, pas de `QObject`/`QTimer` sans parent — docs/26). Textes en
   français, ton pédagogique.
