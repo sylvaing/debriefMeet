@@ -64,6 +64,17 @@ def test_analyser_piste_silencieuse(tmp_path):
     assert a.silencieuse is True
 
 
+def test_analyser_piste_faible_mais_parlee_non_silencieuse(tmp_path):
+    """Régression : une piste faible (RMS brut ~0,005, SOUS le seuil anti-silence 0,008)
+    mais contenant de la parole ne doit PAS être classée silencieuse — le vrai chemin de
+    transcription la normalise d'abord (docs/27). Cas réel : micro discret à −42 dB."""
+    chemin = tmp_path / "faible.wav"
+    # 160/32768 ≈ 0,0049 → RMS brut < 0,008, mais normalisé (×~6) au-dessus.
+    wavfile.write(chemin, 16000, np.full(16000, 160, dtype=np.int16))
+    a = t.analyser_piste(chemin)
+    assert a.silencieuse is False
+
+
 def test_analyser_piste_fichier_illisible_ne_leve_pas(tmp_path):
     chemin = tmp_path / "corrompu.wav"
     chemin.write_bytes(b"pas un wav")

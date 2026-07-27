@@ -12,9 +12,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
-
-from debrief_meet.core.audio import SEUIL_RMS_SILENCE, decoder_audio_16k
+from debrief_meet.core.audio import decoder_audio_16k, preparer_asr
 from debrief_meet.core.mistral.client import ClientMistral, ErreurFormatMistral, ErreurReseauMistral
 from debrief_meet.core.mistral.decoupage import LIMITE_SEGMENT_S, decouper_piste
 
@@ -52,18 +50,21 @@ def _mime(chemin: Path) -> str:
 
 
 def analyser_piste(chemin: Path) -> AnalysePiste:
-    """Durée (s) et détection de silence quasi-total (RMS < seuil anti-silence, §7.4).
+    """Durée (s) et détection de silence (§7.4).
 
-    Décodage impossible (fichier corrompu…) : traité comme non silencieux, durée
-    nulle — Voxtral tranchera. Ne lève jamais."""
+    Le verdict « silencieuse » réutilise `core.audio.preparer_asr` (normalisation PUIS
+    porte anti-silence, docs/27), et non le RMS brut : une piste faible mais parlée
+    (micro discret / post-AEC, ex. RMS ~0,0076) serait rejetée à tort par une simple
+    comparaison au seuil, alors que le vrai chemin de transcription la normalise d'abord.
+    Décodage impossible (fichier corrompu…) : traité comme non silencieux, durée nulle
+    — Voxtral tranchera. Ne lève jamais."""
     try:
         audio = decoder_audio_16k(chemin)
     except Exception:  # noqa: BLE001 — laisser Voxtral trancher plutôt que planter ici
         return AnalysePiste(duree_s=0.0, silencieuse=False)
     if not len(audio):
         return AnalysePiste(duree_s=0.0, silencieuse=True)
-    rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-    return AnalysePiste(duree_s=len(audio) / 16_000, silencieuse=rms < SEUIL_RMS_SILENCE)
+    return AnalysePiste(duree_s=len(audio) / 16_000, silencieuse=preparer_asr(audio) is None)
 
 
 def _construire_donnees(modele: str, langue: str | None, context_bias: list[str]) -> dict[str, object]:
