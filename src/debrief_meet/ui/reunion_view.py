@@ -277,6 +277,9 @@ class ReunionView(QWidget):
 
         actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir la transcription", True,
                                   lambda c=chemin: self._ouvrir(c)))
+        if ligne.cr_disponible:
+            actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir le CR", True,
+                                      lambda c=chemin: self._ouvrir(chemin_cr_mistral(c))))
         actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True,
                                   lambda c=chemin: self._reveler(c)))
 

@@ -489,6 +489,30 @@ def test_cr_mistral_echoue_affiche_message(qapp, machine, tmp_path, monkeypatch)
     assert appels
 
 
+# ── « Ouvrir le CR » (action présente seulement si le CR existe) ────────────────
+
+def _action_par_tooltip(actions, tooltip):
+    return next((a for a in actions if a.tooltip == tooltip), None)
+
+
+def test_ouvrir_cr_absent_sans_fichier_cr(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert _action_par_tooltip(_actions(vue), "Ouvrir le CR") is None
+
+
+def test_ouvrir_cr_present_et_ouvre_le_cr(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("# CR\n\nrésumé", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    action = _action_par_tooltip(_actions(vue), "Ouvrir le CR")
+    assert action is not None and action.actif is True
+    ouverts = []
+    monkeypatch.setattr(vue, "_ouvrir", lambda c: ouverts.append(c))
+    action.on_click()
+    assert ouverts == [chemin_cr_mistral(md)]
+
+
 # ── Barre d'action (bouton bascule) ──────────────────────────────────────────
 
 def test_bouton_bascule_declenche_toggle_reunion(qapp, machine, tmp_path):

@@ -402,6 +402,12 @@ Dans `reunion_view.py`, à côté des actions existantes (`_copier` l.366, diari
 `mistral_cle_api` non vide**. Au clic → confirmation §2 (si pas encore acceptée) → lance
 le worker §9.3. Si `<stem>_CR.md` existe déjà : proposer « Régénérer » / « Ouvrir ».
 
+**État « CR disponible » + action « Ouvrir le CR » (ajout 2026-07-27)** : dès que
+`<stem>_CR.md` existe, la réunion porte le badge **« CR disponible » en vert**
+(`HistoryState.CR_DISPONIBLE`, priorité la plus haute — le CR est le livrable final,
+`capture_model.py`), et le menu ⋯ expose **« Ouvrir le CR »** (icône « ouvrir », comme
+« Ouvrir la transcription ») qui ouvre le `_CR.md` dans l'éditeur système.
+
 ### 9.3 Worker + progression (`generateur_cr_mistral.py`)
 QThread (jamais le thread UI), `QProgressDialog` non bloquant avec les 4 étapes du §4,
 annulable. Signaux Qt pour : progression, succès (chemin du `_CR.md`), erreur (message).

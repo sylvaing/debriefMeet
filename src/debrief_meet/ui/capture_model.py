@@ -16,6 +16,7 @@ from PySide6.QtGui import QColor, QFont
 
 from debrief_meet.core.fichiers import (
     apercu_journal,
+    chemin_cr_mistral,
     chemin_locuteurs,
     date_heure_reunion,
     definir_titre,
@@ -67,6 +68,7 @@ class _LigneReunion:
     audio: list[Path]
     locuteurs: bool
     en_attente: bool
+    cr_disponible: bool = False  # CR généré par une IA externe (Mistral) — <stem>_CR.md
     en_cours: bool = False  # ligne live insérée en tête pendant l'enregistrement (pas de fichier réel)
 
 
@@ -84,8 +86,13 @@ def _construire_ligne_reunion(chemin: Path) -> _LigneReunion:
     audio = pistes_audio_existantes(chemin)
     locuteurs = chemin_locuteurs(chemin).exists()
     en_attente = transcription_en_attente(chemin)
+    cr_disponible = chemin_cr_mistral(chemin).exists()
 
-    if locuteurs:
+    # Priorité : le CR (livrable final d'une IA externe) prime sur l'état du pipeline
+    # de transcription/locuteurs.
+    if cr_disponible:
+        etat = HistoryState.CR_DISPONIBLE
+    elif locuteurs:
         etat = HistoryState.LOCUTEURS
     elif en_attente:
         etat = HistoryState.AUDIO_SEUL
@@ -102,6 +109,7 @@ def _construire_ligne_reunion(chemin: Path) -> _LigneReunion:
         audio=audio,
         locuteurs=locuteurs,
         en_attente=en_attente,
+        cr_disponible=cr_disponible,
     )
 
 

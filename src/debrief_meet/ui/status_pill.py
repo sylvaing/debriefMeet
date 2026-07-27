@@ -29,6 +29,7 @@ class HistoryState(Enum):
     TRANSCRIT = auto()
     AUDIO_SEUL = auto()
     LOCUTEURS = auto()
+    CR_DISPONIBLE = auto()
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ _BADGES: dict[HistoryState, Badge] = {
     HistoryState.TRANSCRIT: Badge("Transcrit", C.SUCCESS, C.SUCCESS_BG, "check-circle"),
     HistoryState.AUDIO_SEUL: Badge("Audio seul", C.NEUTRAL, C.NEUTRAL_BG, "waveform"),
     HistoryState.LOCUTEURS: Badge("Locuteurs", C.INFO, C.INFO_BG, "users-three"),
+    HistoryState.CR_DISPONIBLE: Badge("CR disponible", C.SUCCESS, C.SUCCESS_BG, "notebook"),
 }
 
 

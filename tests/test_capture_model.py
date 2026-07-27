@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from debrief_meet.core.fichiers import (
     MARQUEUR_EN_ATTENTE,
     EcrivainJournal,
+    chemin_cr_mistral,
     chemin_reunion,
     definir_titre,
 )
@@ -62,6 +63,15 @@ def test_etat_priorite(qapp, tmp_path, avec_audio, avec_locuteurs, etat_attendu)
     modele.recharger()
     idx_etat = modele.index(0, 4)
     assert modele.data(idx_etat, Qt.ItemDataRole.UserRole) == etat_attendu
+
+
+def test_etat_cr_disponible_prime(qapp, tmp_path):
+    """Un CR généré (IA externe) prime sur l'état du pipeline (même avec locuteurs)."""
+    md = _creer_reunion(tmp_path, avec_audio=True, avec_locuteurs=True)
+    chemin_cr_mistral(md).write_text("# CR\n\nrésumé", encoding="utf-8")
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    assert modele.data(modele.index(0, 4), Qt.ItemDataRole.UserRole) == HistoryState.CR_DISPONIBLE
 
 
 def test_etat_audio_seul_en_attente(qapp, tmp_path):
