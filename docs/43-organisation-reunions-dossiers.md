@@ -63,16 +63,14 @@ génériques** ; l'horodatage (et le titre) vivent dans le **nom du dossier**.
 
 ```
 <dossier_reunions>/
-  2026-07-27_15-30-45/                       ← réunion sans titre (nouvelle, précision seconde)
+  2026-07-27_15-30-45/                       ← réunion sans titre
   2026-07-27_16-05-12_Point-commerce-Bastien/  ← réunion avec titre associé
-  2026-07-02_15-01/                           ← réunion migrée (précision minute, pas de secondes)
-  2026-07-06_09-56/                           ← migrée
-  2026-07-06_09-56-2/                         ← migrée, collision legacy même minute (compteur -2)
 ```
 
 Grammaire : `<date>_<heure>[_<slug>]` avec
 - `<date>` = `AAAA-MM-JJ` (toujours) ;
-- `<heure>` = `HH-MM-SS` (nouvelles) **ou** `HH-MM` / `HH-MM-<N>` (migrées : minute, `-N` = compteur de collision legacy) ;
+- `<heure>` = `HH-MM-SS` — **les secondes sont obligatoires** (cf. §7 : les dossiers
+  legacy en `HH-MM` issus de la migration ont été normalisés en `HH-MM-00`) ;
 - `<slug>` = titre slugifié (§3), présent seulement si un titre est associé.
 
 Le séparateur entre le bloc horodaté et le slug est **`_`** ; à l'intérieur de chaque bloc,
@@ -92,19 +90,14 @@ Règle robuste, insensible au contenu du slug :
 
 ```python
 tokens = nom_dossier.split("_")
-# tokens[0] = "AAAA-MM-JJ" ; tokens[1] = "HH-MM" | "HH-MM-SS" | "HH-MM-<N>"
+# tokens[0] = "AAAA-MM-JJ" ; tokens[1] = "HH-MM-SS" (+ éventuel compteur "-N")
 # (les blocs date/heure ne contiennent jamais "_", donc tokens[0]/tokens[1] sont fiables
 #  même si le slug contient "_")
 ```
 
-Désambiguïsation **secondes vs compteur de collision legacy** sur le 3ᵉ groupe de `tokens[1]` :
-- exactement **2 chiffres** (`00`–`59`) → **secondes** (nouvelles réunions) ;
-- **1 chiffre** (`-2`, `-3`, …) → compteur de collision legacy → **ignoré**, précision minute.
-
-> ⚠️ Cas théorique : ≥ 10 réunions dans la **même minute** (legacy) donneraient un compteur
-> à 2 chiffres, mal interprété comme secondes. **N'existe pas** dans les données réelles (max
-> observé : `-2`). Sans conséquence fonctionnelle : le **nom du dossier** est l'identité, la
-> `datetime` parsée ne sert qu'à l'affichage/tri. Ne pas sur-concevoir.
+Le motif `_MOTIF_HORODATAGE` n'est **pas ancré en fin** : un compteur de collision
+(`-2`, `-3`… ajouté en toute fin de nom, §2.2) est simplement ignoré à la lecture.
+Un nom sans secondes n'est plus reconnu — `date_heure_reunion` renvoie `None`.
 
 ---
 
@@ -224,9 +217,9 @@ def date_heure_reunion(md: Path) -> datetime | None:
 **Renommage sur changement de titre** (nouveau — voir §6 pour les appelants) :
 ```python
 def _prefixe_horodatage(nom_dossier: str) -> str:
-    """Bloc horodaté du nom (sans slug) — préserve la précision d'origine
-    (minute legacy vs seconde) et un éventuel compteur de collision.
-    '2026-07-06_09-56-2_Ancien' -> '2026-07-06_09-56-2'."""
+    """Bloc horodaté du nom, slug exclu — conserve un éventuel compteur de collision
+    pour ne pas fusionner deux réunions distinctes lors d'un renommage.
+    '2026-07-27_20-12-45_Ancien-titre' -> '2026-07-27_20-12-45'."""
     tokens = nom_dossier.split("_")
     return "_".join(tokens[:2]) if len(tokens) >= 2 else nom_dossier
 
@@ -423,7 +416,7 @@ enregistrement**.
 
 ---
 
-## 7. Migration des réunions à plat — **retirée** (2026-07-27)
+## 7. Migration des réunions à plat — **retirée**, dossiers normalisés (2026-07-27)
 
 > Le plan prévoyait ici un module `core/migration_dossiers.py` appelé au démarrage, qui
 > convertissait les réunions du layout **à plat** d'avant docs/43 (`AAAA-MM-JJ_HH-MM.md` +
@@ -432,13 +425,17 @@ enregistrement**.
 > supprimés** : l'app n'est déployée nulle part ailleurs, donc plus aucune donnée à plat ne
 > peut se présenter.
 >
-> **Conséquence à connaître** : les dossiers issus de cette migration gardent un horodatage
-> à la **minute** (`2026-07-02_15-01`), voire un compteur de collision (`2026-07-06_09-56-2`),
-> là où les nouvelles réunions sont à la **seconde**. La lecture de ces noms reste donc
-> pleinement supportée dans `core/fichiers.py` — `_MOTIF_HORODATAGE` (secondes optionnelles),
-> la désambiguïsation du §2.3 et `_prefixe_horodatage` (qui préserve la précision d'origine
-> lors d'un renommage) ne sont **pas** du code mort : 22 des 24 dossiers réels en dépendent.
-> Ne pas les simplifier en croyant que « tout est en secondes ».
+> Cette migration laissait des dossiers en précision **minute** (`2026-07-02_15-01`), voire
+> avec un compteur de collision (`2026-07-06_09-56-2`), ce qui obligeait à maintenir un
+> parsing à deux formats. Ces 23 dossiers ont donc été **renommés en précision seconde** :
+> `HH-MM` → `HH-MM-00`, et le compteur legacy `-2` → `-02` (la paire `09-56` / `09-56-2`
+> devient `09-56-00` / `09-56-02`, distincte et dans le même ordre chronologique).
+> Une sauvegarde a été prise avant l'opération.
+>
+> **Conséquence** : les secondes sont désormais **obligatoires** dans un nom de dossier de
+> réunion, et tout le code de compatibilité legacy a été retiré de `core/fichiers.py`
+> (`_MOTIF_HORODATAGE` exige les secondes, plus de désambiguïsation « 2 chiffres = secondes
+> / 1 chiffre = compteur »). Un dossier sans secondes n'est plus reconnu comme une réunion.
 
 ## 8. Suppression simplifiée (rappel)
 
@@ -489,12 +486,12 @@ sous-dossier, `rmtree`).
 - `slugifier_titre` : espaces→tirets, accents conservés, caractères interdits retirés, troncature,
   titre vide → `""`, tirets multiples repliés.
 - `nom_dossier_reunion` / `chemin_reunion` : avec/sans titre, précision seconde, collision `-2`.
-- `date_heure_reunion` : dossier seconde (`_15-30-45`), dossier minute legacy (`_09-56`),
-  collision legacy (`_09-56-2` → minute, pas 2 s), dossier titré (slug ignoré pour la date),
-  slug contenant `_`.
+- `date_heure_reunion` : dossier seconde (`_15-30-45`), nom **sans secondes** → `None`,
+  compteur de collision ignoré (`_10-02-30-2` → 10:02:30), dossier titré (slug ignoré pour
+  la date), slug contenant `_`, date invalide → `None`.
 - `renommer_dossier_reunion` : ajout de titre, changement de titre, titre vidé → retour à
-  l'horodatage, no-op si nom inchangé, collision cible existante, préservation du préfixe
-  legacy (minute → **ne fabrique pas** de secondes `-00`).
+  l'horodatage, no-op si nom inchangé, collision cible existante, préservation de
+  l'horodatage et d'un éventuel compteur de collision.
 - Suppression : `rmtree` retire bien tout le dossier ; garde-fou hors `dossier_reunions`.
 
 ---
@@ -540,14 +537,13 @@ sous-dossier, `rmtree`).
 ## 13. Pièges & précautions
 
 - **Windows / rename de dossier ouvert** (§6.3) : ne jamais renommer pendant un enregistrement.
-- **Ambiguïté `-N` vs secondes** (§2.3) : 1 chiffre = collision legacy, 2 chiffres = secondes.
 - **Ne pas casser le journal** (§5.6) : listing scindé, journal en glob plat.
 - **`date_heure_reunion` lit le dossier** : tout code lisant l'identité via `md.stem` doit passer
   à `md.parent.name` — vérifier avec `grep -rn "\.stem" src/debrief_meet` en fin de chantier.
 - **Sécurité `rmtree`** : garde-fou « strictement sous `dossier_reunions` ».
-- **Noms legacy en précision minute** : la migration retirée (§7) a laissé 22 dossiers en
-  `HH-MM` (+ 1 compteur `-2`). Le support de ces noms dans `core/fichiers.py` n'est **pas**
-  du code mort — ne pas le simplifier en supposant que tout est en secondes.
+- **Secondes obligatoires** (§7) : depuis la normalisation des dossiers legacy, un nom sans
+  secondes n'est plus reconnu (`date_heure_reunion` → `None`). Une réunion créée hors de
+  l'app avec un nom en `HH-MM` seul serait listée mais sans date ni durée.
 - **`chemin_reunion` a une nouvelle signature** (`titre` optionnel) : vérifier tous les appelants.
 
 ---

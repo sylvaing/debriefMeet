@@ -22,7 +22,7 @@ def _pas_de_vrai_sommeil(monkeypatch):
     monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", lambda _s: None)
 
 
-def _md_avec_transcript(tmp_path, nom="2026-01-01_10-00"):
+def _md_avec_transcript(tmp_path, nom="2026-01-01_10-00-00"):
     md = tmp_path / f"{nom}.md"
     md.write_text(
         "# Réunion — 2026-01-01 10:00\n\n---\n\n**Moi :** Bonjour à tous.\n\n"
@@ -30,7 +30,7 @@ def _md_avec_transcript(tmp_path, nom="2026-01-01_10-00"):
     return md
 
 
-def _md_placeholder(tmp_path, nom="2026-01-01_11-00"):
+def _md_placeholder(tmp_path, nom="2026-01-01_11-00-00"):
     md = tmp_path / f"{nom}.md"
     md.write_text(f"# Réunion — 2026-01-01 11:00\n\n> {MARQUEUR_EN_ATTENTE}\n\n", encoding="utf-8")
     return md

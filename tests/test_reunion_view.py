@@ -101,7 +101,7 @@ def _config(tmp_path):
     return cfg
 
 
-def _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00", avec_systeme=True):
+def _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00", avec_systeme=True):
     dossier = tmp_path / nom
     dossier.mkdir(exist_ok=True)
     md = dossier / "transcription.md"
@@ -113,7 +113,7 @@ def _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00", avec_systeme=True):
     return md
 
 
-def _reunion_en_attente(tmp_path, nom="2026-03-03_09-00", avec_audio=True):
+def _reunion_en_attente(tmp_path, nom="2026-03-03_09-00-00", avec_audio=True):
     dossier = tmp_path / nom
     dossier.mkdir(exist_ok=True)
     md = dossier / "transcription.md"
@@ -146,7 +146,7 @@ def test_generer_grise_si_locuteurs_existent(qapp, machine, tmp_path):
 
 
 def test_generer_grise_sans_audio(qapp, machine, tmp_path):
-    dossier = tmp_path / "2026-01-01_10-00"
+    dossier = tmp_path / "2026-01-01_10-00-00"
     dossier.mkdir()
     md = dossier / "transcription.md"
     md.write_text("#", encoding="utf-8")
@@ -230,7 +230,7 @@ def test_generer_refuse_si_non_configuree(qapp, machine, tmp_path):
 
 
 def test_generer_sans_audio_affiche_message(qapp, machine, tmp_path, monkeypatch):
-    dossier = tmp_path / "2026-01-01_10-00"
+    dossier = tmp_path / "2026-01-01_10-00-00"
     dossier.mkdir()
     md = dossier / "transcription.md"
     md.write_text("#", encoding="utf-8")
@@ -305,8 +305,8 @@ def test_tout_supprimer_retire_aussi_le_sidecar_bluemind(qapp, machine, tmp_path
 
 
 def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch):
-    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
-    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     vue._table.selectAll()
     monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
@@ -317,25 +317,25 @@ def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch
 # ── Sélection programmatique + rafraîchissement live ────────────────────────────
 
 def test_selectionner_reunion_cible_la_bonne_ligne(qapp, machine, tmp_path):
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
-    cible = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    cible = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     vue.selectionner_reunion(cible)
     assert vue._chemins_selectionnes() == [cible]
 
 
 def test_refresh_voit_nouvelle_reunion(qapp, machine, tmp_path):
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert vue._modele.rowCount() == 1
-    _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue.recharger()
     assert vue._modele.rowCount() == 2
 
 
 # ── Copie avec prompt actif ──────────────────────────────────────────────────
 
-def _md_simple(tmp_path, nom="2026-01-01_10-00", corps="ligne de transcription"):
+def _md_simple(tmp_path, nom="2026-01-01_10-00-00", corps="ligne de transcription"):
     md = tmp_path / f"{nom}.md"
     md.write_text(f"# Réunion\n\n{corps}", encoding="utf-8")
     return md
@@ -420,7 +420,7 @@ def test_cr_mistral_en_cours(qapp, machine, tmp_path):
 
 
 def test_cr_mistral_grise_si_autre_job_diarization_tourne(qapp, machine, tmp_path):
-    md = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     autre = tmp_path / "2026-01-01_10-00.md"
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(job=autre),
                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
@@ -541,7 +541,7 @@ def test_bouton_grise_si_autre_type_actif(qapp, machine, tmp_path):
 # ── Ligne « en cours » (CHANGELOG_v2 §3) ─────────────────────────────────────
 
 def test_ligne_en_cours_inseree_en_tete(qapp, machine, tmp_path):
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert vue._modele.rowCount() == 1
     vue.definir_etat_enregistrement(Mode.REUNION, 5)
@@ -631,7 +631,7 @@ def _store_avec_evenement(tmp_path, debut_ms, fin_ms, titre="Point projet X"):
 
 def test_sans_store_bluemind_pas_daction(qapp, machine, tmp_path):
     from datetime import datetime
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     debut = datetime(2026, 1, 1, 10, 0)
     _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())  # pas de store_bluemind
@@ -641,7 +641,7 @@ def test_sans_store_bluemind_pas_daction(qapp, machine, tmp_path):
 
 def test_action_associer_presente_si_correspondance(qapp, machine, tmp_path):
     from datetime import datetime
-    nom = "2026-01-01_10-00"
+    nom = "2026-01-01_10-00-00"
     _reunion_avec_audio(tmp_path, nom=nom)
     debut = datetime(2026, 1, 1, 10, 0)
     store = _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
@@ -652,7 +652,7 @@ def test_action_associer_presente_si_correspondance(qapp, machine, tmp_path):
 
 def test_action_absente_sans_correspondance(qapp, machine, tmp_path):
     from datetime import datetime
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     debut = datetime(2026, 6, 1, 10, 0)  # loin de la réunion
     store = _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
@@ -661,7 +661,7 @@ def test_action_absente_sans_correspondance(qapp, machine, tmp_path):
 
 
 def test_nommer_locuteurs_present_si_locuteurs_md(qapp, machine, tmp_path):
-    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     chemin_locuteurs(md).write_text("# X\n\n**Moi** [00:00] bonjour\n", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     spec = _spec(_actions(vue), rv_module._ICONE_NOMMER_LOCUTEURS)
@@ -669,7 +669,7 @@ def test_nommer_locuteurs_present_si_locuteurs_md(qapp, machine, tmp_path):
 
 
 def test_nommer_locuteurs_absent_sans_locuteurs_md(qapp, machine, tmp_path):
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     icones = [a.icone for a in _actions(vue)]
     assert rv_module._ICONE_NOMMER_LOCUTEURS not in icones
@@ -677,7 +677,7 @@ def test_nommer_locuteurs_absent_sans_locuteurs_md(qapp, machine, tmp_path):
 
 def test_nommer_locuteurs_disponible_sans_store_bluemind(qapp, machine, tmp_path):
     """F2 n'est pas gatée par la config BlueMind (§7) — utilisable en saisie libre."""
-    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     chemin_locuteurs(md).write_text("# X\n\n**Moi** [00:00] bonjour\n", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())  # store_bluemind=None
     icones = [a.icone for a in _actions(vue)]
@@ -686,7 +686,7 @@ def test_nommer_locuteurs_disponible_sans_store_bluemind(qapp, machine, tmp_path
 
 def test_action_indique_deja_associe(qapp, machine, tmp_path):
     from debrief_meet.core.bluemind.association import Association, ecrire
-    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     ecrire(md, Association(event_uid="e1", cal_uid="cal", titre="Point projet X",
                             debut="2026-01-01T10:00:00", invites=[]))
     store = _store_avec_evenement(tmp_path, 0, 1)  # peu importe, déjà associé
@@ -700,8 +700,8 @@ def test_action_indique_deja_associe(qapp, machine, tmp_path):
 
 def test_bulk_bar_visible_a_partir_de_deux_lignes(qapp, machine, tmp_path):
     from PySide6.QtCore import QItemSelectionModel
-    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
-    _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert vue._action_bar._bulk.isHidden()
     sm = vue._table.selectionModel()
@@ -713,8 +713,8 @@ def test_bulk_bar_visible_a_partir_de_deux_lignes(qapp, machine, tmp_path):
 
 def test_bulk_supprimer_efface_la_selection(qapp, machine, tmp_path, monkeypatch):
     from PySide6.QtCore import QItemSelectionModel
-    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
-    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     sm = vue._table.selectionModel()
     for r in range(2):
@@ -728,8 +728,8 @@ def test_bulk_supprimer_efface_la_selection(qapp, machine, tmp_path, monkeypatch
 
 def test_bulk_ignorer_audio_sur_selection(qapp, machine, tmp_path, monkeypatch):
     from PySide6.QtCore import QItemSelectionModel
-    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
-    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00-00")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     sm = vue._table.selectionModel()
     for r in range(2):

@@ -105,7 +105,7 @@ def pistes_audio_existantes(md: Path) -> list[Path]:
 # à chaque changement) ; la **durée** dans un commentaire HTML invisible à la
 # lecture. Cf. docs/14, docs/43.
 
-_MOTIF_HORODATAGE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:-(\d{2}))?")
+_MOTIF_HORODATAGE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})")
 _MOTIF_DATE_HEURE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 _MOTIF_DUREE = re.compile(r"<!-- duree_s: (\d+) -->")
 _MOTIF_TRANCHE = re.compile(r"^## \d{2}:\d{2} \((\d{2}):(\d{2})\)", re.MULTILINE)
@@ -152,13 +152,12 @@ def nom_dossier_reunion(debut: datetime, titre: str | None = None) -> str:
 
 
 def date_heure_reunion(md: Path) -> datetime | None:
-    """Date+heure de début déduites du **nom du dossier parent** ; None si le nom ne
-    suit pas le schéma réunion (ex. une entrée de journal `AAAA-MM-JJ.md`, qui n'a
-    pas de dossier dédié).
+    """Date+heure de début déduites du **nom du dossier parent**
+    (`AAAA-MM-JJ_HH-MM-SS[_slug]`) ; None si le nom ne suit pas ce schéma (ex. une
+    entrée de journal `AAAA-MM-JJ.md`, qui n'a pas de dossier dédié).
 
-    Désambiguïsation secondes vs compteur de collision legacy (docs/43 §2.3) :
-    exactement 2 chiffres après le 2ᵉ tiret du bloc heure → secondes ; sinon
-    (compteur `-2`, `-3`… à 1 chiffre, ou absent) → précision minute."""
+    Le motif n'est pas ancré en fin : un éventuel compteur de collision (`-2`, `-3`…
+    ajouté en toute fin de nom, §2.2) est simplement ignoré."""
     tokens = md.parent.name.split("_")
     if len(tokens) < 2:
         return None
@@ -167,15 +166,15 @@ def date_heure_reunion(md: Path) -> datetime | None:
         return None
     a, mo, j, h, mi, ss = m.groups()
     try:
-        return datetime(int(a), int(mo), int(j), int(h), int(mi), int(ss or 0))
+        return datetime(int(a), int(mo), int(j), int(h), int(mi), int(ss))
     except ValueError:
         return None
 
 
 def _prefixe_horodatage(nom_dossier: str) -> str:
-    """Bloc horodaté du nom (sans slug) — préserve la précision d'origine (minute
-    legacy vs seconde) et un éventuel compteur de collision.
-    `'2026-07-06_09-56-2_Ancien'` -> `'2026-07-06_09-56-2'`."""
+    """Bloc horodaté du nom, slug exclu — conserve un éventuel compteur de collision
+    pour ne pas fusionner deux réunions distinctes lors d'un renommage.
+    `'2026-07-27_20-12-45_Ancien-titre'` -> `'2026-07-27_20-12-45'`."""
     tokens = nom_dossier.split("_")
     return "_".join(tokens[:2]) if len(tokens) >= 2 else nom_dossier
 

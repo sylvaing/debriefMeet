@@ -472,15 +472,17 @@ def test_date_heure_reunion_dossier_seconde(tmp_path):
     assert date_heure_reunion(md) == datetime(2026, 6, 29, 10, 2, 30)
 
 
-def test_date_heure_reunion_dossier_minute_legacy(tmp_path):
+def test_date_heure_reunion_sans_secondes_est_none(tmp_path):
+    """Les secondes sont obligatoires depuis la normalisation des dossiers legacy
+    (docs/43 §7) : un nom à la minute seule n'est plus un nom de réunion valide."""
     md = tmp_path / "2026-06-29_10-02" / "transcription.md"
-    assert date_heure_reunion(md) == datetime(2026, 6, 29, 10, 2)
+    assert date_heure_reunion(md) is None
 
 
-def test_date_heure_reunion_collision_legacy_reste_precision_minute(tmp_path):
-    """`-2` (1 chiffre) = compteur de collision legacy, pas des secondes (docs/43 §2.3)."""
-    md = tmp_path / "2026-06-29_10-02-3" / "transcription.md"
-    assert date_heure_reunion(md) == datetime(2026, 6, 29, 10, 2)
+def test_date_heure_reunion_ignore_le_compteur_de_collision(tmp_path):
+    """Le compteur `-2` ajouté en fin de nom (§2.2) n'altère pas la date lue."""
+    md = tmp_path / "2026-06-29_10-02-30-2" / "transcription.md"
+    assert date_heure_reunion(md) == datetime(2026, 6, 29, 10, 2, 30)
 
 
 def test_date_heure_reunion_dossier_titre_slug_ignore_pour_la_date(tmp_path):
@@ -498,8 +500,8 @@ def test_date_heure_reunion_nom_journal_est_none(tmp_path):
 
 
 def test_date_heure_reunion_date_invalide(tmp_path):
-    md = tmp_path / "2026-13-40_25-99" / "transcription.md"
-    assert date_heure_reunion(md) is None
+    md = tmp_path / "2026-13-40_25-99-99" / "transcription.md"
+    assert date_heure_reunion(md) is None    # motif reconnu, mais datetime() refuse
 
 
 # ── Renommage du dossier sur changement de titre (docs/43 §6) ──────────────────
@@ -543,18 +545,19 @@ def test_renommer_dossier_collision_cible_existante(tmp_path):
     assert nouveau.parent.name == "2026-07-27_15-30-45_Titre-2"
 
 
-def test_renommer_dossier_preserve_le_prefixe_legacy_minute(tmp_path):
-    """Un dossier legacy à la minute ne doit jamais se voir fabriquer des secondes
-    (pas de `-00` inventé) : le préfixe horodaté d'origine est préservé tel quel."""
-    md = _dossier_reunion(tmp_path, "2026-07-06_09-56")
+def test_renommer_dossier_preserve_l_horodatage_a_la_seconde(tmp_path):
+    """Le renommage ne touche qu'au slug : l'horodatage d'origine est repris tel quel."""
+    md = _dossier_reunion(tmp_path, "2026-07-06_09-56-04")
     nouveau = renommer_dossier_reunion(md, "Titre")
-    assert nouveau.parent.name == "2026-07-06_09-56_Titre"
+    assert nouveau.parent.name == "2026-07-06_09-56-04_Titre"
 
 
-def test_renommer_dossier_preserve_compteur_collision_legacy(tmp_path):
-    md = _dossier_reunion(tmp_path, "2026-07-06_09-56-2")
+def test_renommer_dossier_preserve_le_compteur_de_collision(tmp_path):
+    """Deux réunions distinctes séparées par un compteur ne doivent pas fusionner :
+    le suffixe `-2` fait partie du bloc horodaté conservé."""
+    md = _dossier_reunion(tmp_path, "2026-07-06_09-56-04-2")
     nouveau = renommer_dossier_reunion(md, "Titre")
-    assert nouveau.parent.name == "2026-07-06_09-56-2_Titre"
+    assert nouveau.parent.name == "2026-07-06_09-56-04-2_Titre"
 
 
 # ── Titre éditable (H1 du .md) ─────────────────────────────────────────────────

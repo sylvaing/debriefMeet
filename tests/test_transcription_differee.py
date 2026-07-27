@@ -11,7 +11,7 @@ from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 from tests.fakes.adapters import MoteurFake
 
 
-def _placeholder(tmp_path, nom="2026-01-01_10-00"):
+def _placeholder(tmp_path, nom="2026-01-01_10-00-00"):
     md = tmp_path / f"{nom}.md"
     md.write_text(f"# Réunion — 2026-01-01 10:00\n\n> {MARQUEUR_EN_ATTENTE}\n\n", encoding="utf-8")
     return md

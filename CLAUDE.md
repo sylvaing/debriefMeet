@@ -30,14 +30,14 @@ changement de titre (édition manuelle ou association BlueMind) via
 du dossier — plus aucun artefact ne peut rester orphelin. Le **journal**
 (`AAAA-MM-JJ.md`) reste inchangé (à plat, 1 fichier/jour).
 
-⚠️ **Noms legacy en précision minute** : la migration des réunions à plat d'avant
-docs/43 a tourné une fois sur le seul poste concerné, puis son code a été **retiré**
-(docs/43 §7). Elle a laissé des dossiers en `AAAA-MM-JJ_HH-MM` (+ un compteur de
-collision `-2`), là où les nouvelles réunions sont à la seconde. Le support de ces
-noms dans `core/fichiers.py` (`_MOTIF_HORODATAGE` à secondes optionnelles,
-désambiguïsation « 2 chiffres = secondes / 1 chiffre = collision legacy »,
-`_prefixe_horodatage` qui préserve la précision au renommage) n'est **pas** du code
-mort : la majorité des dossiers réels en dépendent. Ne pas le simplifier.
+**Secondes obligatoires dans le nom de dossier.** La migration des réunions à plat
+d'avant docs/43 a tourné une fois sur le seul poste concerné puis son code a été
+retiré ; les dossiers qu'elle avait laissés en précision minute ont ensuite été
+**normalisés en `HH-MM-00`** (et le compteur de collision `-2` en `-02`), ce qui a
+permis de retirer tout le code de compatibilité (docs/43 §7). `_MOTIF_HORODATAGE`
+exige donc les secondes : un dossier nommé `AAAA-MM-JJ_HH-MM` seul serait listé
+mais sans date ni durée (`date_heure_reunion` → `None`). Un éventuel compteur de
+collision en fin de nom (`-2`, `-3`…) est ignoré à la lecture.
 
 **Réunion active exclue du listing** : son `transcription.md` est créé dès le démarrage
 de l'enregistrement, et elle est déjà représentée par la ligne « en cours » → sans
@@ -116,7 +116,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
-| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — cf. docs/43 §7 et le § « Stockage des réunions » pour les noms legacy qui subsistent. ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
+| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
 
 ## Packaging macOS (Phase 4) — pièges
 
