@@ -16,11 +16,15 @@ err()  { echo "✗ $*" >&2; exit 1; }
 command -v create-dmg >/dev/null || err "create-dmg introuvable (brew install create-dmg)."
 [[ -x "$VENV_BUILD/bin/python" ]] || err "$VENV_BUILD/bin/python introuvable (voir docs/16 §2)."
 
-VERSION="$("$VENV_BUILD/bin/python" -c "import debrief_meet; print(debrief_meet.__version__)")"
+# VERSION_COMPLETE (pas seulement __version__) : parité avec le nom du setup
+# Windows (debriefMeet-setup-<VERSION_COMPLETE>.exe, docs/32 §1) — porte le hash
+# git si packaging/build_app.sh a généré src/debrief_meet/_version.py juste avant,
+# sinon repli "<version>+dev" (comportement normal de debrief_meet.__init__).
+VERSION="$("$VENV_BUILD/bin/python" -c "import debrief_meet; print(debrief_meet.VERSION_COMPLETE)")"
 OUT="$ROOT/dist/debriefMeet-$VERSION.dmg"
 
 rm -f "$OUT"
-info "création de $OUT…"
+info "création de ${OUT}…"
 create-dmg --volname "debriefMeet" --app-drop-link 450 180 "$OUT" "$APP"
 
 info "OK : $OUT"

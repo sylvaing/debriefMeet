@@ -4,13 +4,16 @@
 # Orchestration (docs/16-packaging-macos.md §5.2) :
 #   1. Identité de signature stable (créée une fois, idempotent).
 #   2. Helper SCK recompilé + signé avec cette identité.
-#   3. PyInstaller (packaging/debriefMeet.spec).
-#   4. Signature de l'app (sans --options runtime : mlx/torch ont besoin de
+#   3. VERSION_COMPLETE (mêmes forme et outillage que Windows, docs/32) :
+#      "<__version__>+<AAAAMMJJ>.<hash-git-court>" → src/debrief_meet/_version.py,
+#      embarqué dans le bundle par PyInstaller.
+#   4. PyInstaller (packaging/debriefMeet.spec).
+#   5. Signature de l'app (sans --options runtime : mlx/torch ont besoin de
 #      mémoire exécutable non signée — le hardened runtime n'est requis que
 #      pour la notarisation, hors périmètre v1).
-#   5. Re-signature du helper (ses entitlements sont perdus au `--deep` de l'app).
-#   6. Signature du binaire ffmpeg embarqué (vendor/).
-#   7. Re-scellage de l'app (sans --deep, pour prendre en compte 5+6).
+#   6. Re-signature du helper (ses entitlements sont perdus au `--deep` de l'app).
+#   7. Signature du binaire ffmpeg embarqué (vendor/).
+#   8. Re-scellage de l'app (sans --deep, pour prendre en compte 6+7).
 #
 # Usage : bash packaging/build_app.sh
 set -euo pipefail
@@ -43,30 +46,42 @@ bash "$ROOT/packaging/creer_certificat.sh"
 info "recompilation du helper SCK (signature : $IDENTITY)…"
 CODESIGN_IDENTITY="$IDENTITY" bash "$ROOT/helpers/macos/sck-audio/build.sh"
 
-# ── 3. PyInstaller ────────────────────────────────────────────────────────────────
+# ── 3. VERSION_COMPLETE (parité avec le build Windows, docs/32) ─────────────────
+# BUILD_INFO n'est pas propre à la VM Windows : ici c'est juste le format d'échange
+# attendu par generer_version.py (générique, aucun import Windows-only). Nettoyé en
+# sortie (jamais commité — .gitignore), _version.py reste (comme sur la VM Windows :
+# c'est lui qui porte le hash, PyInstaller doit le trouver sur disque).
+info "génération de VERSION_COMPLETE (date + hash git)…"
+date -u +%Y%m%d > "$ROOT/BUILD_INFO"
+git -C "$ROOT" rev-parse --short HEAD >> "$ROOT/BUILD_INFO"
+trap 'rm -f "$ROOT/BUILD_INFO"' EXIT
+"$VENV_BUILD/bin/python" "$ROOT/packaging/windows/generer_version.py" \
+    --build-info "$ROOT/BUILD_INFO"
+
+# ── 4. PyInstaller ────────────────────────────────────────────────────────────────
 info "PyInstaller (packaging/debriefMeet.spec)…"
 rm -rf "$APP"
 "$PYINSTALLER" "$ROOT/packaging/debriefMeet.spec" --noconfirm \
     --distpath "$ROOT/dist" --workpath "$ROOT/build/work"
 [[ -d "$APP" ]] || err "PyInstaller n'a pas produit $APP."
 
-# ── 4. Signature de l'app ────────────────────────────────────────────────────────
+# ── 5. Signature de l'app ────────────────────────────────────────────────────────
 info "signature de l'app (identité : $IDENTITY)…"
 codesign --force --deep --sign "$IDENTITY" "$APP"
 
-# ── 5. Re-signature du helper avec ses entitlements ─────────────────────────────
+# ── 6. Re-signature du helper avec ses entitlements ─────────────────────────────
 info "re-signature du helper SCK avec ses entitlements…"
 [[ -f "$HELPER_IN_APP" ]] || err "helper introuvable dans le bundle : $HELPER_IN_APP"
 codesign --force --sign "$IDENTITY" \
     --entitlements "$ROOT/helpers/macos/sck-audio/entitlements.plist" \
     "$HELPER_IN_APP"
 
-# ── 6. Signature du binaire ffmpeg embarqué ─────────────────────────────────────
+# ── 7. Signature du binaire ffmpeg embarqué ─────────────────────────────────────
 info "signature du binaire ffmpeg embarqué…"
 [[ -f "$FFMPEG_IN_APP" ]] || err "ffmpeg introuvable dans le bundle : $FFMPEG_IN_APP"
 codesign --force --sign "$IDENTITY" "$FFMPEG_IN_APP"
 
-# ── 7. Re-scellage de l'app (sans --deep) ───────────────────────────────────────
+# ── 8. Re-scellage de l'app (sans --deep) ───────────────────────────────────────
 info "re-scellage de l'app…"
 codesign --force --sign "$IDENTITY" "$APP"
 

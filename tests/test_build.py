@@ -307,6 +307,25 @@ class TestFfmpegVendor:
         assert "libopus" in encoders
 
 
+@pytest.mark.skipif(not IS_MACOS, reason="build_app.sh macOS uniquement")
+class TestBuildAppVersion:
+    """VERSION_COMPLETE générée côté macOS avec le même outillage que Windows
+    (packaging/windows/generer_version.py, docs/16 §5.2 / docs/32) — même format
+    "<version>+<AAAAMMJJ>.<hash-git-court>" sur les deux plateformes."""
+
+    BUILD_APP_SH = ROOT / "packaging" / "build_app.sh"
+    BUILD_DMG_SH = ROOT / "packaging" / "build_dmg.sh"
+
+    def test_build_app_genere_version_complete(self):
+        contenu = self.BUILD_APP_SH.read_text()
+        assert "generer_version.py" in contenu
+        assert "BUILD_INFO" in contenu
+
+    def test_build_dmg_utilise_version_complete(self):
+        contenu = self.BUILD_DMG_SH.read_text()
+        assert "VERSION_COMPLETE" in contenu
+
+
 # ── Benchmark : assemblage du bundle portable ─────────────────────────────────
 
 class TestBenchmarkBundle:
