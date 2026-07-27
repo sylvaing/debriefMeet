@@ -108,7 +108,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
-| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ code + tests TERMINÉS et **fusionnés dans `main`** (2026-07-27, 1113 passed sur `main`). La migration a **déjà tourné sur les données réelles** de Sylvain (23 réunions → dossiers, collision `09-56`/`09-56-2` correctement séparée). Reste : validation fonctionnelle complète de l'UI avec le nouveau code (le 1ᵉʳ test manuel a été fait par erreur avec l'ancien code `main` d'avant fusion — cf. docs/43 §12). Correctif inclus : réunion active exclue du listing (ligne en double, § « Stockage des réunions »). |
+| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1113 passed). Migration passée sur les **données réelles** (23 réunions → dossiers, collision `09-56`/`09-56-2` séparée). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat). Correctifs embarqués : réunion active exclue du listing (ligne en double) + migration tracée dans le log (`009badb`). Bilan & écarts : docs/43 §15. |
 
 ## Packaging macOS (Phase 4) — pièges
 
@@ -213,4 +213,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
 | **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main`** | `docs/42` |
-| **Réorganisation 1 dossier/réunion — ✅ terminé, fusionné dans `main`, migration réelle passée** | `docs/43` |
+| **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15)** | `docs/43` |

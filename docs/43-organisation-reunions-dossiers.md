@@ -1,9 +1,14 @@
 # docs/43 — Réorganisation : 1 dossier par réunion
 
-> **Statut : 📋 PLAN À EXÉCUTER (rédigé le 2026-07-27).**
-> Plan d'action destiné à être exécuté par Claude (Sonnet). Toutes les décisions de
-> conception ont été validées avec Sylvain avant rédaction (cf. §1). Le plan est
-> auto-suffisant : suivre les sections dans l'ordre du §11.
+> **Statut : ✅ EXÉCUTÉ, fusionné dans `main` et validé manuellement (2026-07-27).**
+> Plan rédigé puis implémenté le même jour (commits `1ed3b17`, `009badb`). Toutes les
+> décisions de conception avaient été validées avec Sylvain avant rédaction (cf. §1).
+> La migration a tourné sur les **données réelles** (23 réunions → dossiers, collision
+> `09-56`/`09-56-2` correctement séparée) et Sylvain a validé l'UI : listing complet,
+> pas de ligne dupliquée pendant l'enregistrement, renommage du dossier sur changement
+> de titre. 1113 tests passent sur `main`.
+>
+> Bilan d'exécution, écarts au plan et pièges rencontrés : **§15** en fin de document.
 
 ---
 
@@ -615,3 +620,64 @@ sous-dossier, `rmtree`).
 - Table « Docs de référence » de `CLAUDE.md` : ajouter `docs/43`.
 - Mémoire projet : consigner le nouveau modèle de stockage (1 dossier/réunion, noms génériques,
   renommage sur titre, migration one-shot) — utile pour toutes les sessions futures.
+
+---
+
+## 15. Bilan d'exécution (2026-07-27) — écarts au plan
+
+Le plan a été suivi intégralement (§11), avec deux écarts et un ajout à noter.
+
+### 15.1 Écart : la migration a tourné sur les données réelles sans sauvegarde
+
+Le §13 recommandait de sauvegarder `~/Documents/debriefMeet/reunions/` (ou de pointer
+`dossier_reunions` vers une copie) **avant** le premier lancement. Ça n'a pas été fait :
+l'app a été lancée pour vérifier qu'elle démarrait, elle a chargé la config réelle et a
+migré les 23 réunions immédiatement. Résultat correct (vérifié : 23 dossiers, les 6
+associées BlueMind ont leur slug, la collision `09-56` / `09-56-2` donne 2 dossiers
+distincts), mais la précaution du §13 n'a pas joué son rôle.
+
+**Conséquence durable** : un `git checkout` vers un commit antérieur à `1ed3b17` rendrait
+les réunions **invisibles** dans l'UI (l'ancien listing ne lit que les `.md` à plat). Le
+rollback n'est donc plus une opération neutre — il faudrait une migration inverse.
+
+### 15.2 Écart : `configurer_logs()` doit précéder la migration
+
+Le §7.4 situait l'appel « après le chargement de la config et avant la construction des
+vues ». Appliqué littéralement, il tombait **entre `config.charger()` et
+`configurer_logs()`** : aucun handler installé, donc les traces de la migration partaient
+dans le vide — y compris les `WARNING` d'échec par réunion, alors que la migration
+continue volontairement sur les suivantes. Défaut invisible en tests unitaires (le
+`caplog` de pytest capture, lui), trouvé seulement sur le vrai log de Sylvain.
+
+Corrigé en `009badb` : la migration est appelée **après `configurer_logs()`** et **après
+les deux garde-fous d'instance unique** (mutex Windows + IPC), pour qu'un 2ᵉ lancement ne
+déplace pas de fichiers avant de ressortir. Elle reste très en amont des vues/modèles.
+
+**Leçon transposable** : dans `__main__.py`, tout code métier qui touche aux fichiers de
+l'utilisateur doit être placé après `configurer_logs()`, jamais entre le chargement de la
+config et l'installation des logs.
+
+### 15.3 Ajout hors plan : réunion active exclue du listing
+
+Bug **pré-existant** (antérieur à docs/43) que la surveillance du sous-dossier (§9) rendait
+systématiquement visible : le `transcription.md` de la réunion active étant créé dès le
+démarrage de l'enregistrement, elle s'affichait à la fois comme ligne normale **et** comme
+ligne « en cours ». Corrigé dans le même commit que docs/43 :
+`CaptureModel.definir_chemin_actif` (posé par `reunion_view.definir_reunion_active`, remis
+à `None` au retour en `Mode.IDLE`), + 6 tests de non-régression.
+
+### 15.4 Piège de validation rencontré
+
+Le premier test manuel a été mené **avec l'ancien code** : `make run` depuis le dépôt
+principal (alors sur `main` d'avant fusion) n'exécute pas le code d'un worktree, et un
+worktree fraîchement créé n'a pas son propre `.venv`. Symptômes trompeurs — réunions
+migrées invisibles, enregistrements toujours à plat — tous attribuables au layout à plat
+de l'ancien listing. Pour tester un worktree :
+`PYTHONPATH=src <dépôt-principal>/.venv/bin/python -m debrief_meet`.
+
+### 15.5 Reliquat connu, sans impact
+
+6 fichiers `*_CR.md` du 21/07 restent à la racine de `reunions/` : des CR orphelins
+(aucune réunion correspondante, restes de tests manuels de docs/42). La migration les
+ignore volontairement — elle ne traite que les `.md` de réunion. Invisibles dans
+l'Historique, supprimables à la main.
