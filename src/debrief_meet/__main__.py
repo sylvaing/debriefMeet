@@ -173,20 +173,6 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     config = Config()
     config.charger()
 
-    # Migration one-shot réunions → 1 dossier/réunion (docs/43) — avant toute lecture
-    # de dossier_reunions par l'UI (modèles/vues construits plus bas).
-    try:
-        from pathlib import Path
-
-        from debrief_meet.core.migration_dossiers import migrer_reunions_vers_dossiers
-        n_migrees = migrer_reunions_vers_dossiers(Path(config.get("dossier_reunions")))
-        if n_migrees:
-            logging.getLogger("debrief_meet").info(
-                "Migration réunions → dossiers : %d réunion(s) migrée(s)", n_migrees)
-    except Exception:
-        logging.getLogger("debrief_meet").warning(
-            "Migration réunions → dossiers : échec non bloquant", exc_info=True)
-
     # Logs
     configurer_logs(
         actifs=config.get("logs_actifs"),
@@ -223,6 +209,22 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     if not serveur_ipc.demarrer():
         print("Erreur : impossible de démarrer le serveur IPC.", file=sys.stderr)
         sys.exit(1)
+
+    # Migration one-shot réunions → 1 dossier/réunion (docs/43 §7.4). Placée ici
+    # volontairement : APRÈS `configurer_logs()` (sinon la seule opération qui déplace
+    # les fichiers réels de l'utilisateur ne laisse aucune trace dans le log) et après
+    # les deux garde-fous d'instance unique (un 2ᵉ lancement ne doit pas toucher aux
+    # fichiers avant de ressortir) ; bien AVANT la construction des vues/modèles, qui
+    # sont les premiers à lire `dossier_reunions`.
+    try:
+        from pathlib import Path
+
+        from debrief_meet.core.migration_dossiers import migrer_reunions_vers_dossiers
+        n_migrees = migrer_reunions_vers_dossiers(Path(config.get("dossier_reunions")))
+        if n_migrees:
+            logger.info("Migration réunions → dossiers : %d réunion(s) migrée(s)", n_migrees)
+    except Exception:
+        logger.warning("Migration réunions → dossiers : échec non bloquant", exc_info=True)
 
     # Machine à états
     machine = MachineEtats()
