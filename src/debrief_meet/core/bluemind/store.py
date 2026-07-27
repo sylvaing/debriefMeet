@@ -127,6 +127,36 @@ class StoreCalendrier:
                     ),
                 )
 
+    def remplacer_evenements(self, cal_uid: str, evenements: list[Evenement]) -> None:
+        """Remplace *tout* le contenu d'un calendrier par `evenements` (delete + insert
+        atomique). Utilisé par la resync complète (docs/40 §5.2) : comme on ne suit plus
+        de changeset incrémental, un simple upsert laisserait traîner les événements
+        supprimés/annulés côté serveur — le remplacement garantit que la réplique reflète
+        exactement la fenêtre synchronisée (occurrences récurrentes comprises)."""
+        with self._connexion() as conn:
+            conn.execute("DELETE FROM evenements WHERE cal_uid = ?", (cal_uid,))
+            conn.executemany(
+                "INSERT INTO evenements "
+                "(uid, cal_uid, debut_ms, fin_ms, journee_entiere, titre, lieu, "
+                " organisateur_json, invites_json, mon_part_status, serie_uid, json_complet) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(uid, cal_uid, debut_ms) DO UPDATE SET "
+                " fin_ms=excluded.fin_ms, journee_entiere=excluded.journee_entiere, "
+                " titre=excluded.titre, lieu=excluded.lieu, "
+                " organisateur_json=excluded.organisateur_json, invites_json=excluded.invites_json, "
+                " mon_part_status=excluded.mon_part_status, serie_uid=excluded.serie_uid, "
+                " json_complet=excluded.json_complet",
+                [
+                    (
+                        e.uid, e.cal_uid, e.debut_ms, e.fin_ms, int(e.journee_entiere),
+                        e.titre, e.lieu, json.dumps(e.organisateur, ensure_ascii=False),
+                        json.dumps(e.invites, ensure_ascii=False), e.mon_part_status,
+                        e.serie_uid, json.dumps(e.json_complet, ensure_ascii=False),
+                    )
+                    for e in evenements
+                ],
+            )
+
     def supprimer_par_serie(self, cal_uid: str, series_uids: list[str]) -> int:
         """Supprime toutes les occurrences dont `serie_uid` (ou `uid` pour un événement
         non récurrent, où série == uid) est dans `series_uids`."""

@@ -53,7 +53,8 @@ core/bluemind/            ← pur Python, aucun import OS-specific ni Qt (règle
 ├── __init__.py
 ├── client.py             # ClientBlueMind : httpx sync, auth X-BM-ApiKey, erreurs
 ├── identite.py           # résolution email → domain_uid/user_uid (au 1er usage, cachée)
-├── sync.py               # SynchroCalendrier : changeset incrémental → store
+├── sync.py               # SynchroCalendrier : resync complète _search → store (§5.2)
+├── recurrence.py         # expansion des séries récurrentes (rrule/exdate/exceptions, §5.2)
 ├── store.py              # réplique locale SQLite (événements + méta de sync)
 ├── matching.py            # enregistrement (début, durée) → événements qui chevauchent
 ├── participants.py       # extraction invités d'un VEvent, bloc markdown, insertion idempotente
@@ -96,13 +97,14 @@ core/planificateur_reunions.py  # F3 : surveille la réplique, émet les notific
 | Identité : user par email | `GET users/{domain}/byEmail/{email}` ; fallback non-admin : `POST directory/{domain}/_search` (le `domain_uid` réel se déduit de `value.path`) | [réf] `bmapi/api.py:get_user` / `directory_search` |
 | Calendriers de l'utilisateur | `POST containers/_manage/_list` (type `calendar`) ; défaut : `calendar:Default:{user_uid}` | [réf] `bmapi/api.py:get_user_calendars` |
 | Événements par plage | `POST calendars/{cal_uid}/_search` avec `dateMin`/`dateMax` en BmDateTime `{iso8601, timezone, precision}` — retourne les VEventSeries **complets** (summary, dtstart/dtend, location, organizer, attendees avec `commonName`/`mailto`/`partStatus`, rrule) | [réf] `bmapi/models/calendar.py:search_events` |
-| **Sync incrémentale** | changeset versionné du conteneur : `GET calendars/{cal_uid}/_changesetById?since={version}` → `{created, updated, deleted, version}` puis récupération des valeurs (`_mget` ou items complets) — **vérifier la forme exacte dans `bmapi/models/changeset.py` et `bmapi/directory/` (DirectorySync applique ce pattern)** | [pressenti] — **plan B** : re-`_search` complet de la fenêtre glissante (simple, correct, juste moins efficace) |
+| ~~**Sync incrémentale**~~ | **retirée le 2026-07-27 (§5.2)** : le changeset ne développait pas les séries récurrentes → réunions récurrentes invisibles à l'association. Remplacée par une resync **complète** `_search` + expansion à chaque synchro (calendrier minuscule, coût négligeable). | — |
 
-⚠️ Les événements **récurrents** : le `_search` par plage retourne les occurrences dans
-la plage ; le changeset retourne les **séries**. En mode changeset, développer les
-occurrences dans la fenêtre locale (rrule simple : FREQ/UNTIL/COUNT/BYDAY) ou, plus
-simple, stocker les séries et interroger le store avec expansion à la lecture. Si trop
-complexe en v1 : plan B (re-_search périodique) assumé — la correction prime.
+⚠️ Les événements **récurrents** — **corrigé le 2026-07-27, cf. §5.2** : l'hypothèse
+initiale (« le `_search` par plage retourne les occurrences dans la plage ») était
+**fausse**. En test réel, `POST calendars/_search` renvoie la **série maître** (un seul
+VEvent avec `dtstart` = date de *départ* de la série, `rrule`, `exdate` et `occurrences`
+d'exception), **jamais** les occurrences développées. Il faut donc les développer
+**côté client** (`recurrence.py`) — voir §5.2.
 
 ## 4. Configuration (Préférences, section « BlueMind »)
 
@@ -154,8 +156,13 @@ CREATE INDEX idx_evt_plage ON evenements (debut_ms, fin_ms);
   Historique ; démarrage d'un mode Réunion ; timer `bluemind_sync_minutes` ; clic
   « Tester la connexion ». Un seul worker à la fois (verrou — si une sync tourne, les
   déclencheurs sont ignorés).
-- **Purge** : à chaque sync, supprimer les événements hors fenêtre glissante.
-- Première sync = `_search` sur toute la fenêtre ; ensuite changeset (§3, avec plan B).
+- **Stratégie de sync (révisée le 2026-07-27, §5.2)** : à **chaque** synchro, resync
+  **complète** — `_search` de la fenêtre, expansion des récurrences, puis
+  **remplacement total** du calendrier dans la réplique (`store.remplacer_evenements`).
+  Le chemin **incrémental** (changeset `_changesetById`) a été **retiré** : il ne
+  développait pas les séries et rendait toutes les réunions récurrentes invisibles à
+  l'association. Le coût réseau (un `_search`, calendrier minuscule) est négligeable —
+  la correction prime sur l'efficacité.
 
 ### 5.1 Reset total de la synchro
 
@@ -175,6 +182,33 @@ Deux déclencheurs :
    (changement de serveur ou de compte → la réplique et l'identité cachée sont
    invalides par construction). Un simple changement de clé API (renouvellement) ne
    reset pas.
+
+### 5.2 Expansion des séries récurrentes (`recurrence.py`) — bug 2026-07-27
+
+**Symptôme** : une réunion hebdomadaire (« point commerce Bastien », tous les lundis)
+n'était jamais proposée à l'association, alors que l'enregistrement tombait pile dessus.
+
+**Cause** : `_search` renvoie la **série maître** (dtstart = date de départ, ex.
+2025-09-08, + `rrule`), pas les occurrences. L'ancien `evenement_depuis_json` ne retenait
+que `main.dtstart` → un unique événement à la date de *départ* → purgé hors fenêtre →
+série totalement absente de la réplique. Toutes les réunions récurrentes étaient donc
+invisibles.
+
+**Correctif** : `core/bluemind/recurrence.py::expanser_serie` développe la série en
+occurrences concrètes chevauchant la fenêtre, avec `dateutil.rrule` :
+
+- fréquence `DAILY/WEEKLY/MONTHLY/YEARLY`, `interval`, `count`, `until`, `byDay`
+  (offset compris, ex. « 3e lundi »), `byMonth`/`byMonthDay`/`bySetPos`… ;
+- **ancrage DST** : la `rrule` est ancrée sur l'heure **murale** rattachée à la vraie
+  zone nommée (`Europe/Paris`), pas à l'offset figé de l'iso8601 — sinon les occurrences
+  d'hiver (et l'exclusion des `exdate` d'hiver) seraient décalées d'une heure ;
+- `exdate` (occurrences annulées) exclues ; `occurrences` d'exception (instances
+  déplacées/modifiées) émises à **leur** horaire propre, exception `status == "Cancelled"`
+  n'émettant rien. Comparaisons en **epoch ms** (pas d'égalité de `datetime` tz-aware).
+
+Une même série partage un `uid` ; les occurrences sont distinguées par `debut_ms`
+(PK `(uid, cal_uid, debut_ms)`). Ajoute la dépendance cœur **`python-dateutil`**.
+Tests : `tests/test_bluemind_recurrence.py` (+ `test_sync_complete_developpe_les_recurrences`).
 
 Comme tout le reste : non bloquant — le reset vide le store immédiatement (opération
 locale rapide), la resync se fait en fond ; entre les deux, l'app se comporte comme

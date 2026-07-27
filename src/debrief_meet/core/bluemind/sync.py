@@ -23,12 +23,7 @@ from zoneinfo import ZoneInfo
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from debrief_meet.core.arret_threads import arreter_thread, proteger_thread
-from debrief_meet.core.bluemind.client import (
-    ClientBlueMind,
-    ErreurBlueMind,
-    ErreurIntrouvable,
-    ErreurServeurBlueMind,
-)
+from debrief_meet.core.bluemind.client import ClientBlueMind, ErreurBlueMind
 from debrief_meet.core.bluemind.identite import IdentiteResolue, resoudre_identite
 from debrief_meet.core.bluemind.store import Evenement, StoreCalendrier
 
@@ -159,31 +154,13 @@ def _extraire_items(corps) -> list[dict]:
     return []
 
 
-def occurrences_depuis_serie(
-    uid: str, cal_uid: str, serie: dict, email_utilisateur: str
-) -> tuple[list[Evenement], bool]:
-    """Une série récurrente (`rrule` ou `occurrences` non vide) n'est PAS développée
-    ici — repli plan B (re-`_search`) assumé pour ce cas (docs/40 §3, « si trop
-    complexe en v1 »). Retourne `(occurrences, besoin_recherche_complete)`."""
-    main = serie.get("main", serie)
-    occurrences_brutes = serie.get("occurrences") or []
-    if main.get("rrule") or occurrences_brutes:
-        return [], True
-    evt = evenement_depuis_json({"uid": uid, "value": {"main": main}}, cal_uid, email_utilisateur)
-    return ([evt] if evt is not None else []), False
-
-
 # ── Algorithme de synchronisation (pur, testable sans QThread) ─────────────────
 
 @dataclass
 class ResultatSync:
     ajoutes_ou_maj: int
     supprimes: int
-    methode: str  # "recherche_complete" | "changeset"
-
-
-def _cle_version(cal_uid: str) -> str:
-    return f"changeset_version:{cal_uid}"
+    methode: str  # toujours "recherche_complete" depuis docs/40 §5.2 (incrémental retiré)
 
 
 def _identite_avec_cache(client: ClientBlueMind, store: StoreCalendrier, email: str) -> IdentiteResolue:
@@ -207,69 +184,35 @@ def _rechercher(client: ClientBlueMind, cal_uid: str, debut: datetime, fin: date
     return _extraire_items(reponse.json())
 
 
-def _version_courante(client: ClientBlueMind, cal_uid: str) -> int | None:
-    try:
-        r = client.get(f"calendars/{cal_uid}/_changesetById", params={"since": 0})
-    except (ErreurIntrouvable, ErreurServeurBlueMind):
-        return None
-    try:
-        return int(r.json()["version"])
-    except (KeyError, ValueError, TypeError):
-        return None
+def _evenements_depuis_item(
+    item: dict, cal_uid: str, email: str, debut: datetime, fin: datetime,
+) -> list[Evenement]:
+    """Un item `_search` → un ou plusieurs `Evenement`. Une série récurrente est
+    développée en occurrences concrètes (docs/40 §5.2) ; un événement simple donne
+    un seul `Evenement`. Import tardif de `recurrence` pour éviter un cycle (recurrence
+    importe les primitives de parsing d'ici)."""
+    from debrief_meet.core.bluemind.recurrence import est_serie, expanser_serie
+
+    if est_serie(item):
+        return expanser_serie(item, cal_uid, email, debut, fin)
+    evt = evenement_depuis_json(item, cal_uid, email)
+    return [evt] if evt is not None else []
 
 
 def _sync_complete(
     client: ClientBlueMind, store: StoreCalendrier, cal_uid: str, email: str,
     debut: datetime, fin: datetime,
 ) -> ResultatSync:
+    """Resync complète : `_search` de la fenêtre, développement des récurrences, puis
+    **remplacement total** du calendrier dans la réplique. C'est l'unique stratégie
+    depuis docs/40 §5.2 — le chemin incrémental (changeset) ne développait pas les
+    séries et rendait toutes les réunions récurrentes invisibles à l'association."""
     items = _rechercher(client, cal_uid, debut, fin)
-    evenements = [e for e in (evenement_depuis_json(it, cal_uid, email) for it in items) if e is not None]
-    store.upsert_evenements(evenements)
-    nouvelle_version = _version_courante(client, cal_uid)
-    if nouvelle_version is not None:
-        store.set_meta(_cle_version(cal_uid), str(nouvelle_version))
-    else:
-        store.supprimer_meta(_cle_version(cal_uid))
-    return ResultatSync(ajoutes_ou_maj=len(evenements), supprimes=0, methode="recherche_complete")
-
-
-def _tenter_sync_incrementale(
-    client: ClientBlueMind, store: StoreCalendrier, cal_uid: str, version: int, email: str,
-) -> ResultatSync | None:
-    try:
-        changeset = client.get(f"calendars/{cal_uid}/_changesetById", params={"since": version}).json()
-    except (ErreurIntrouvable, ErreurServeurBlueMind):
-        return None
-
-    crees, maj = changeset.get("created", []), changeset.get("updated", [])
-    supprimes_uids = changeset.get("deleted", [])
-    nouvelle_version = changeset.get("version")
-
     evenements: list[Evenement] = []
-    for uid in (*crees, *maj):
-        try:
-            reponse = client.get(f"calendars/{cal_uid}/{uid}/complete")
-        except (ErreurIntrouvable, ErreurServeurBlueMind):
-            return None  # item inaccessible par cette voie -> plan B pour tout le lot
-        if not reponse.content:
-            # Constaté en test réel (2026-07-09) : le changeset retourne des id
-            # internes entiers, pas les uid string qu'attend `.../complete`
-            # (réponse 204 vide) — on ne peut pas se fier à l'incrémental ici.
-            return None
-        try:
-            serie = reponse.json()
-        except ValueError:
-            return None
-        occurrences, besoin_recherche = occurrences_depuis_serie(uid, cal_uid, serie, email)
-        if besoin_recherche:
-            return None  # récurrence non triviale -> plan B
-        evenements.extend(occurrences)
-
-    store.upsert_evenements(evenements)
-    n_supprimes = store.supprimer_par_serie(cal_uid, supprimes_uids)
-    if nouvelle_version is not None:
-        store.set_meta(_cle_version(cal_uid), str(nouvelle_version))
-    return ResultatSync(ajoutes_ou_maj=len(evenements), supprimes=n_supprimes, methode="changeset")
+    for it in items:
+        evenements.extend(_evenements_depuis_item(it, cal_uid, email, debut, fin))
+    store.remplacer_evenements(cal_uid, evenements)
+    return ResultatSync(ajoutes_ou_maj=len(evenements), supprimes=0, methode="recherche_complete")
 
 
 def executer_sync(
@@ -279,22 +222,20 @@ def executer_sync(
 ) -> ResultatSync:
     """Logique complète d'une synchronisation — pure (sans QThread), directement
     testable. Lève `ErreurBlueMind` en cas d'échec réseau/identité (capturé par le
-    worker Qt, jamais affiché sauf « Tester la connexion », cf. §1.1)."""
+    worker Qt, jamais affiché sauf « Tester la connexion », cf. §1.1).
+
+    Toujours une resync complète + expansion des récurrences (docs/40 §5.2) : les
+    occurrences sont fenêtre-relatives, il faut donc les régénérer à chaque synchro
+    quand la fenêtre glisse. Le coût réseau (un `_search`, calendrier minuscule) est
+    négligeable — « la correction prime sur l'efficacité réseau en v1 »."""
     maintenant = maintenant or datetime.now(timezone.utc)
     identite = _identite_avec_cache(client, store, email)
     cal_uid = f"calendar:Default:{identite.user_uid}"
     debut = maintenant - timedelta(days=fenetre_passe_jours)
     fin = maintenant + timedelta(days=fenetre_futur_jours)
-    debut_ms, fin_ms = _epoch_ms(debut), _epoch_ms(fin)
 
-    resultat = None
-    version_brute = store.get_meta(_cle_version(cal_uid))
-    if version_brute is not None:
-        resultat = _tenter_sync_incrementale(client, store, cal_uid, int(version_brute), email)
-    if resultat is None:
-        resultat = _sync_complete(client, store, cal_uid, email, debut, fin)
+    resultat = _sync_complete(client, store, cal_uid, email, debut, fin)
 
-    store.purger_hors_fenetre(debut_ms, fin_ms)
     store.set_meta("derniere_sync", maintenant.isoformat())
     return resultat
 

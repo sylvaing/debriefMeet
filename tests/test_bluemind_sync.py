@@ -81,7 +81,10 @@ def test_mon_part_status_absent():
     assert mon_part_status(EMAIL, {"email": "autre@ex.com"}, []) is None
 
 
-# ── Sync complète (identité + _search + version) ────────────────────────────
+# ── Sync complète (identité + _search + expansion + remplacement) ────────────
+# Depuis docs/40 §5.2 : plus de chemin incrémental (changeset) — il ne développait
+# pas les séries récurrentes et les rendait invisibles à l'association. Chaque synchro
+# est une resync complète avec expansion (cf. test_bluemind_recurrence.py).
 
 @respx.mock
 def test_premiere_sync_complete(tmp_path):
@@ -91,8 +94,6 @@ def test_premiere_sync_complete(tmp_path):
         return_value=httpx.Response(200, json={"values": [
             {"uid": "evt-1", "value": {"main": _main()}},
         ]}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(
-        return_value=httpx.Response(200, json={"version": 7, "created": [], "updated": [], "deleted": []}))
 
     store = StoreCalendrier(tmp_path / "bm.sqlite3")
     client = ClientBlueMind(URL, "token")
@@ -100,7 +101,6 @@ def test_premiere_sync_complete(tmp_path):
 
     assert resultat.methode == "recherche_complete"
     assert resultat.ajoutes_ou_maj == 1
-    assert store.get_meta("changeset_version:calendar:Default:u1") == "7"
     assert store.nombre_evenements() == 1
 
 
@@ -109,7 +109,6 @@ def test_identite_mise_en_cache(tmp_path):
     route = respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
         return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
 
     store = StoreCalendrier(tmp_path / "bm.sqlite3")
     client = ClientBlueMind(URL, "token")
@@ -119,102 +118,44 @@ def test_identite_mise_en_cache(tmp_path):
 
 
 @respx.mock
-def test_sync_incrementale_applique_changeset(tmp_path):
-    store = StoreCalendrier(tmp_path / "bm.sqlite3")
-    store.set_meta("identite_email", EMAIL)
-    store.set_meta("identite_domain_uid", "bluemind.net")
-    store.set_meta("identite_user_uid", "u1")
-    store.set_meta("changeset_version:calendar:Default:u1", "5")
-
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(
-        return_value=httpx.Response(200, json={
-            "version": 6, "created": ["evt-new"], "updated": [], "deleted": ["evt-old"]}))
-    respx.get(f"{URL}/calendars/{CAL}/evt-new/complete").mock(
-        return_value=httpx.Response(200, json={"main": _main(summary="Nouveau"), "occurrences": []}))
-
-    client = ClientBlueMind(URL, "token")
-    resultat = executer_sync(client, store, EMAIL, 90, 30)
-
-    assert resultat.methode == "changeset"
-    assert resultat.ajoutes_ou_maj == 1
-    assert store.get_meta("changeset_version:calendar:Default:u1") == "6"
-
-
-@respx.mock
-def test_sync_incrementale_repli_sur_recurrence(tmp_path):
-    store = StoreCalendrier(tmp_path / "bm.sqlite3")
-    store.set_meta("identite_email", EMAIL)
-    store.set_meta("identite_domain_uid", "bluemind.net")
-    store.set_meta("identite_user_uid", "u1")
-    store.set_meta("changeset_version:calendar:Default:u1", "5")
-
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(
-        return_value=httpx.Response(200, json={"version": 6, "created": ["evt-r"], "updated": [], "deleted": []}))
-    respx.get(f"{URL}/calendars/{CAL}/evt-r/complete").mock(
-        return_value=httpx.Response(200, json={
-            "main": _main(rrule={"frequency": "WEEKLY"}), "occurrences": []}))
+def test_sync_complete_developpe_les_recurrences(tmp_path):
+    """Une série hebdomadaire renvoyée par `_search` est développée en occurrences
+    concrètes dans la fenêtre (régression « point commerce Bastien », docs/40 §5.2)."""
+    serie = _main(summary="Point hebdo", debut="2026-06-01T09:30:00+02:00",
+                  fin="2026-06-01T10:00:00+02:00",
+                  rrule={"frequency": "WEEKLY", "interval": 1, "byDay": [{"day": "MO", "offset": 0}]})
+    respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
+        return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(
-        return_value=httpx.Response(200, json={"values": [{"uid": "evt-r", "value": {"main": _main()}}]}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById", params={"since": 0}).mock(
-        return_value=httpx.Response(200, json={"version": 9}))
+        return_value=httpx.Response(200, json={"values": [{"uid": "evt-hebdo", "value": {"main": serie}}]}))
 
-    client = ClientBlueMind(URL, "token")
-    resultat = executer_sync(client, store, EMAIL, 90, 30)
-    assert resultat.methode == "recherche_complete"  # repli plan B
-
-
-@respx.mock
-def test_sync_incrementale_repli_si_item_introuvable_204_vide(tmp_path):
-    """Constaté en test réel (2026-07-09) : le changeset BlueMind retourne des id
-    internes entiers que `.../complete` ne reconnaît pas (204 sans corps) — la sync
-    doit basculer en plan B pour tout le lot, pas ignorer silencieusement l'item."""
     store = StoreCalendrier(tmp_path / "bm.sqlite3")
-    store.set_meta("identite_email", EMAIL)
-    store.set_meta("identite_domain_uid", "bluemind.net")
-    store.set_meta("identite_user_uid", "u1")
-    store.set_meta("changeset_version:calendar:Default:u1", "5")
-
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(
-        return_value=httpx.Response(200, json={"version": 6, "created": [123456], "updated": [], "deleted": []}))
-    respx.get(f"{URL}/calendars/{CAL}/123456/complete").mock(return_value=httpx.Response(204))
-    respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-
     client = ClientBlueMind(URL, "token")
-    resultat = executer_sync(client, store, EMAIL, 90, 30)
+    resultat = executer_sync(client, store, EMAIL, 7, 28, maintenant=datetime(2026, 6, 8, 12, tzinfo=timezone.utc))
+
     assert resultat.methode == "recherche_complete"
+    # 1 item _search -> plusieurs occurrences (lundis de la fenêtre)
+    assert resultat.ajoutes_ou_maj >= 4
+    assert store.nombre_evenements() >= 4
 
 
 @respx.mock
-def test_sync_incrementale_repli_si_endpoint_absent(tmp_path):
-    store = StoreCalendrier(tmp_path / "bm.sqlite3")
-    store.set_meta("identite_email", EMAIL)
-    store.set_meta("identite_domain_uid", "bluemind.net")
-    store.set_meta("identite_user_uid", "u1")
-    store.set_meta("changeset_version:calendar:Default:u1", "5")
+def test_sync_complete_retire_les_evenements_obsoletes(tmp_path):
+    """Sans changeset, la resync complète doit refléter les suppressions serveur :
+    un événement présent en réplique mais absent du `_search` disparaît (remplacement)."""
+    from debrief_meet.core.bluemind.store import Evenement
 
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
-    respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-
-    client = ClientBlueMind(URL, "token")
-    resultat = executer_sync(client, store, EMAIL, 90, 30)
-    assert resultat.methode == "recherche_complete"
-
-
-@respx.mock
-def test_purge_hors_fenetre_apres_sync(tmp_path):
-    store = StoreCalendrier(tmp_path / "bm.sqlite3")
     respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
         return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
 
-    from debrief_meet.core.bluemind.store import Evenement
+    store = StoreCalendrier(tmp_path / "bm.sqlite3")
     store.upsert_evenements([Evenement(
         uid="vieux", cal_uid=CAL, debut_ms=0, fin_ms=100, journee_entiere=False,
         titre="Vieux", lieu="")])
 
     client = ClientBlueMind(URL, "token")
-    executer_sync(client, store, EMAIL, 1, 1, maintenant=datetime(2026, 7, 8, tzinfo=timezone.utc))
+    executer_sync(client, store, EMAIL, 90, 30, maintenant=datetime(2026, 7, 8, tzinfo=timezone.utc))
     assert store.nombre_evenements() == 0
 
 
@@ -241,7 +182,6 @@ def test_verrou_ignore_declenchement_concurrent(qapp, tmp_path):
     respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
         return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
 
     cfg = _config_bluemind(tmp_path)
     sync = SynchroCalendrier(cfg, store=StoreCalendrier(tmp_path / "bm.sqlite3"))
@@ -255,7 +195,6 @@ def test_synchroniser_emet_terminee(qapp, tmp_path, qtbot):
     respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
         return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
 
     cfg = _config_bluemind(tmp_path)
     sync = SynchroCalendrier(cfg, store=StoreCalendrier(tmp_path / "bm.sqlite3"))
@@ -287,7 +226,6 @@ def test_reinitialiser_vide_puis_relance(qapp, tmp_path, qtbot):
     respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
         return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
     respx.post(f"{URL}/calendars/_search").mock(return_value=httpx.Response(200, json={"values": []}))
-    respx.get(f"{URL}/calendars/{CAL}/_changesetById").mock(return_value=httpx.Response(404))
 
     cfg = _config_bluemind(tmp_path)
     store = StoreCalendrier(tmp_path / "bm.sqlite3")
