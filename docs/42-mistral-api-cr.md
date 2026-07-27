@@ -1,9 +1,11 @@
 # Interco Mistral — transcription cloud + génération de compte-rendu (CR)
 
-> **Statut : 🔄 CODE + TESTS UNITAIRES TERMINÉS (2026-07-21, Sonnet) — 1032 passed sans
-> réseau (+75 tests). Reste : validation manuelle avec Sylvain + clé API Mistral réelle
-> (les deux branches — transcript local et repli Voxtral) et mise à jour de la doc
-> utilisateur (mention transcription cloud UE).**
+> **Statut : ✅ TERMINÉ (2026-07-21, Sonnet) — code + tests (1042 passed sans réseau) +
+> VALIDATION MANUELLE avec clé API Mistral réelle OK (Sylvain). Reste (hors périmètre
+> livraison) : fusion de la branche dans `main`.**
+> Correctifs annexes livrés au passage : log d'indisponibilité de la capture système,
+> exclusion + suppression des dérivés `_CR.md`/`.bluemind.json`, récupération de la
+> transcription Voxtral dans le `.md` local, injection des invités d'événement au CR.
 > Spike de faisabilité VALIDÉ au préalable (2026-07-20) — chaîne complète exécutée sur une
 > vraie réunion (voir « Résultats du spike » ci-dessous).
 > Branche de travail : `claude/mistral-api-transcription-cr-f15d4a` (worktree dédié).
@@ -543,10 +545,9 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
   bloquant : le bouton reste directement visible à côté du champ clé.
 - [x] **Défaut adaptatif** (décision 1) : CR depuis le transcript local quand il existe ;
   repli Voxtral si absent ; forçage Voxtral via `mistral_source_transcription="voxtral"`.
-- [ ] Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
-  clé réelle (**validation manuelle Sylvain restante**) — testé sur les deux branches
-  (local et Voxtral) en unitaire (mocké, `test_mistral_pipeline.py`) ; reste le test avec
-  clé API réelle.
+- [x] Bouton « Générer le CR » produit un `<stem>_CR.md` correct sur une vraie réunion, avec
+  clé réelle — **validation manuelle Sylvain OK (2026-07-21)**, en plus des tests unitaires
+  mockés (`test_mistral_pipeline.py`).
 - [x] Séparation Moi/Participants préservée dans le CR (via les 2 pistes, sans `diarize`).
 - [x] **Aucune notion de coût/prix (€, $) nulle part dans l'app** — UI, didacticiel, logs
   (§11) : vérifié par relecture de tout le code produit, aucune occurrence.
