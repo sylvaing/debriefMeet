@@ -23,9 +23,16 @@ def _evt(uid="evt-1", titre="Point projet X", debut=None, invites=None, organisa
     )
 
 
+def _md(tmp_path, nom="2026-07-08_14-00-00", texte="# Réunion — 2026-07-08 14:00\n\nTexte\n"):
+    dossier = tmp_path / nom
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text(texte, encoding="utf-8")
+    return md
+
+
 def test_un_seul_evenement_va_direct_au_recap(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte\n", encoding="utf-8")
+    md = _md(tmp_path)
     dlg = DialogAssociationBluemind(md, [_evt()])
     assert dlg._page_choix is None
     assert dlg._evenement_choisi is not None
@@ -33,8 +40,7 @@ def test_un_seul_evenement_va_direct_au_recap(qapp, tmp_path):
 
 
 def test_plusieurs_evenements_affiche_le_choix(qapp, tmp_path):
-    md = tmp_path / "r.md"
-    md.write_text("# Réunion\n", encoding="utf-8")
+    md = _md(tmp_path, nom="r", texte="# Réunion\n")
     e1, e2 = _evt(uid="e1"), _evt(uid="e2", titre="Autre réunion")
     dlg = DialogAssociationBluemind(md, [e1, e2])
     assert dlg._page_choix is not None
@@ -47,12 +53,13 @@ def test_plusieurs_evenements_affiche_le_choix(qapp, tmp_path):
 
 
 def test_validation_ecrit_le_sidecar(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTranscription\n", encoding="utf-8")
+    md = _md(tmp_path, texte="# Réunion — 2026-07-08 14:00\n\nTranscription\n")
     dlg = DialogAssociationBluemind(md, [_evt()])
     dlg._valider()
 
-    asso = association.lire(md)
+    # Le dossier a été renommé (titre appliqué, docs/43 §6.1) — relire via la
+    # propriété mise à jour du dialog, pas via `md` (chemin devenu périmé).
+    asso = association.lire(dlg.chemin_md)
     assert asso is not None
     assert asso.event_uid == "evt-1"
     assert len(asso.invites) == 3
@@ -60,42 +67,40 @@ def test_validation_ecrit_le_sidecar(qapp, tmp_path):
 
 
 def test_validation_insere_bloc_invites(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTranscription\n", encoding="utf-8")
+    md = _md(tmp_path, texte="# Réunion — 2026-07-08 14:00\n\nTranscription\n")
     dlg = DialogAssociationBluemind(md, [_evt()])
     dlg._valider()
-    assert MARQUEUR_DEBUT in md.read_text(encoding="utf-8")
+    assert MARQUEUR_DEBUT in dlg.chemin_md.read_text(encoding="utf-8")
 
 
 def test_decocher_un_invite_lexclut_du_bloc(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTranscription\n", encoding="utf-8")
+    md = _md(tmp_path, texte="# Réunion — 2026-07-08 14:00\n\nTranscription\n")
     dlg = DialogAssociationBluemind(md, [_evt()])
     for check, p in dlg._checks_invites:
         if p.get("email") == "marie.martin@example.com":
             check.setChecked(False)
     dlg._valider()
-    texte = md.read_text(encoding="utf-8")
+    texte = dlg.chemin_md.read_text(encoding="utf-8")
     assert "Jean Dupont" in texte
     assert "Marie Martin" not in texte
-    asso = association.lire(md)
+    asso = association.lire(dlg.chemin_md)
     marie = [i for i in asso.invites if i.email == "marie.martin@example.com"][0]
     assert marie.coche is False
 
 
 def test_titre_par_defaut_propose_application_si_titre_vide(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Réunion — 2026-07-08 14:00\n\nTexte\n", encoding="utf-8")  # titre par défaut = date
+    md = _md(tmp_path)  # titre par défaut = date
     dlg = DialogAssociationBluemind(md, [_evt(titre="Point projet X")])
     assert dlg._check_titre.isChecked() is True
     dlg._valider()
-    assert "# Point projet X" in md.read_text(encoding="utf-8")
+    assert "# Point projet X" in dlg.chemin_md.read_text(encoding="utf-8")
+    assert dlg.chemin_md.parent.name == "2026-07-08_14-00-00_Point-projet-X"
 
 
 def test_titre_custom_non_ecrase_si_decoche(qapp, tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    md.write_text("# Mon titre perso\n\nTexte\n", encoding="utf-8")
+    md = _md(tmp_path, texte="# Mon titre perso\n\nTexte\n")
     dlg = DialogAssociationBluemind(md, [_evt(titre="Point projet X")])
     assert dlg._check_titre.isChecked() is False  # titre déjà custom -> pas coché par défaut
     dlg._valider()
-    assert "# Mon titre perso" in md.read_text(encoding="utf-8")
+    assert "# Mon titre perso" in dlg.chemin_md.read_text(encoding="utf-8")
+    assert dlg.chemin_md == md   # pas de renommage (titre non appliqué)

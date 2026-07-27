@@ -41,7 +41,7 @@ def _titre(md: Path) -> str:
                 return ligne[2:].strip()
     except OSError:
         pass
-    return f"Réunion — {md.stem}"
+    return f"Réunion — {md.parent.name}"
 
 
 def _transcrire_piste(chemin_audio: Path, moteur: MoteurTranscription,

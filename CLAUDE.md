@@ -19,6 +19,25 @@ UI (PySide6)  →  Cœur métier (Python pur)  →  Adaptateurs (1 implémentati
 
 **Règle d'or :** la couche `core/` n'importe jamais de module OS-spécifique (mlx, AppKit, ctypes…). Toute dépendance plateforme passe par les interfaces de `platform/interfaces.py`.
 
+## Stockage des réunions (docs/43)
+
+Depuis docs/43, **1 dossier par réunion** dans `dossier_reunions` (Préférences) :
+`AAAA-MM-JJ_HH-MM-SS[_slug-titre]/` contenant `transcription.md` (le handle utilisé
+partout dans l'app), `moi.opus`/`systeme.opus` (ou `.wav`), `locuteurs.md`, `CR.md`,
+`bluemind.json` — noms **génériques**, fixes. Le dossier est renommé à chaque
+changement de titre (édition manuelle ou association BlueMind) via
+`core/fichiers.renommer_dossier_reunion`. Supprimer une réunion = `shutil.rmtree`
+du dossier — plus aucun artefact ne peut rester orphelin. Migration one-shot
+idempotente au démarrage (`core/migration_dossiers.py`) pour les réunions à plat
+d'avant docs/43. Le **journal** (`AAAA-MM-JJ.md`) reste inchangé (à plat, 1 fichier/jour).
+
+**Réunion active exclue du listing** : son `transcription.md` est créé dès le démarrage
+de l'enregistrement, et elle est déjà représentée par la ligne « en cours » → sans
+exclusion elle s'affiche **deux fois** (bug pré-existant, constaté en test manuel le
+2026-07-27). `reunion_view.definir_reunion_active` (câblée sur
+`OrchestrateurReunion.reunion_demarree`) pose le chemin actif à la fois sur le watcher
+(§9) et sur `CaptureModel.definir_chemin_actif` ; le retour à `Mode.IDLE` le remet à None.
+
 ## Commandes essentielles
 
 ```bash
@@ -43,6 +62,12 @@ Après l'interco Mistral (docs/42, 2026-07-21) : +85 tests unitaires (`test_mist
 `test_fichiers.py`/`test_reunion.py`/`test_reunion_view.py`) — **1042 passed** en
 environnement extras macOS + pyannote complets, sans `.venv-build`/`packaging/vendor/ffmpeg`
 (2 échecs attendus : helper Swift non compilé, audio canonique absent sur ce clone).
+Après la réorganisation 1 dossier/réunion (docs/43, 2026-07-27) : **1106 passed** dans
+le même environnement (mêmes 2 échecs attendus, inchangés) — nouveau module
+`core/migration_dossiers.py` (`test_migration_dossiers.py`, 14 tests) + tests étendus
+de `test_fichiers.py` (slug, nom de dossier, renommage) + adaptation du layout dans
+tous les tests touchant des réunions (fixtures désormais en sous-dossier) + 6 tests
+d'exclusion de la réunion active (ligne en double, cf. § ci-dessous).
 
 ## Environnements Python — ne pas confondre
 
@@ -83,6 +108,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
+| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ code + tests TERMINÉS (2026-07-27, 1100 passed) — reste : validation manuelle avec Sylvain (idéalement sur une copie de `reunions/`) avant fusion, cf. docs/43 §12/§13 |
 
 ## Packaging macOS (Phase 4) — pièges
 
@@ -187,3 +213,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
 | **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main`** | `docs/42` |
+| **Réorganisation 1 dossier/réunion — ✅ code+tests terminés, reste validation manuelle** | `docs/43` |

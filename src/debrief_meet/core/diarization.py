@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from debrief_meet.core.audio import decoder_audio_16k, normaliser_asr
-from debrief_meet.core.fichiers import chemins_audio_reunion
+from debrief_meet.core.fichiers import chemin_locuteurs, chemins_audio_reunion
 from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 
 logger = logging.getLogger(__name__)
@@ -345,8 +345,8 @@ def generer_locuteurs(chemin_md, moteur_transcription,
         raise RuntimeError("Diarization : aucune piste exploitable (toutes en échec).")
 
     tours = fusionner(*attribues)
-    sortie = chemin_md.with_name(chemin_md.stem + "_locuteurs.md")
-    rendre_locuteurs_md(sortie, f"Réunion — {chemin_md.stem} — locuteurs", tours)
+    sortie = chemin_locuteurs(chemin_md)
+    rendre_locuteurs_md(sortie, f"Réunion — {chemin_md.parent.name} — locuteurs", tours)
     logger.info("Débrief locuteurs écrit : %s", sortie)
     return sortie
 

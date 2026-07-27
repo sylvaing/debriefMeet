@@ -23,7 +23,9 @@ from debrief_meet.core.fichiers import (
     duree_reunion,
     formater_duree,
     lister_enregistrements,
+    lister_reunions,
     pistes_audio_existantes,
+    renommer_dossier_reunion,
     titre_reunion,
     transcription_en_attente,
 )
@@ -101,7 +103,7 @@ def _construire_ligne_reunion(chemin: Path) -> _LigneReunion:
 
     return _LigneReunion(
         chemin=chemin,
-        titre_affiche=titre or (dh.strftime("%d/%m/%Y %H:%M") if dh else chemin.stem),
+        titre_affiche=titre or (dh.strftime("%d/%m/%Y %H:%M") if dh else chemin.parent.name),
         titre_brut=titre or "",
         date_texte=dh.strftime("%d/%m/%Y · %H:%M") if dh else "—",
         duree_texte=formater_duree(duree_secondes),
@@ -143,6 +145,7 @@ class CaptureModel(QAbstractTableModel):
         self._est_reunion = est_reunion
         self._lignes: list[_LigneReunion] | list[_LigneJournal] = []
         self._ligne_en_cours: _LigneReunion | None = None  # Réunion uniquement (CHANGELOG_v2 §3)
+        self._chemin_actif: Path | None = None  # exclu du listing pendant l'enregistrement
 
     # ── API Qt ───────────────────────────────────────────────────────────────
 
@@ -243,8 +246,12 @@ class CaptureModel(QAbstractTableModel):
         if nouveau == ligne.titre_brut:
             return False
         definir_titre(ligne.chemin, nouveau)
+        # Le dossier reflète toujours le titre courant (docs/43 §6) — l'édition est
+        # toujours déclenchée depuis l'historique (réunion terminée), jamais pendant
+        # un enregistrement actif (cf. docs/43 §6.3).
+        nouveau_chemin = renommer_dossier_reunion(ligne.chemin, nouveau)
         offset = 1 if self._ligne_en_cours is not None else 0
-        self._lignes[index.row() - offset] = _construire_ligne_reunion(ligne.chemin)
+        self._lignes[index.row() - offset] = _construire_ligne_reunion(nouveau_chemin)
         self.dataChanged.emit(index, index)
         return True
 
@@ -286,8 +293,17 @@ class CaptureModel(QAbstractTableModel):
                 return i + offset
         return None
 
+    def definir_chemin_actif(self, chemin: Path | None) -> None:
+        """Réunion en cours d'enregistrement, à **exclure du listing** : son
+        `transcription.md` existe déjà sur disque (créé au démarrage) mais elle est
+        déjà représentée par la ligne « en cours » — sans cette exclusion, la même
+        réunion apparaît deux fois. Ne recharge pas (l'appelant le fait)."""
+        self._chemin_actif = chemin
+
     def recharger(self) -> None:
-        fichiers = lister_enregistrements(self._dossier)
+        fichiers = lister_reunions(self._dossier) if self._est_reunion else lister_enregistrements(self._dossier)
+        if self._chemin_actif is not None:
+            fichiers = [f for f in fichiers if f != self._chemin_actif]
         constructeur = _construire_ligne_reunion if self._est_reunion else _construire_ligne_journal
         self.beginResetModel()
         self._lignes = [constructeur(f) for f in fichiers]

@@ -8,7 +8,9 @@ live. La partie Journal vit désormais dans `journal_view.py`.
 """
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 import subprocess
 import sys
 from datetime import timedelta
@@ -57,6 +59,8 @@ from debrief_meet.ui.survol_ligne import TableAvecSurvolLigne
 from debrief_meet.ui.texte_delegate import TexteLigneDelegate
 from debrief_meet.ui.theme import C, M
 
+logger = logging.getLogger(__name__)
+
 _ICONE_COPIER = "copy"
 _ICONE_TRANSCRIRE = "file-text"
 _ICONE_GENERER = "users"
@@ -96,6 +100,7 @@ class ReunionView(QWidget):
     ) -> None:
         super().__init__(parent)
         self._config = config
+        self._machine = machine
         self._presse_papiers = presse_papiers
         self._gestionnaire = gestionnaire
         self._store_bluemind = store_bluemind
@@ -306,7 +311,7 @@ class ReunionView(QWidget):
             return None
         if bluemind_association.existe(chemin):
             asso = bluemind_association.lire(chemin)
-            titre = asso.titre if asso else chemin.stem
+            titre = asso.titre if asso else chemin.parent.name
             return _EtatBluemind("linked", titre)
 
         debut = date_heure_reunion(chemin)
@@ -353,7 +358,9 @@ class ReunionView(QWidget):
         from debrief_meet.ui.bluemind_association import DialogAssociationBluemind
         dlg = DialogAssociationBluemind(chemin, evenements, self)
         if dlg.exec() == dlg.DialogCode.Accepted:
-            self._modele.recharger()
+            # Le dossier a pu être renommé (titre appliqué, docs/43 §6.1) — recharger
+            # avant de re-sélectionner, sinon la ligne visée n'existe pas encore.
+            self.selectionner_reunion(dlg.chemin_md)
 
     # ── Interco BlueMind — F2 (docs/40 §7) ──────────────────────────────────────
 
@@ -571,31 +578,86 @@ class ReunionView(QWidget):
         self._modele.recharger()
 
     def _supprimer_un(self, chemin: Path) -> None:
-        a_supprimer = [chemin, chemin_locuteurs(chemin), chemin_cr_mistral(chemin),
-                       bluemind_association.chemin_sidecar(chemin),
-                       *pistes_audio_existantes(chemin)]
-        for p in a_supprimer:
-            try:
-                if p.exists():
-                    p.unlink()
-            except OSError:
-                pass
+        """Supprime le dossier entier de la réunion (docs/43 §8) — plus aucun
+        artefact dérivé ne peut rester orphelin."""
+        dossier = chemin.parent
+        try:
+            racine = self._dossier().resolve()
+            cible = dossier.resolve()
+        except OSError:
+            logger.warning("Suppression impossible (résolution du chemin) : %s", dossier)
+            return
+        if cible != racine and racine not in cible.parents:
+            # Garde-fou : ne jamais rmtree en dehors du dossier des réunions
+            # (protège contre un chemin corrompu).
+            logger.warning("Suppression refusée : %s n'est pas sous %s", cible, racine)
+            return
+        try:
+            shutil.rmtree(dossier)
+        except OSError:
+            logger.warning("Suppression du dossier réunion impossible : %s", dossier, exc_info=True)
 
     # ── Rafraîchissement live ────────────────────────────────────────────────────
 
     def _installer_surveillance(self) -> None:
         self._watcher = QFileSystemWatcher(self)
+        self._chemin_actif: Path | None = None
         dossier = str(self._dossier())
         if Path(dossier).exists():
             self._watcher.addPath(dossier)
         self._watcher.directoryChanged.connect(self._sur_dossier_change)
+        # Le dossier racine ne réagit qu'aux entrées ajoutées/retirées (une réunion
+        # apparaît/disparaît) — les modifications d'un fichier DANS un sous-dossier
+        # (tranches ajoutées en direct) ne remontent pas. `fileChanged` couvre ce cas
+        # pour le `transcription.md` de la réunion active, ajouté par
+        # `definir_reunion_active` (docs/43 §9).
+        self._watcher.fileChanged.connect(self._sur_dossier_change)
         self._timer_refresh = QTimer(self)
         self._timer_refresh.setSingleShot(True)
         self._timer_refresh.setInterval(200)
         self._timer_refresh.timeout.connect(self.recharger)
+        self._machine.mode_change.connect(self._sur_mode_change_surveillance)
 
     def _sur_dossier_change(self, _chemin: str) -> None:
         self._timer_refresh.start()
+
+    def _sur_mode_change_surveillance(self, mode: Mode) -> None:
+        if mode is Mode.IDLE:
+            # Fin d'enregistrement : la réunion redevient une ligne normale du listing.
+            self.definir_reunion_active(None)
+
+    def definir_reunion_active(self, chemin: Path | None) -> None:
+        """Réunion tout juste démarrée (`OrchestrateurReunion.reunion_demarree`,
+        docs/43 §9) — deux effets :
+
+        1. surveiller son sous-dossier et son `transcription.md`, pour que les tranches
+           ajoutées en direct rafraîchissent l'Historique ;
+        2. l'**exclure du listing** : son `transcription.md` est créé dès le démarrage,
+           donc sans exclusion elle s'afficherait à la fois comme ligne normale et comme
+           ligne « en cours » (doublon).
+
+        `chemin=None` remet l'état au repos (fin d'enregistrement)."""
+        self._retirer_surveillance_active()
+        chemin = Path(str(chemin)) if chemin is not None else None
+        self._chemin_actif = chemin
+        self._modele.definir_chemin_actif(chemin)
+        if chemin is not None:
+            dossier = str(chemin.parent)
+            if Path(dossier).exists() and dossier not in self._watcher.directories():
+                self._watcher.addPath(dossier)
+            if chemin.exists() and str(chemin) not in self._watcher.files():
+                self._watcher.addPath(str(chemin))
+        self.recharger()
+
+    def _retirer_surveillance_active(self) -> None:
+        if self._chemin_actif is None:
+            return
+        dossier, fichier = str(self._chemin_actif.parent), str(self._chemin_actif)
+        if dossier in self._watcher.directories():
+            self._watcher.removePath(dossier)
+        if fichier in self._watcher.files():
+            self._watcher.removePath(fichier)
+        self._chemin_actif = None
 
     # ── Sélection programmatique (clic sur notification) ─────────────────────────
 

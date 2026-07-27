@@ -24,17 +24,18 @@ from debrief_meet.ui.status_pill import HistoryState
 
 def _creer_reunion(dossier, *, titre=None, avec_audio=False, avec_locuteurs=False):
     md = chemin_reunion(dossier, datetime(2026, 7, 4, 10, 30))
+    md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text("# Réunion — 2026-07-04 10:30\n\ntranscription\n", encoding="utf-8")
     if titre:
         definir_titre(md, titre)
     if avec_audio:
-        with wave.open(str(dossier / f"{md.stem}_moi.wav"), "wb") as w:
+        with wave.open(str(md.with_name("moi.wav")), "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(16000)
             w.writeframes(b"\x00\x00" * 160)
     if avec_locuteurs:
-        (dossier / f"{md.stem}_locuteurs.md").write_text("locuteurs", encoding="utf-8")
+        md.with_name("locuteurs.md").write_text("locuteurs", encoding="utf-8")
     return md
 
 
@@ -187,3 +188,51 @@ def test_ligne_en_cours_decale_ligne_pour_chemin(qapp, tmp_path):
     modele.recharger()
     modele.definir_ligne_en_cours(True, 10)
     assert modele.ligne_pour_chemin(md) == 1
+
+
+# ── Exclusion de la réunion active (pas de ligne en double) ───────────────────
+
+def test_chemin_actif_exclu_du_listing(qapp, tmp_path):
+    """La réunion en cours d'enregistrement a déjà son `transcription.md` sur disque,
+    mais elle est représentée par la ligne « en cours » — sans exclusion elle
+    apparaîtrait deux fois."""
+    md = _creer_reunion(tmp_path)
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_chemin_actif(md)
+    modele.recharger()
+    modele.definir_ligne_en_cours(True, 9)
+
+    assert modele.rowCount() == 1                       # la ligne « en cours » seule
+    assert modele.data(modele.index(0, COL_TITRE_REUNION)) == "Réunion en cours"
+
+
+def test_chemin_actif_remis_a_none_reaffiche_la_reunion(qapp, tmp_path):
+    """Fin d'enregistrement : la réunion redevient une ligne normale du listing."""
+    md = _creer_reunion(tmp_path, titre="Point équipe")
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_chemin_actif(md)
+    modele.recharger()
+    assert modele.rowCount() == 0
+
+    modele.definir_chemin_actif(None)
+    modele.recharger()
+    assert modele.rowCount() == 1
+    assert modele.data(modele.index(0, COL_TITRE_REUNION)) == "Point équipe"
+
+
+def test_chemin_actif_n_exclut_que_la_reunion_visee(qapp, tmp_path):
+    """Les autres réunions restent listées pendant l'enregistrement."""
+    from datetime import datetime as _dt
+
+    from debrief_meet.core.fichiers import chemin_reunion as _chemin_reunion
+    active = _creer_reunion(tmp_path)
+    autre = _chemin_reunion(tmp_path, _dt(2026, 7, 5, 9, 0))
+    autre.parent.mkdir(parents=True)
+    autre.write_text("# Réunion — 2026-07-05 09:00\n", encoding="utf-8")
+
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_chemin_actif(active)
+    modele.recharger()
+
+    assert modele.rowCount() == 1
+    assert modele.chemin_a_la_ligne(0) == autre

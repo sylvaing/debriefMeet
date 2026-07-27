@@ -32,8 +32,8 @@ def _asso(**kw):
 
 def test_chemin_sidecar():
     from pathlib import Path
-    md = Path("/x/2026-07-08_14-00.md")
-    assert chemin_sidecar(md) == Path("/x/2026-07-08_14-00.bluemind.json")
+    md = Path("/x/2026-07-08_14-00-00/transcription.md")
+    assert chemin_sidecar(md) == Path("/x/2026-07-08_14-00-00/bluemind.json")
 
 
 def test_ecrire_puis_lire(tmp_path):

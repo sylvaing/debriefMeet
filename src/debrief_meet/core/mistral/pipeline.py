@@ -1,4 +1,4 @@
-"""Orchestration bout-en-bout (§4) : `.md` de réunion → `<stem>_CR.md`.
+"""Orchestration bout-en-bout (§4) : `.md` de réunion → `CR.md` (docs/43).
 
 Point d'entrée **pur** (aucun Qt) appelé par le worker de fond (`ui/generateur_cr_mistral.py`).
 Logique adaptative (décision 1, §1) :
@@ -93,7 +93,7 @@ def _lire_transcript_local(chemin_md: Path) -> str | None:
 
 
 def _infos_evenement(chemin_md: Path) -> _InfosEvenement:
-    """Éléments d'association BlueMind (sidecar `<stem>.bluemind.json`, docs/40) —
+    """Éléments d'association BlueMind (sidecar `bluemind.json`, docs/40/43) —
     titre de l'événement + invités. Vide si aucune association ou module absent."""
     try:
         from debrief_meet.core.bluemind import association
@@ -159,7 +159,7 @@ def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
     titre et la durée. Miroir de `core.transcription_differee._ecrire_md`."""
     dh = date_heure_reunion(chemin_md)
     titre = titre_reunion(chemin_md) or (
-        f"Réunion — {dh.strftime('%Y-%m-%d %H:%M')}" if dh else chemin_md.stem)
+        f"Réunion — {dh.strftime('%Y-%m-%d %H:%M')}" if dh else chemin_md.parent.name)
     duree = duree_reunion(chemin_md)              # lu AVANT réécriture (le commentaire est perdu)
     lignes = [f"# {titre}", "", _NOTE_VOXTRAL]
     if not res.avec_systeme:
@@ -173,7 +173,7 @@ def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
 
 
 def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
-    """Point d'entrée unique du pipeline — produit `<stem>_CR.md` et retourne son chemin.
+    """Point d'entrée unique du pipeline — produit `CR.md` et retourne son chemin.
 
     Lève `ErreurMistral` (ou une sous-classe de `core.mistral.client`) sur tout échec
     — jamais de fichier partiel écrit."""

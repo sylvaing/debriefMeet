@@ -173,6 +173,20 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     config = Config()
     config.charger()
 
+    # Migration one-shot réunions → 1 dossier/réunion (docs/43) — avant toute lecture
+    # de dossier_reunions par l'UI (modèles/vues construits plus bas).
+    try:
+        from pathlib import Path
+
+        from debrief_meet.core.migration_dossiers import migrer_reunions_vers_dossiers
+        n_migrees = migrer_reunions_vers_dossiers(Path(config.get("dossier_reunions")))
+        if n_migrees:
+            logging.getLogger("debrief_meet").info(
+                "Migration réunions → dossiers : %d réunion(s) migrée(s)", n_migrees)
+    except Exception:
+        logging.getLogger("debrief_meet").warning(
+            "Migration réunions → dossiers : échec non bloquant", exc_info=True)
+
     # Logs
     configurer_logs(
         actifs=config.get("logs_actifs"),
@@ -347,12 +361,16 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         gestionnaire_cr_mistral=gestionnaire_cr_mistral)
 
     # Tray
-    tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar)
+    tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar,
+                     orch_reunion=orch_reunion)
     tray.show()
 
     # F3 (suite) — notification + démarrage pré-associé en un clic (§8).
     planificateur_bluemind.reunion_due.connect(tray.notifier_reunion_due)
     orch_reunion.reunion_demarree.connect(tray._sur_reunion_demarree)
+    # docs/43 §9 — l'historique doit aussi surveiller le sous-dossier de la réunion
+    # en cours (tranches ajoutées en direct, watcher racine insuffisant).
+    orch_reunion.reunion_demarree.connect(fenetre.definir_reunion_active)
 
     echecs_raccourcis = reappliquer_raccourcis()
     if echecs_raccourcis:

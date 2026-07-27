@@ -32,31 +32,34 @@ class EcrivainJournal:
         return chemin
 
 
-_SUFFIXE_LOCUTEURS = "_locuteurs"
-_SUFFIXE_CR = "_CR"
-_SUFFIXES_DERIVES = (_SUFFIXE_LOCUTEURS, _SUFFIXE_CR)
-
-
 def lister_enregistrements(dossier: Path) -> list[Path]:
-    """Retourne les `.md` du dossier, triés du plus récent au plus ancien.
-
-    Exclut les débriefs de locuteurs (`*_locuteurs.md`) et les CR Mistral (`*_CR.md`,
-    docs/42) : ce sont des dérivés d'une transcription, pas des entrées à part entière
-    (cf. docs/09-refonte-historique.md §2)."""
+    """Entrées de journal (`AAAA-MM-JJ.md`, à plat), triées du plus récent au plus
+    ancien. Le layout réunion (1 dossier/réunion, docs/43) utilise `lister_reunions` —
+    le journal reste un simple fichier par jour, sans dérivés à exclure."""
     if not dossier.exists():
         return []
-    fichiers = (f for f in dossier.glob("*.md") if not f.stem.endswith(_SUFFIXES_DERIVES))
-    return sorted(fichiers, reverse=True)
+    return sorted(dossier.glob("*.md"), reverse=True)
+
+
+def lister_reunions(dossier: Path) -> list[Path]:
+    """`transcription.md` de chaque sous-dossier de réunion (docs/43), triés du plus
+    récent au plus ancien (tri lexical sur le nom de dossier = chronologique, le
+    format horodaté étant zéro-paddé ISO)."""
+    if not dossier.exists():
+        return []
+    out = [sous / "transcription.md" for sous in dossier.iterdir()
+           if sous.is_dir() and (sous / "transcription.md").exists()]
+    return sorted(out, key=lambda p: p.parent.name, reverse=True)
 
 
 def chemin_cr_mistral(md: Path) -> Path:
-    """Chemin du CR Mistral `<stem>_CR.md` associé à une transcription (docs/42)."""
-    return md.with_name(md.stem + _SUFFIXE_CR + ".md")
+    """Chemin du CR Mistral (`CR.md`, docs/42) associé à une transcription."""
+    return md.with_name("CR.md")
 
 
 def chemin_locuteurs(md: Path) -> Path:
-    """Chemin du débrief locuteurs `<stem>_locuteurs.md` associé à une transcription."""
-    return md.with_name(md.stem + _SUFFIXE_LOCUTEURS + ".md")
+    """Chemin du débrief locuteurs (`locuteurs.md`) associé à une transcription."""
+    return md.with_name("locuteurs.md")
 
 
 # Marqueur d'une réunion enregistrée en « audio seul » dont la transcription
@@ -73,12 +76,12 @@ def transcription_en_attente(md: Path) -> bool:
 
 
 def chemins_audio_reunion(md: Path) -> tuple[Path, Path]:
-    """Chemins **sans extension** des 2 pistes retenues (Moi + Système) à côté du `.md`.
+    """Chemins **sans extension** des 2 pistes retenues (Moi + Système), dans le même
+    dossier que `transcription.md` (docs/43 — noms génériques fixes).
 
     L'extension (.opus ou .wav) est choisie par `EnregistreurAudioReunion` selon la
     présence de ffmpeg."""
-    base = md.with_suffix("")
-    return base.with_name(base.name + "_moi"), base.with_name(base.name + "_systeme")
+    return md.with_name("moi"), md.with_name("systeme")
 
 
 def pistes_audio_existantes(md: Path) -> list[Path]:
@@ -94,29 +97,111 @@ def pistes_audio_existantes(md: Path) -> list[Path]:
 
 # ── Métadonnées d'une réunion (titre éditable + durée) ─────────────────────────
 #
-# Le nom de fichier (AAAA-MM-JJ_HH-MM[-N].md) reste l'identité stable de la réunion :
-# il porte la date/heure et sert de base aux pistes audio + au débrief locuteurs, donc
-# on n'y touche jamais. Le **titre** vit dans le H1 du .md (éditable sans renommer aucun
-# satellite) ; la **durée** dans un commentaire HTML invisible à la lecture. Cf. docs/14.
+# Le **dossier** de la réunion (AAAA-MM-JJ_HH-MM-SS[_slug-titre], docs/43) est
+# l'identité stable : il porte la date/heure (et le titre, en miroir) et contient
+# tous les fichiers génériques (transcription.md, moi/systeme, locuteurs.md, CR.md,
+# bluemind.json). Le **titre** vit dans le H1 de `transcription.md` (source de
+# vérité ; le nom du dossier n'est qu'un miroir maintenu par `renommer_dossier_reunion`
+# à chaque changement) ; la **durée** dans un commentaire HTML invisible à la
+# lecture. Cf. docs/14, docs/43.
 
-_MOTIF_NOM_REUNION = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:-\d+)?$")
+_MOTIF_HORODATAGE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})(?:-(\d{2}))?")
 _MOTIF_DATE_HEURE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 _MOTIF_DUREE = re.compile(r"<!-- duree_s: (\d+) -->")
 _MOTIF_TRANCHE = re.compile(r"^## \d{2}:\d{2} \((\d{2}):(\d{2})\)", re.MULTILINE)
 _PREFIXE_DEFAUT = "Réunion — "
 
+# Caractères interdits par les systèmes de fichiers (Windows/macOS) + caractères de
+# contrôle — retirés du slug. Accents CONSERVÉS (§3, docs/43) : le but est un nom de
+# dossier lisible, pas un slug ASCII pur.
+_CARACTERES_INTERDITS_SLUG = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
+# Espaces + tirets (ASCII et unicode : en/em dash…) consécutifs → un seul séparateur.
+_SEPARATEURS_SLUG = re.compile(r"[\s\-‐-―]+")
+
+
+def slugifier_titre(titre: str, longueur_max: int = 60) -> str:
+    """Convertit un titre en segment de nom de dossier (docs/43 §3).
+
+    - espaces (et tirets, y compris unicode) → un seul tiret ;
+    - caractères interdits par les systèmes de fichiers retirés : / \\ : * ? " < > |
+      + caractères de contrôle et sauts de ligne ;
+    - accents CONSERVÉS (é, à, ç… : macOS/Windows gèrent l'UTF-8) ;
+    - tirets/points/espaces en tête et fin supprimés ;
+    - tronqué à `longueur_max` caractères.
+
+    Retourne "" si le titre est vide ou ne contient aucun caractère utile après
+    nettoyage (dans ce cas le dossier reste horodaté seul)."""
+    if not titre:
+        return ""
+    nettoye = _CARACTERES_INTERDITS_SLUG.sub("", titre)
+    nettoye = _SEPARATEURS_SLUG.sub("-", nettoye)
+    nettoye = nettoye.strip("-. \t")
+    if not nettoye:
+        return ""
+    if len(nettoye) > longueur_max:
+        nettoye = nettoye[:longueur_max].rstrip("-. ")
+    return nettoye
+
+
+def nom_dossier_reunion(debut: datetime, titre: str | None = None) -> str:
+    """Nom du dossier d'une réunion : horodatage à la seconde + slug du titre si
+    présent (docs/43 §2.1)."""
+    base = debut.strftime("%Y-%m-%d_%H-%M-%S")
+    slug = slugifier_titre(titre or "")
+    return f"{base}_{slug}" if slug else base
+
 
 def date_heure_reunion(md: Path) -> datetime | None:
-    """Date+heure de début déduites du **nom de fichier** ; None si le nom ne suit pas
-    le schéma réunion (ex. une entrée de journal `AAAA-MM-JJ.md`)."""
-    m = _MOTIF_NOM_REUNION.match(md.stem)
+    """Date+heure de début déduites du **nom du dossier parent** ; None si le nom ne
+    suit pas le schéma réunion (ex. une entrée de journal `AAAA-MM-JJ.md`, qui n'a
+    pas de dossier dédié).
+
+    Désambiguïsation secondes vs compteur de collision legacy (docs/43 §2.3) :
+    exactement 2 chiffres après le 2ᵉ tiret du bloc heure → secondes ; sinon
+    (compteur `-2`, `-3`… à 1 chiffre, ou absent) → précision minute."""
+    tokens = md.parent.name.split("_")
+    if len(tokens) < 2:
+        return None
+    m = _MOTIF_HORODATAGE.match(f"{tokens[0]}_{tokens[1]}")
     if not m:
         return None
-    a, mo, j, h, mi = (int(x) for x in m.groups())
+    a, mo, j, h, mi, ss = m.groups()
     try:
-        return datetime(a, mo, j, h, mi)
+        return datetime(int(a), int(mo), int(j), int(h), int(mi), int(ss or 0))
     except ValueError:
         return None
+
+
+def _prefixe_horodatage(nom_dossier: str) -> str:
+    """Bloc horodaté du nom (sans slug) — préserve la précision d'origine (minute
+    legacy vs seconde) et un éventuel compteur de collision.
+    `'2026-07-06_09-56-2_Ancien'` -> `'2026-07-06_09-56-2'`."""
+    tokens = nom_dossier.split("_")
+    return "_".join(tokens[:2]) if len(tokens) >= 2 else nom_dossier
+
+
+def renommer_dossier_reunion(md: Path, titre: str | None) -> Path:
+    """Renomme le dossier pour refléter `titre` (ou horodatage seul si vide/None) et
+    retourne le nouveau chemin de `transcription.md`. No-op (retourne `md`) si le nom
+    ne change pas.
+
+    ⚠️ Ne jamais appeler pendant un enregistrement actif (handles audio ouverts →
+    échec du rename de dossier sous Windows, WinError 32). Cf. docs/43 §6.3 — le seul
+    déclencheur en cours d'enregistrement (pré-association F3) crée le dossier déjà
+    titré, donc cet appel y est toujours un no-op."""
+    dossier = md.parent
+    prefixe = _prefixe_horodatage(dossier.name)
+    slug = slugifier_titre(titre or "")
+    nouveau_nom = f"{prefixe}_{slug}" if slug else prefixe
+    if nouveau_nom == dossier.name:
+        return md
+    cible = dossier.with_name(nouveau_nom)
+    i = 2
+    while cible.exists():
+        cible = dossier.with_name(f"{nouveau_nom}-{i}")
+        i += 1
+    dossier.rename(cible)
+    return cible / md.name
 
 
 def _h1(texte: str) -> tuple[int, str] | None:
@@ -140,7 +225,7 @@ def titre_reunion(md: Path) -> str | None:
     contenu = h1[1]
     if contenu.startswith(_PREFIXE_DEFAUT):
         reste = contenu[len(_PREFIXE_DEFAUT):]
-        if _MOTIF_DATE_HEURE.match(reste) or reste == md.stem:
+        if _MOTIF_DATE_HEURE.match(reste):
             return None
     return contenu or None
 
@@ -174,7 +259,7 @@ def definir_titre(md: Path, titre: str) -> None:
     titre = titre.strip()
     if not titre:
         dh = date_heure_reunion(md)
-        titre = _PREFIXE_DEFAUT + (dh.strftime("%Y-%m-%d %H:%M") if dh else md.stem)
+        titre = _PREFIXE_DEFAUT + (dh.strftime("%Y-%m-%d %H:%M") if dh else md.parent.name)
     lignes = texte.splitlines(keepends=True)
     for i, ligne in enumerate(lignes):
         if ligne.startswith("# "):
@@ -390,19 +475,22 @@ class EnregistreurAudioReunion:
         self._moi = self._systeme = None
 
 
-def chemin_reunion(dossier: Path, debut: datetime) -> Path:
-    """Chemin .md **unique** pour une réunion.
+def chemin_reunion(dossier: Path, debut: datetime, titre: str | None = None) -> Path:
+    """Chemin `<dossier>/<nom[-N]>/transcription.md` **unique** pour une nouvelle
+    réunion (docs/43 — 1 dossier/réunion). Le nom du sous-dossier est horodaté à la
+    seconde, et porte un slug du titre si `titre` est fourni (démarrage pré-associé,
+    docs/40 §8). Si le dossier cible existe déjà (collision quasi impossible à la
+    seconde), suffixe `-2`, `-3`, … à la toute fin du nom.
 
-    Le nom est horodaté à la minute (`AAAA-MM-JJ_HH-MM.md`). Si une réunion a déjà
-    démarré la même minute, le fichier existe déjà → on suffixe `-2`, `-3`, … pour ne
-    pas **écraser** la précédente (EcrivainReunion.creer ouvre en mode « w »)."""
-    base = debut.strftime("%Y-%m-%d_%H-%M")
-    candidat = dossier / f"{base}.md"
+    Ne crée pas le dossier ici : `EcrivainReunion.creer()`/`creer_placeholder()` le
+    fait via `parent.mkdir(parents=True, exist_ok=True)`."""
+    nom = nom_dossier_reunion(debut, titre)
+    cible = dossier / nom
     i = 2
-    while candidat.exists():
-        candidat = dossier / f"{base}-{i}.md"
+    while cible.exists():
+        cible = dossier / f"{nom}-{i}"
         i += 1
-    return candidat
+    return cible / "transcription.md"
 
 
 class EcrivainReunion:

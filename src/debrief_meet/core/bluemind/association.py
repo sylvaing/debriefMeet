@@ -1,4 +1,5 @@
-"""Sidecar `<stem>.bluemind.json` — source de vérité de l'association F1 (docs/40 §6.3).
+"""Sidecar `bluemind.json` (docs/43 : nom générique dans le dossier de la réunion) —
+source de vérité de l'association F1 (docs/40 §6.3).
 
 Sert aussi à F2 (mapping des locuteurs, `mapping`) et à ne pas re-proposer le bouton
 « Associer à la réunion » une fois l'association faite."""
@@ -35,7 +36,7 @@ class Association:
 
 
 def chemin_sidecar(md: Path) -> Path:
-    return md.with_name(md.stem + ".bluemind.json")
+    return md.with_name("bluemind.json")
 
 
 def existe(md: Path) -> bool:

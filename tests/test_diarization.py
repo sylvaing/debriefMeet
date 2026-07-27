@@ -228,10 +228,10 @@ def _ecrire_wav(chemin, duree_s=2.0):
 
 
 def test_generer_locuteurs_deux_pistes(tmp_path):
-    md = tmp_path / "2026-01-01_10-00.md"
+    md = tmp_path / "transcription.md"
     md.write_text("# brouillon", encoding="utf-8")
-    _ecrire_wav(tmp_path / "2026-01-01_10-00_moi.wav")
-    _ecrire_wav(tmp_path / "2026-01-01_10-00_systeme.wav")
+    _ecrire_wav(tmp_path / "moi.wav")
+    _ecrire_wav(tmp_path / "systeme.wav")
 
     transcription = FauxTranscription([
         [Segment(0.0, 1.0, "bonjour à tous")],            # micro
@@ -243,7 +243,7 @@ def test_generer_locuteurs_deux_pistes(tmp_path):
     ])
 
     sortie = diar.generer_locuteurs(md, transcription, diarisation)
-    assert sortie.name == "2026-01-01_10-00_locuteurs.md"
+    assert sortie.name == "locuteurs.md"
     contenu = sortie.read_text(encoding="utf-8")
     assert "**Moi** [00:00] bonjour à tous" in contenu
     assert "**Distant 1** [00:01] ici les distants" in contenu
@@ -252,7 +252,7 @@ def test_generer_locuteurs_deux_pistes(tmp_path):
 def test_generer_locuteurs_systeme_absent_degrade(tmp_path):
     md = tmp_path / "r.md"
     md.write_text("#", encoding="utf-8")
-    _ecrire_wav(tmp_path / "r_moi.wav")            # pas de piste système
+    _ecrire_wav(tmp_path / "moi.wav")            # pas de piste système
 
     transcription = FauxTranscription([[Segment(0.0, 1.0, "seul au micro")]])
     diarisation = FauxDiar([[(0.0, 1.0, "SPK0")]])
@@ -264,8 +264,8 @@ def test_generer_locuteurs_systeme_absent_degrade(tmp_path):
 def test_generer_locuteurs_une_piste_echoue_lautre_passe(tmp_path):
     md = tmp_path / "r.md"
     md.write_text("#", encoding="utf-8")
-    _ecrire_wav(tmp_path / "r_moi.wav")
-    _ecrire_wav(tmp_path / "r_systeme.wav")
+    _ecrire_wav(tmp_path / "moi.wav")
+    _ecrire_wav(tmp_path / "systeme.wav")
 
     class TranscriptionMicroKO(FauxTranscription):
         def transcrire(self, audio, langue=None):
@@ -414,7 +414,7 @@ def test_generer_locuteurs_remonte_erreur_de_chargement_avant_la_boucle(tmp_path
     piste — message clair, pas « toutes les pistes en échec » (cf. docs/29)."""
     md = tmp_path / "r.md"
     md.write_text("#", encoding="utf-8")
-    _ecrire_wav(tmp_path / "r_moi.wav")
+    _ecrire_wav(tmp_path / "moi.wav")
 
     with pytest.raises(diar.ErreurDiarization, match="modèle non téléchargé"):
         diar.generer_locuteurs(md, FauxTranscription([]), MoteurDiarizationErreur())

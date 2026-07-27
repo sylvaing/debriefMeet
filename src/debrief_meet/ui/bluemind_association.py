@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from debrief_meet.core.bluemind.association import Association, InviteAssocie, finaliser_association
 from debrief_meet.core.bluemind.store import Evenement
 from debrief_meet.core.bluemind.sync import libelle_part_status
-from debrief_meet.core.fichiers import titre_reunion
+from debrief_meet.core.fichiers import renommer_dossier_reunion, titre_reunion
 from debrief_meet.ui.dialogues import DialogueGabarit, Intention
 from debrief_meet.ui.theme import C, SANS
 
@@ -72,6 +72,13 @@ class DialogAssociationBluemind(DialogueGabarit):
         elif len(evenements) > 1:
             self._pages.setCurrentWidget(self._page_choix)
             self.bouton_action().setEnabled(False)
+
+    @property
+    def chemin_md(self) -> Path:
+        """Chemin de `transcription.md` — mis à jour après validation si le dossier a
+        été renommé (titre appliqué, docs/43 §6.1) : l'appelant doit relire cette
+        propriété après `exec()` pour recharger/re-sélectionner la bonne ligne."""
+        return self._chemin_md
 
     # ── Choix (si plusieurs correspondances) ────────────────────────────────────
 
@@ -171,5 +178,9 @@ class DialogAssociationBluemind(DialogueGabarit):
         )
         appliquer_titre = self._check_titre is not None and self._check_titre.isChecked()
         finaliser_association(self._chemin_md, association, appliquer_titre)
+        if appliquer_titre:
+            # Le dossier reflète toujours le titre courant (docs/43 §6.1) — renommage
+            # hors enregistrement (l'historique n'affiche que des réunions terminées).
+            self._chemin_md = renommer_dossier_reunion(self._chemin_md, association.titre)
 
         self.accept()

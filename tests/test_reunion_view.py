@@ -102,22 +102,26 @@ def _config(tmp_path):
 
 
 def _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00", avec_systeme=True):
-    md = tmp_path / f"{nom}.md"
+    dossier = tmp_path / nom
+    dossier.mkdir(exist_ok=True)
+    md = dossier / "transcription.md"
     md.write_text("# brouillon", encoding="utf-8")
     n = 16000
-    wavfile.write(tmp_path / f"{nom}_moi.wav", 16000, np.zeros(n, dtype=np.int16))
+    wavfile.write(dossier / "moi.wav", 16000, np.zeros(n, dtype=np.int16))
     if avec_systeme:
-        wavfile.write(tmp_path / f"{nom}_systeme.wav", 16000, np.zeros(n, dtype=np.int16))
+        wavfile.write(dossier / "systeme.wav", 16000, np.zeros(n, dtype=np.int16))
     return md
 
 
 def _reunion_en_attente(tmp_path, nom="2026-03-03_09-00", avec_audio=True):
-    md = tmp_path / f"{nom}.md"
+    dossier = tmp_path / nom
+    dossier.mkdir(exist_ok=True)
+    md = dossier / "transcription.md"
     md.write_text(f"# Réunion — {nom}\n\n> {MARQUEUR_EN_ATTENTE}\n\n", encoding="utf-8")
     if avec_audio:
         n = 16000
-        wavfile.write(tmp_path / f"{nom}_moi.wav", 16000, np.zeros(n, dtype=np.int16))
-        wavfile.write(tmp_path / f"{nom}_systeme.wav", 16000, np.zeros(n, dtype=np.int16))
+        wavfile.write(dossier / "moi.wav", 16000, np.zeros(n, dtype=np.int16))
+        wavfile.write(dossier / "systeme.wav", 16000, np.zeros(n, dtype=np.int16))
     return md
 
 
@@ -142,7 +146,9 @@ def test_generer_grise_si_locuteurs_existent(qapp, machine, tmp_path):
 
 
 def test_generer_grise_sans_audio(qapp, machine, tmp_path):
-    md = tmp_path / "2026-01-01_10-00.md"
+    dossier = tmp_path / "2026-01-01_10-00"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
     md.write_text("#", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     actions = _actions(vue)
@@ -199,8 +205,8 @@ def test_action_en_cours_diarization_desactive_le_bouton(qapp, machine, tmp_path
 
 
 def test_listing_exclut_locuteurs(qapp, machine, tmp_path):
-    _reunion_avec_audio(tmp_path)
-    chemin_locuteurs(tmp_path / "2026-01-01_10-00.md").write_text("loc", encoding="utf-8")
+    md = _reunion_avec_audio(tmp_path)
+    chemin_locuteurs(md).write_text("loc", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert vue._modele.rowCount() == 1
 
@@ -224,7 +230,9 @@ def test_generer_refuse_si_non_configuree(qapp, machine, tmp_path):
 
 
 def test_generer_sans_audio_affiche_message(qapp, machine, tmp_path, monkeypatch):
-    md = tmp_path / "2026-01-01_10-00.md"
+    dossier = tmp_path / "2026-01-01_10-00"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
     md.write_text("#", encoding="utf-8")
     g = FauxGestionnaire()
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=g)
@@ -250,8 +258,8 @@ def test_supprimer_audio_retire_les_pistes(qapp, machine, tmp_path, monkeypatch)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._supprimer_audio_un(md)
-    assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
-    assert not (tmp_path / "2026-01-01_10-00_systeme.wav").exists()
+    assert not md.with_name("moi.wav").exists()
+    assert not md.with_name("systeme.wav").exists()
     assert md.exists()
 
 
@@ -259,12 +267,14 @@ def test_tout_supprimer_retire_md_locuteurs_audio(qapp, machine, tmp_path, monke
     md = _reunion_avec_audio(tmp_path)
     loc = chemin_locuteurs(md)
     loc.write_text("loc", encoding="utf-8")
+    moi = md.with_name("moi.wav")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
     vue._tout_supprimer_un(md)
     assert not md.exists()
     assert not loc.exists()
-    assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
+    assert not moi.exists()
+    assert not md.parent.exists()   # le dossier entier de la réunion a disparu (docs/43 §8)
 
 
 def test_tout_supprimer_retire_aussi_le_cr_mistral(qapp, machine, tmp_path, monkeypatch):
@@ -462,7 +472,7 @@ def test_generer_cr_mistral_refuse_si_indisponible(qapp, machine, tmp_path):
 
 def test_cr_mistral_termine_propose_ouvrir(qapp, machine, tmp_path, monkeypatch):
     md = _reunion_avec_audio(tmp_path)
-    sortie = tmp_path / "2026-01-01_10-00_CR.md"
+    sortie = md.with_name("CR.md")
     sortie.write_text("# CR", encoding="utf-8")
     g = FauxGestionnaireCRMistral()
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
@@ -560,6 +570,49 @@ def test_ligne_en_cours_absente_pour_autre_type(qapp, machine, tmp_path):
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     vue.definir_etat_enregistrement(Mode.DICTEE, 5)
     assert vue._modele.rowCount() == 0
+
+
+def test_reunion_active_pas_de_ligne_en_double(qapp, machine, tmp_path):
+    """Régression : pendant l'enregistrement, le `transcription.md` de la réunion
+    active existe déjà sur disque — il ne doit PAS s'afficher en plus de la ligne
+    « en cours » (doublon constaté en test manuel le 2026-07-27)."""
+    active = _reunion_avec_audio(tmp_path, nom="2026-07-27_19-02-11")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert vue._modele.rowCount() == 1              # avant démarrage : ligne normale
+
+    vue.definir_reunion_active(active)              # signal reunion_demarree
+    vue.definir_etat_enregistrement(Mode.REUNION, 9)
+
+    assert vue._modele.rowCount() == 1              # « en cours » seule, pas de doublon
+    assert vue._modele.data(vue._modele.index(0, 1)) == "Réunion en cours"
+
+
+def test_reunion_active_reapparait_a_l_arret(qapp, machine, tmp_path):
+    active = _reunion_avec_audio(tmp_path, nom="2026-07-27_19-02-11")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    vue.definir_reunion_active(active)
+    vue.definir_etat_enregistrement(Mode.REUNION, 9)
+    assert vue._modele.rowCount() == 1
+
+    # Fin d'enregistrement : `machine.mode_change` → IDLE remet l'état au repos.
+    vue._sur_mode_change_surveillance(Mode.IDLE)
+    vue.definir_etat_enregistrement(Mode.IDLE, 0)
+
+    assert vue._modele.rowCount() == 1
+    assert vue._modele.chemin_a_la_ligne(0) == active   # redevenue une ligne normale
+
+
+def test_reunion_active_n_exclut_pas_les_autres(qapp, machine, tmp_path):
+    autre = _reunion_avec_audio(tmp_path, nom="2026-07-26_10-00-00")
+    active = _reunion_avec_audio(tmp_path, nom="2026-07-27_19-02-11")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+
+    vue.definir_reunion_active(active)
+    vue.definir_etat_enregistrement(Mode.REUNION, 9)
+
+    # « en cours » + l'autre réunion (l'active est exclue, pas les voisines)
+    assert vue._modele.rowCount() == 2
+    assert vue._modele.chemin_a_la_ligne(1) == autre
 
 
 # ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
@@ -686,5 +739,5 @@ def test_bulk_ignorer_audio_sur_selection(qapp, machine, tmp_path, monkeypatch):
     vue._action_bar.demande_ignorer_audio_masse.emit()
     # audio supprimé, .md conservés
     assert a.exists() and b.exists()
-    assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
-    assert not (tmp_path / "2026-01-02_11-00_moi.wav").exists()
+    assert not a.with_name("moi.wav").exists()
+    assert not b.with_name("moi.wav").exists()

@@ -44,9 +44,9 @@ def _configurer(config_tmp, **overrides):
     return config_tmp
 
 
-def _piste(tmp_path, nom, suffixe, silencieuse=False):
+def _piste(tmp_path, suffixe, silencieuse=False):
     valeurs = np.zeros(16000, dtype=np.int16) if silencieuse else np.full(16000, 3000, dtype=np.int16)
-    wavfile.write(tmp_path / f"{nom}_{suffixe}.wav", 16000, valeurs)
+    wavfile.write(tmp_path / f"{suffixe}.wav", 16000, valeurs)
 
 
 # ── disponible() ───────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ def test_utilise_le_transcript_local_par_defaut(tmp_path, config_tmp):
 
     chemin_cr = pipeline.generer_cr_reunion(md, config_tmp)
 
-    assert chemin_cr.name == "2026-01-01_10-00_CR.md"
+    assert chemin_cr.name == "CR.md"
     assert chemin_cr.read_text(encoding="utf-8").strip() == "# CR généré"
     assert route_transcription.call_count == 0        # aucun upload audio (§1)
     assert route_cr.call_count == 1
@@ -81,7 +81,7 @@ def test_utilise_le_transcript_local_par_defaut(tmp_path, config_tmp):
 @respx.mock
 def test_transcript_local_utilise_le_fichier_locuteurs_si_present(tmp_path, config_tmp):
     md = _md_avec_transcript(tmp_path)
-    locuteurs = md.with_name(md.stem + "_locuteurs.md")
+    locuteurs = md.with_name("locuteurs.md")
     locuteurs.write_text("**SPEAKER_00 :** Contenu locuteurs.", encoding="utf-8")
     _configurer(config_tmp)
     route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
@@ -96,8 +96,8 @@ def test_transcript_local_utilise_le_fichier_locuteurs_si_present(tmp_path, conf
 @respx.mock
 def test_repli_voxtral_si_placeholder_audio_seul(tmp_path, config_tmp):
     md = _md_placeholder(tmp_path)
-    _piste(tmp_path, md.stem, "moi")
-    _piste(tmp_path, md.stem, "systeme", silencieuse=True)  # ignorée (§7.4)
+    _piste(tmp_path, "moi")
+    _piste(tmp_path, "systeme", silencieuse=True)  # ignorée (§7.4)
     _configurer(config_tmp)
 
     route_transcription = respx.post(f"{URL}/v1/audio/transcriptions").mock(
@@ -116,7 +116,7 @@ def test_voxtral_reecrit_le_transcript_local_avec_mention(tmp_path, config_tmp):
     """Placeholder « audio seul » → la transcription Voxtral est récupérée dans le .md
     local, avec la mention Voxtral et sans le marqueur d'attente."""
     md = _md_placeholder(tmp_path)
-    _piste(tmp_path, md.stem, "moi")
+    _piste(tmp_path, "moi")
     _configurer(config_tmp)
     respx.post(f"{URL}/v1/audio/transcriptions").mock(
         return_value=httpx.Response(200, json={"text": "compte rendu de la réunion"}))
@@ -137,7 +137,7 @@ def test_forcer_voxtral_n_ecrase_pas_le_transcript_local_existant(tmp_path, conf
     le .md local ne doit PAS être écrasé — on ne détruit pas la transcription locale."""
     md = _md_avec_transcript(tmp_path)
     original = md.read_text(encoding="utf-8")
-    _piste(tmp_path, md.stem, "moi")
+    _piste(tmp_path, "moi")
     _configurer(config_tmp, mistral_source_transcription="voxtral")
     respx.post(f"{URL}/v1/audio/transcriptions").mock(
         return_value=httpx.Response(200, json={"text": "voxtral"}))
@@ -158,7 +158,7 @@ def test_repli_voxtral_leve_si_aucune_piste(tmp_path, config_tmp):
 @respx.mock
 def test_repli_voxtral_leve_si_toutes_pistes_silencieuses(tmp_path, config_tmp):
     md = _md_placeholder(tmp_path)
-    _piste(tmp_path, md.stem, "moi", silencieuse=True)
+    _piste(tmp_path, "moi", silencieuse=True)
     _configurer(config_tmp)
     with pytest.raises(ErreurMistral):
         pipeline.generer_cr_reunion(md, config_tmp)
@@ -169,7 +169,7 @@ def test_repli_voxtral_leve_si_toutes_pistes_silencieuses(tmp_path, config_tmp):
 @respx.mock
 def test_forcer_voxtral_ignore_le_transcript_local(tmp_path, config_tmp):
     md = _md_avec_transcript(tmp_path)
-    _piste(tmp_path, md.stem, "moi")
+    _piste(tmp_path, "moi")
     _configurer(config_tmp, mistral_source_transcription="voxtral")
 
     route_transcription = respx.post(f"{URL}/v1/audio/transcriptions").mock(
@@ -186,7 +186,7 @@ def test_forcer_voxtral_ignore_le_transcript_local(tmp_path, config_tmp):
 @respx.mock
 def test_garde_fou_duree_max_leve_avant_tout_appel_reseau(tmp_path, config_tmp):
     md = _md_placeholder(tmp_path)
-    _piste(tmp_path, md.stem, "moi")
+    _piste(tmp_path, "moi")
     _configurer(config_tmp, mistral_duree_max_min=0)  # 1s d'audio > 0 min autorisée
 
     route_transcription = respx.post(f"{URL}/v1/audio/transcriptions")
@@ -203,7 +203,7 @@ def test_sans_cle_api_leve_et_n_ecrit_rien(tmp_path, config_tmp):
     md = _md_avec_transcript(tmp_path)
     with pytest.raises(ErreurMistral):
         pipeline.generer_cr_reunion(md, config_tmp)
-    assert not md.with_name(md.stem + "_CR.md").exists()
+    assert not md.with_name("CR.md").exists()
 
 
 @respx.mock
@@ -215,7 +215,7 @@ def test_echec_cr_n_ecrit_rien(tmp_path, config_tmp):
     with pytest.raises(ErreurMistral):
         pipeline.generer_cr_reunion(md, config_tmp)
 
-    assert not md.with_name(md.stem + "_CR.md").exists()
+    assert not md.with_name("CR.md").exists()
 
 
 # ── Association BlueMind exploitée (docs/40, §7.5) ───────────────────────────────
@@ -251,7 +251,7 @@ def test_association_injecte_sujet_et_participants_dans_le_cr(tmp_path, config_t
 def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, config_tmp):
     """En repli Voxtral, les noms d'invités (tous) servent de context_bias (orthographe)."""
     md = _md_placeholder(tmp_path)
-    _piste(tmp_path, md.stem, "moi")
+    _piste(tmp_path, "moi")
     _ecrire_association(md)
     _configurer(config_tmp)
     route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(

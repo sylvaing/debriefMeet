@@ -191,7 +191,7 @@ class GestionnaireDiarization(QObject):
         ]
         if not invites:
             return
-        titre = titre_reunion(md) or asso.titre or md.stem
+        titre = titre_reunion(md) or asso.titre or md.parent.name
         try:
             debut_texte = asso.debut.split("T")[0] + " " + asso.debut.split("T")[1][:5]
         except IndexError:

@@ -111,6 +111,7 @@ class IconeTray(QSystemTrayIcon):
         config: Config,
         fenetre_principale: FenetrePrincipale,
         gestionnaire: GestionnaireDiarization | None = None,
+        orch_reunion: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -118,6 +119,7 @@ class IconeTray(QSystemTrayIcon):
         self._config = config
         self._fenetre_principale = fenetre_principale
         self._gestionnaire = gestionnaire
+        self._orch_reunion = orch_reunion
 
         self._etat_visuel = EtatVisuel.REPOS
         # (type, payload, expire_epoch_s) — messageClicked n'indique pas quelle
@@ -263,7 +265,7 @@ class IconeTray(QSystemTrayIcon):
     # ── Notifications de diarization ────────────────────────────────────────────
 
     def _on_diar_termine(self, md: object, _sortie: object) -> None:
-        nom = getattr(md, "stem", str(md))
+        nom = getattr(getattr(md, "parent", None), "name", None) or str(md)
         self._derniere_notif = None
         self.showMessage(
             "Locuteurs générés",
@@ -271,7 +273,7 @@ class IconeTray(QSystemTrayIcon):
             icone_wavemark_pour_etat(EtatVisuel.TERMINE), 8000)
 
     def _on_diar_echoue(self, md: object, _message: str) -> None:
-        nom = getattr(md, "stem", str(md))
+        nom = getattr(getattr(md, "parent", None), "name", None) or str(md)
         self._derniere_notif = None
         self.showMessage(
             "Diarization échouée",
@@ -324,7 +326,14 @@ class IconeTray(QSystemTrayIcon):
         from pathlib import Path
 
         from debrief_meet.core.bluemind.association import associer_evenement
-        associer_evenement(Path(str(fichier)), evt)
+        from debrief_meet.core.fichiers import renommer_dossier_reunion
+
+        md = Path(str(fichier))
+        associer_evenement(md, evt)
+        # Le dossier a normalement déjà été créé titré par `_demarrer()` (docs/43
+        # §5.2/§6.3, via `definir_evenement_pre_associe`) — ceci est donc un no-op ;
+        # gardé pour rester correct même si l'orchestrateur n'a pas reçu l'événement.
+        renommer_dossier_reunion(md, evt.titre)
 
     def _on_notification_cliquee(self) -> None:
         if self._derniere_notif is not None:
@@ -345,5 +354,7 @@ class IconeTray(QSystemTrayIcon):
                 icone_wavemark_pour_etat(EtatVisuel.ERREUR), 6000)
             return
         self._evenement_pre_associe = evt
+        if self._orch_reunion is not None:
+            self._orch_reunion.definir_evenement_pre_associe(evt)
         if not self._machine.toggle_reunion():
             self._evenement_pre_associe = None

@@ -84,8 +84,8 @@ def test_sans_h1_insere_en_tete(tmp_path):
 
 
 def test_inserer_pour_reunion_insere_dans_les_deux_fichiers(tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
-    loc = tmp_path / "2026-07-08_14-00_locuteurs.md"
+    md = tmp_path / "transcription.md"
+    loc = tmp_path / "locuteurs.md"
     md.write_text("# Réunion\n\nTranscription\n", encoding="utf-8")
     loc.write_text("# Locuteurs\n\nSPEAKER_00: bonjour\n", encoding="utf-8")
     inserer_pour_reunion(md, "Point projet X", "2026-07-08 14:00", _INVITES)
@@ -94,7 +94,7 @@ def test_inserer_pour_reunion_insere_dans_les_deux_fichiers(tmp_path):
 
 
 def test_inserer_pour_reunion_sans_locuteurs_ne_le_cree_pas(tmp_path):
-    md = tmp_path / "2026-07-08_14-00.md"
+    md = tmp_path / "transcription.md"
     md.write_text("# Réunion\n\nTranscription\n", encoding="utf-8")
     inserer_pour_reunion(md, "X", "d", _INVITES)
-    assert not (tmp_path / "2026-07-08_14-00_locuteurs.md").exists()
+    assert not (tmp_path / "locuteurs.md").exists()

@@ -92,7 +92,7 @@ def test_demarrer_cree_le_fichier(qapp, tmp_path):
 
     machine.toggle_reunion()
 
-    fichiers_md = list(tmp_path.glob("*.md"))
+    fichiers_md = list(tmp_path.glob("**/*.md"))
     assert len(fichiers_md) == 1
 
 
@@ -104,7 +104,7 @@ def test_demarrer_emet_reunion_demarree_avec_le_chemin(qapp, tmp_path):
 
     machine.toggle_reunion()
 
-    fichiers_md = list(tmp_path.glob("*.md"))
+    fichiers_md = list(tmp_path.glob("**/*.md"))
     assert recus == fichiers_md
 
 
@@ -140,7 +140,7 @@ def test_repli_micro_seul_systeme_non_disponible(qapp, tmp_path):
 
     assert systeme.appels_demarrer == 0
     assert micro.appels_demarrer == 1
-    fichiers = list(tmp_path.glob("*.md"))
+    fichiers = list(tmp_path.glob("**/*.md"))
     assert len(fichiers) == 1
     assert "⚠️" in fichiers[0].read_text(encoding="utf-8")
 
@@ -186,7 +186,7 @@ def test_micro_indisponible_reunion_continue_sans_micro(qapp, tmp_path):
     assert micro.appels_demarrer == 1
     assert not micro.en_cours
     assert systeme.appels_demarrer == 1
-    fichiers = list(tmp_path.glob("*.md"))
+    fichiers = list(tmp_path.glob("**/*.md"))
     assert len(fichiers) == 1
     assert "Microphone non disponible" in fichiers[0].read_text(encoding="utf-8")
 
@@ -310,10 +310,10 @@ def test_retention_audio_cree_les_fichiers(qapp, qtbot, tmp_path):
     machine.toggle_reunion()
     machine.toggle_reunion()                       # _arreter : écrit la tranche finale + ferme
 
-    md = list(tmp_path.glob("*.md"))[0]
+    md = list(tmp_path.glob("**/*.md"))[0]
     # format .opus (ffmpeg) ou .wav (repli) selon la machine → on globe les deux pistes
-    moi = list(tmp_path.glob(md.stem + "_moi.*"))
-    sysw = list(tmp_path.glob(md.stem + "_systeme.*"))
+    moi = list(md.parent.glob("moi.*"))
+    sysw = list(md.parent.glob("systeme.*"))
     assert moi and sysw
     assert moi[0].stat().st_size > 0 and sysw[0].stat().st_size > 0
 
@@ -581,7 +581,7 @@ def test_micro_faible_post_aec_est_transcrit(qapp, qtbot, tmp_path):
     rms = float(np.sqrt(np.mean(audio_recu.astype(np.float32) ** 2)))
     assert rms >= _MoteurGate._SEUIL_RMS
     # Et la transcription atterrit dans le .md (au lieu d'un fichier vide).
-    md = next(tmp_path.glob("*.md")).read_text(encoding="utf-8")
+    md = next(tmp_path.glob("**/*.md")).read_text(encoding="utf-8")
     assert "transcription de test" in md
 
 
@@ -601,7 +601,7 @@ def test_micro_silence_pur_reste_vide(qapp, qtbot, tmp_path):
     machine.toggle_reunion()
     qtbot.waitUntil(lambda: EtatVisuel.TERMINE in etats, timeout=5000)
 
-    md = next(tmp_path.glob("*.md")).read_text(encoding="utf-8")
+    md = next(tmp_path.glob("**/*.md")).read_text(encoding="utf-8")
     assert "transcription de test" not in md
 
 
@@ -618,7 +618,7 @@ def test_audio_seul_ne_transcrit_pas(qapp, qtbot, tmp_path):
     qtbot.wait(200)
 
     assert moteur.appels_transcrire == []          # aucune transcription live
-    md = next(tmp_path.glob("*.md"))
+    md = next(tmp_path.glob("**/*.md"))
     assert transcription_en_attente(md) is True     # placeholder en attente
 
 

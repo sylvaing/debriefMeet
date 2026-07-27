@@ -188,6 +188,11 @@ class FenetrePrincipale(QMainWindow):
         self.afficher_reunion()
         self._reunion_view.selectionner_reunion(chemin_md)
 
+    def definir_reunion_active(self, chemin_md) -> None:
+        """Relais de `OrchestrateurReunion.reunion_demarree` (docs/43 §9) — la page
+        Réunion doit surveiller le sous-dossier de la réunion en cours."""
+        self._reunion_view.definir_reunion_active(chemin_md)
+
     def showEvent(self, event) -> None:
         # Déclencheur de sync BlueMind « ouverture de la fenêtre » (docs/40 §5) —
         # no-op si l'interco n'est pas configurée ou si une sync tourne déjà.

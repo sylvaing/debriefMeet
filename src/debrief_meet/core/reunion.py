@@ -123,6 +123,11 @@ class OrchestrateurReunion(QObject):
         self._base_moi: Path | None = None
         self._worker: _WorkerTranche | None = None
         self._thread: QThread | None = None
+        # Événement BlueMind pré-associé (docs/40 §8, docs/43 §5.2) : posé par l'appelant
+        # (tray, démarrage F3) avant le basculement en mode réunion, consommé dans
+        # `_demarrer()` pour créer le dossier déjà titré (aucun renommage pendant
+        # l'enregistrement, cf. docs/43 §6.3).
+        self._evenement_pre_associe = None
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._sur_tick)
@@ -140,14 +145,24 @@ class OrchestrateurReunion(QObject):
         elif mode == Mode.IDLE and self._actif:
             self._arreter()
 
+    def definir_evenement_pre_associe(self, evt) -> None:
+        """Appelé par l'appelant UI (tray, F3) juste avant `machine.toggle_reunion()`
+        — le dossier créé par `_demarrer()` en tiendra compte pour naître déjà titré
+        (docs/43 §5.2/§6.3)."""
+        self._evenement_pre_associe = evt
+
     def _demarrer(self) -> None:
         self._actif = True
         self._transcription_live = bool(self._config.get("transcription_live"))
         self._debut = datetime.now()
         self._avec_micro = False
         self._avec_systeme = False
+        evt_pre_associe = self._evenement_pre_associe
+        self._evenement_pre_associe = None
         try:
-            fichier = chemin_reunion(Path(self._config.get("dossier_reunions")), self._debut)
+            titre_pre = evt_pre_associe.titre if evt_pre_associe is not None else None
+            fichier = chemin_reunion(
+                Path(self._config.get("dossier_reunions")), self._debut, titre_pre)
             self._ecrivain = EcrivainReunion(fichier, self._debut)
             self._avec_systeme = self._systeme.disponible()
             if not self._avec_systeme:

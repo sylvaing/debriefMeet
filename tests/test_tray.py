@@ -107,14 +107,18 @@ def test_sur_reunion_demarree_associe_le_fichier(qapp, tmp_path):
     cfg = _config(tmp_path)
     fenetre = FenetrePrincipale(machine, cfg)
     tray = IconeTray(machine, cfg, fenetre_principale=fenetre)
-    md = tmp_path / "2026-07-08_14-00.md"
+    dossier = tmp_path / "2026-07-08_14-00-00"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
     md.write_text("# Réunion — 2026-07-08 14:00\n", encoding="utf-8")
 
     tray._evenement_pre_associe = _evt()
     tray._sur_reunion_demarree(md)
 
     from debrief_meet.core.bluemind.association import lire
-    asso = lire(md)
+    # Le dossier a été renommé (titre appliqué, docs/43 §6.1) — relire au nouveau chemin.
+    nouveau_md = dossier.with_name("2026-07-08_14-00-00_Point-projet-X") / "transcription.md"
+    asso = lire(nouveau_md)
     assert asso is not None
     assert asso.event_uid == "e1"
     assert tray._evenement_pre_associe is None
