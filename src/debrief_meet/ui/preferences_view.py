@@ -47,6 +47,7 @@ from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription
 from debrief_meet.ui import dialogues
 from debrief_meet.ui.chargeur_modele import ChargeurModele
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
+from debrief_meet.ui.remote_ia_view import RemoteIAView
 from debrief_meet.ui.testeur_connexion_bluemind import TesteurConnexionBlueMind
 from debrief_meet.ui.theme import C, M, MONO, SANS, color
 
@@ -73,6 +74,7 @@ _SECTIONS = (
     ("Général", "sliders-horizontal"),
     ("Raccourcis", "keyboard"),
     ("BlueMind", "list"),
+    ("Remote IA", "brain"),
     ("Journalisation", "bug"),
 )
 
@@ -214,7 +216,7 @@ class PreferencesView(QWidget):
         constructeurs = (
             self._section_modele, self._section_audio, self._section_dossiers,
             self._section_prompts, self._section_general, self._section_raccourcis,
-            self._section_bluemind, self._section_logs,
+            self._section_bluemind, self._section_remote_ia, self._section_logs,
         )
         for construire in constructeurs:
             self._pages.addWidget(self._enrober_scroll(construire()))
@@ -966,6 +968,11 @@ class PreferencesView(QWidget):
             return
         if self._bluemind_reinitialiser_sync is not None:
             self._bluemind_reinitialiser_sync()
+
+    # ── Section Remote IA (interco Mistral, docs/42 §9.1) ───────────────────────
+
+    def _section_remote_ia(self) -> QWidget:
+        return RemoteIAView(self._config, self)
 
     # ── Section Journalisation ─────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ from debrief_meet.core.fichiers import (
     EnregistreurAudioReunion,
     ErreurFfmpegIntrouvable,
     apercu_journal,
+    chemin_cr_mistral,
     chemin_ffmpeg,
     chemin_locuteurs,
     chemin_reunion,
@@ -38,6 +39,21 @@ def test_lister_enregistrements_exclut_locuteurs(tmp_path):
     (tmp_path / "2026-05-01_10-00_locuteurs.md").write_text("dérivé")
     noms = [f.name for f in lister_enregistrements(tmp_path)]
     assert noms == ["2026-05-01_10-00.md"]                   # le _locuteurs est exclu
+
+
+def test_chemin_cr_mistral():
+    assert chemin_cr_mistral(Path("/x/2026-04-11_14-30.md")) == \
+        Path("/x/2026-04-11_14-30_CR.md")
+
+
+def test_lister_enregistrements_exclut_cr_mistral(tmp_path):
+    """Le CR Mistral (`*_CR.md`, docs/42) est un dérivé, pas une réunion à part
+    entière — sinon il apparaît en fantôme dans l'Historique (sans date/durée,
+    impossible à associer ou à diariser)."""
+    (tmp_path / "2026-05-01_10-00.md").write_text("brut")
+    (tmp_path / "2026-05-01_10-00_CR.md").write_text("# CR — Sujet — 2026-05-01")
+    noms = [f.name for f in lister_enregistrements(tmp_path)]
+    assert noms == ["2026-05-01_10-00.md"]
 
 
 def test_pistes_audio_existantes(tmp_path):

@@ -293,6 +293,12 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
     gestionnaire_diar = GestionnaireDiarization(adaptateurs.moteur, config)
 
+    # Gestionnaire de CR Mistral persistant (docs/42) — no-op tant que non configuré
+    # (clé API vide, §2). Même patron que gestionnaire_diar, ressource indépendante
+    # (appel réseau externe, pas le moteur de transcription local).
+    from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
+    gestionnaire_cr_mistral = GestionnaireCRMistral(config)
+
     # Interco BlueMind (docs/40) — no-op tant que non configurée (URL vide, §1.1).
     from debrief_meet.core.bluemind.sync import SynchroCalendrier
     synchro_bluemind = SynchroCalendrier(config)
@@ -337,7 +343,8 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         bluemind_reinitialiser_sync=synchro_bluemind.reinitialiser,
         bluemind_declencher_sync=synchro_bluemind.synchroniser_si_necessaire,
         bluemind_sur_ouverture=synchro_bluemind.synchroniser_si_necessaire,
-        bluemind_store=synchro_bluemind.store)
+        bluemind_store=synchro_bluemind.store,
+        gestionnaire_cr_mistral=gestionnaire_cr_mistral)
 
     # Tray
     tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar)
@@ -377,6 +384,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     app.aboutToQuit.connect(orch_journal.terminer)
     app.aboutToQuit.connect(orch_dictee.terminer)
     app.aboutToQuit.connect(gestionnaire_diar.terminer)  # attend le job avant de tuer le moteur
+    app.aboutToQuit.connect(gestionnaire_cr_mistral.terminer)  # attend son éventuel job réseau
     app.aboutToQuit.connect(synchro_bluemind.terminer)
     app.aboutToQuit.connect(planificateur_bluemind.arreter)
     app.aboutToQuit.connect(adaptateurs.micro.terminer)

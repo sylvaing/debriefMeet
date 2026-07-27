@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 from PySide6.QtCore import QObject, Signal
@@ -141,6 +143,20 @@ def test_repli_micro_seul_systeme_non_disponible(qapp, tmp_path):
     fichiers = list(tmp_path.glob("*.md"))
     assert len(fichiers) == 1
     assert "⚠️" in fichiers[0].read_text(encoding="utf-8")
+
+
+def test_systeme_indisponible_logue_un_avertissement(qapp, tmp_path, caplog):
+    """Symétrique du micro indisponible — sans ce log, une capture système en échec
+    (ex. helper SCK absent) passait totalement inaperçue dans les logs."""
+    machine = MachineEtats()
+    systeme = SystemeFake(disponible=False)
+    orch, micro, systeme, _ = _creer(machine, tmp_path, systeme=systeme)
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet.core.reunion"):
+        machine.toggle_reunion()
+
+    assert any("système" in r.message.lower() and "indisponible" in r.message.lower()
+              for r in caplog.records)
 
 
 def test_etat_reste_rouge_pendant_enregistrement(qapp, qtbot, tmp_path):

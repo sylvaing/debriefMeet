@@ -150,6 +150,10 @@ class OrchestrateurReunion(QObject):
             fichier = chemin_reunion(Path(self._config.get("dossier_reunions")), self._debut)
             self._ecrivain = EcrivainReunion(fichier, self._debut)
             self._avec_systeme = self._systeme.disponible()
+            if not self._avec_systeme:
+                logger.warning(
+                    "Audio système indisponible au démarrage — réunion sans piste système "
+                    "(helper de capture absent/non exécutable)")
 
             micro_index = self._config.get("micro_index")
             try:

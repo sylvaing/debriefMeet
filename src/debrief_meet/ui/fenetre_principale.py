@@ -30,6 +30,7 @@ from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription,
 from debrief_meet.ui.dictee_view import DicteeView
 from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
+from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
 from debrief_meet.ui.icones import icone_bascule
 from debrief_meet.ui.journal_view import JournalView
 from debrief_meet.ui.preferences_view import PreferencesView
@@ -55,6 +56,7 @@ class FenetrePrincipale(QMainWindow):
         bluemind_declencher_sync: Callable[[], None] | None = None,
         bluemind_sur_ouverture: Callable[[], None] | None = None,
         bluemind_store: StoreCalendrier | None = None,
+        gestionnaire_cr_mistral: GestionnaireCRMistral | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -64,7 +66,7 @@ class FenetrePrincipale(QMainWindow):
         self.resize(1000, 660)
 
         self._reunion_view = ReunionView(
-            config, machine, presse_papiers, gestionnaire, bluemind_store, self)
+            config, machine, presse_papiers, gestionnaire, bluemind_store, gestionnaire_cr_mistral, self)
         self._dictee_view = DicteeView(config, machine, self)
         self._journal_view = JournalView(config, machine, presse_papiers, self)
         self._preferences_view = PreferencesView(

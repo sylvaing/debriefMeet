@@ -21,7 +21,7 @@ L'existant (dossier de référence `manu-whisper/whiper-master/`) est une applic
 - Reproduire **les mêmes fonctionnalités** que l'existant (parité v1), avec une base de code **maintenable**.
 - Fonctionner **aussi bien sur macOS, Windows et Linux** — les **trois OS sont des cibles de premier rang, à parité**.
 - Rester une **application lourde native** (pas une web app), pilotée principalement depuis l'**icône de la zone de notification (tray)**.
-- Rester **100 % locale** : aucune donnée audio ou texte n'est envoyée vers un service cloud. Tout le traitement se fait sur la machine.
+- Rester **100 % locale par défaut** : aucune donnée audio ou texte n'est envoyée vers un service cloud, tout le traitement se fait sur la machine — **sauf activation explicite** par l'utilisateur d'une interco cloud optionnelle (ex. génération de CR via Mistral, docs/42), strictement opt-in, invisible tant que non configurée, avec confirmation avant le premier envoi.
 
 ### Le parti pris technique majeur (déjà acté)
 
@@ -40,7 +40,7 @@ Conséquence d'architecture (à détailler dans le doc technique) : on définit 
 
 | Principe | Implication |
 |---|---|
-| **100 % local, zéro cloud** | Aucune transcription, audio ou note ne quitte la machine. Pas de télémétrie. |
+| **100 % local par défaut, zéro cloud** | Aucune transcription, audio ou note ne quitte la machine. Pas de télémétrie. Exception strictement opt-in : interco Mistral optionnelle pour générer un CR (docs/42), invisible tant que non activée. |
 | **App lourde native** | Application de bureau installée, pas un site/PWA. Intégration système réelle (tray, raccourcis, autostart). |
 | **Tray-first** | Le point d'entrée principal est l'icône du tray. L'app vit en arrière-plan, discrète. |
 | **Moteur optimisé par OS** | Performance native maximale ; le moteur est isolé derrière une interface commune. |

@@ -33,17 +33,25 @@ class EcrivainJournal:
 
 
 _SUFFIXE_LOCUTEURS = "_locuteurs"
+_SUFFIXE_CR = "_CR"
+_SUFFIXES_DERIVES = (_SUFFIXE_LOCUTEURS, _SUFFIXE_CR)
 
 
 def lister_enregistrements(dossier: Path) -> list[Path]:
     """Retourne les `.md` du dossier, triés du plus récent au plus ancien.
 
-    Exclut les débriefs de locuteurs (`*_locuteurs.md`) : ce sont des dérivés d'une
-    transcription, pas des entrées à part entière (cf. docs/09-refonte-historique.md §2)."""
+    Exclut les débriefs de locuteurs (`*_locuteurs.md`) et les CR Mistral (`*_CR.md`,
+    docs/42) : ce sont des dérivés d'une transcription, pas des entrées à part entière
+    (cf. docs/09-refonte-historique.md §2)."""
     if not dossier.exists():
         return []
-    fichiers = (f for f in dossier.glob("*.md") if not f.stem.endswith(_SUFFIXE_LOCUTEURS))
+    fichiers = (f for f in dossier.glob("*.md") if not f.stem.endswith(_SUFFIXES_DERIVES))
     return sorted(fichiers, reverse=True)
+
+
+def chemin_cr_mistral(md: Path) -> Path:
+    """Chemin du CR Mistral `<stem>_CR.md` associé à une transcription (docs/42)."""
+    return md.with_name(md.stem + _SUFFIXE_CR + ".md")
 
 
 def chemin_locuteurs(md: Path) -> Path:

@@ -61,6 +61,17 @@ _DEFAUTS: dict[str, Any] = {
     "bluemind_notif_inclure_solo": False,
     "bluemind_notif_inclure_refuses": False,
     "bluemind_notif_inclure_journee": False,
+    # Interco Mistral (docs/42) — "mistral_cle_api" vide = fonctionnalité invisible
+    # (aucun bouton, aucune requête). Section Préférences « Remote IA ».
+    "mistral_cle_api": "",
+    "mistral_base_url": "https://api.mistral.ai",
+    # "auto" : réutilise le transcript local s'il existe, repli Voxtral sinon (défaut,
+    # décision adaptative §1) ; "voxtral" : force la re-transcription cloud.
+    "mistral_source_transcription": "auto",
+    "mistral_modele_transcription": "voxtral-mini-latest",
+    "mistral_modele_cr": "mistral-small-latest",
+    "mistral_duree_max_min": 180,
+    "mistral_confidentialite_acceptee": False,
 }
 
 

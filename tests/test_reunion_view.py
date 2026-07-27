@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Qt, Signal
 from scipy.io import wavfile
 
 from debrief_meet.core.config import Config
-from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, chemin_locuteurs
+from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, chemin_cr_mistral, chemin_locuteurs
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.ui import reunion_view as rv_module
 from debrief_meet.ui.reunion_view import ReunionView
@@ -61,6 +61,33 @@ class FauxGestionnaire(QObject):
 
     def lancer_transcription(self, chemin_md):
         self.lances_transcription.append(chemin_md)
+        if self._job is not None:
+            return False
+        self._job = chemin_md
+        return True
+
+
+class FauxGestionnaireCRMistral(QObject):
+    """Miroir de FauxGestionnaire pour l'interco Mistral (docs/42)."""
+
+    demarre = Signal(object)
+    termine = Signal(object, object)
+    echoue = Signal(object, str)
+
+    def __init__(self, dispo=True, job=None):
+        super().__init__()
+        self._dispo = dispo
+        self._job = job
+        self.lances: list = []
+
+    def disponible(self):
+        return self._dispo
+
+    def job_en_cours(self):
+        return self._job
+
+    def lancer(self, chemin_md):
+        self.lances.append(chemin_md)
         if self._job is not None:
             return False
         self._job = chemin_md
@@ -240,6 +267,33 @@ def test_tout_supprimer_retire_md_locuteurs_audio(qapp, machine, tmp_path, monke
     assert not (tmp_path / "2026-01-01_10-00_moi.wav").exists()
 
 
+def test_tout_supprimer_retire_aussi_le_cr_mistral(qapp, machine, tmp_path, monkeypatch):
+    """Le CR Mistral (`*_CR.md`, docs/42) est un dérivé de la réunion — il doit
+    disparaître avec elle, comme le débrief locuteurs."""
+    md = _reunion_avec_audio(tmp_path)
+    cr = chemin_cr_mistral(md)
+    cr.write_text("# CR — Sujet — 2026-01-01", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._tout_supprimer_un(md)
+    assert not md.exists()
+    assert not cr.exists()
+
+
+def test_tout_supprimer_retire_aussi_le_sidecar_bluemind(qapp, machine, tmp_path, monkeypatch):
+    """Le sidecar d'association BlueMind (`*.bluemind.json`, docs/40) est un dérivé
+    de la réunion — il doit disparaître avec elle."""
+    from debrief_meet.core.bluemind import association as bluemind_association
+    md = _reunion_avec_audio(tmp_path)
+    sidecar = bluemind_association.chemin_sidecar(md)
+    sidecar.write_text('{"event_uid": "x", "cal_uid": "y"}', encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._tout_supprimer_un(md)
+    assert not md.exists()
+    assert not sidecar.exists()
+
+
 def test_suppression_de_masse_sur_selection(qapp, machine, tmp_path, monkeypatch):
     a = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00")
     b = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
@@ -302,6 +356,137 @@ def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
     vue._copier(md)
     assert pp.dernier.startswith("Résume.\n\n")
     assert "Moi : salut" in pp.dernier
+
+
+# ── CR Mistral (docs/42) ─────────────────────────────────────────────────────
+
+def test_cr_mistral_absent_sans_gestionnaire(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    actions = _actions(vue)
+    assert not any(a.icone == "notebook" for a in actions)
+
+
+def test_cr_mistral_absent_si_indisponible(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(dispo=False))
+    actions = _actions(vue)
+    assert not any(a.icone == "notebook" for a in actions)
+
+
+def test_cr_mistral_actif_avec_transcript_local(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)   # .md non placeholder = transcript local exploitable
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    cr = _spec(_actions(vue), "notebook")
+    assert cr.actif is True
+
+
+def test_cr_mistral_actif_avec_audio_sans_transcript(qapp, machine, tmp_path):
+    _reunion_en_attente(tmp_path)   # placeholder (enregistrement seul) mais audio présent
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    cr = _spec(_actions(vue), "notebook")
+    assert cr.actif is True         # repli Voxtral possible (§1)
+
+
+def test_cr_mistral_grise_sans_rien_a_exploiter(qapp, machine, tmp_path):
+    _reunion_en_attente(tmp_path, avec_audio=False)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    cr = _spec(_actions(vue), "notebook")
+    assert cr.actif is False
+    assert "aucune transcription" in cr.tooltip.lower()
+
+
+def test_cr_mistral_en_cours(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(job=md))
+    en_cours = _spec(_actions(vue), "clock-counter-clockwise")
+    assert en_cours.actif is False
+    assert "cr en cours" in en_cours.tooltip.lower()
+
+
+def test_cr_mistral_grise_si_autre_job_diarization_tourne(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-02_11-00")
+    autre = tmp_path / "2026-01-01_10-00.md"
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(job=autre),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    cr = _spec(_actions(vue, row=0), "notebook")
+    assert cr.actif is False
+    assert "cours" in cr.tooltip.lower()
+
+
+def test_generer_cr_mistral_delegue_au_gestionnaire(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)   # évite la boîte de confirmation
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    vue._generer_cr_mistral(md)
+    assert g.lances == [md]
+
+
+def test_generer_cr_mistral_demande_confirmation_au_premier_envoi(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    assert cfg.get("mistral_confidentialite_acceptee") is False
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: False)
+    vue._generer_cr_mistral(md)
+    assert g.lances == []                                # refusé → pas lancé
+    assert cfg.get("mistral_confidentialite_acceptee") is False
+
+
+def test_generer_cr_mistral_confirmation_acceptee_memorisee(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    vue._generer_cr_mistral(md)
+    assert g.lances == [md]
+    assert cfg.get("mistral_confidentialite_acceptee") is True
+
+
+def test_generer_cr_mistral_refuse_si_indisponible(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral(dispo=False)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    vue._generer_cr_mistral(md)
+    assert g.lances == []
+
+
+def test_cr_mistral_termine_propose_ouvrir(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    sortie = tmp_path / "2026-01-01_10-00_CR.md"
+    sortie.write_text("# CR", encoding="utf-8")
+    g = FauxGestionnaireCRMistral()
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    vue.show()
+    ouverts = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: True)
+    monkeypatch.setattr(vue, "_ouvrir", lambda c: ouverts.append(c))
+    vue._sur_cr_mistral_termine(md, sortie)
+    assert ouverts == [sortie]
+    # Le CR généré ne doit PAS apparaître comme une ligne fantôme dans l'Historique
+    # (sans date/durée, impossible à associer ou diariser) — cf. core/fichiers.py
+    # lister_enregistrements, qui l'exclut comme les fichiers _locuteurs.md.
+    assert vue._modele.rowCount() == 1
+
+
+def test_cr_mistral_echoue_affiche_message(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    vue.show()
+    appels = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir", lambda *a, **k: appels.append(a))
+    vue._sur_cr_mistral_echoue(md, "clé invalide")
+    assert appels
 
 
 # ── Barre d'action (bouton bascule) ──────────────────────────────────────────
