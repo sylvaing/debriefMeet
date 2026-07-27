@@ -27,9 +27,17 @@ partout dans l'app), `moi.opus`/`systeme.opus` (ou `.wav`), `locuteurs.md`, `CR.
 `bluemind.json` — noms **génériques**, fixes. Le dossier est renommé à chaque
 changement de titre (édition manuelle ou association BlueMind) via
 `core/fichiers.renommer_dossier_reunion`. Supprimer une réunion = `shutil.rmtree`
-du dossier — plus aucun artefact ne peut rester orphelin. Migration one-shot
-idempotente au démarrage (`core/migration_dossiers.py`) pour les réunions à plat
-d'avant docs/43. Le **journal** (`AAAA-MM-JJ.md`) reste inchangé (à plat, 1 fichier/jour).
+du dossier — plus aucun artefact ne peut rester orphelin. Le **journal**
+(`AAAA-MM-JJ.md`) reste inchangé (à plat, 1 fichier/jour).
+
+⚠️ **Noms legacy en précision minute** : la migration des réunions à plat d'avant
+docs/43 a tourné une fois sur le seul poste concerné, puis son code a été **retiré**
+(docs/43 §7). Elle a laissé des dossiers en `AAAA-MM-JJ_HH-MM` (+ un compteur de
+collision `-2`), là où les nouvelles réunions sont à la seconde. Le support de ces
+noms dans `core/fichiers.py` (`_MOTIF_HORODATAGE` à secondes optionnelles,
+désambiguïsation « 2 chiffres = secondes / 1 chiffre = collision legacy »,
+`_prefixe_horodatage` qui préserve la précision au renommage) n'est **pas** du code
+mort : la majorité des dossiers réels en dépendent. Ne pas le simplifier.
 
 **Réunion active exclue du listing** : son `transcription.md` est créé dès le démarrage
 de l'enregistrement, et elle est déjà représentée par la ligne « en cours » → sans
@@ -62,12 +70,12 @@ Après l'interco Mistral (docs/42, 2026-07-21) : +85 tests unitaires (`test_mist
 `test_fichiers.py`/`test_reunion.py`/`test_reunion_view.py`) — **1042 passed** en
 environnement extras macOS + pyannote complets, sans `.venv-build`/`packaging/vendor/ffmpeg`
 (2 échecs attendus : helper Swift non compilé, audio canonique absent sur ce clone).
-Après la réorganisation 1 dossier/réunion (docs/43, 2026-07-27) : **1106 passed** dans
-le même environnement (mêmes 2 échecs attendus, inchangés) — nouveau module
-`core/migration_dossiers.py` (`test_migration_dossiers.py`, 14 tests) + tests étendus
-de `test_fichiers.py` (slug, nom de dossier, renommage) + adaptation du layout dans
-tous les tests touchant des réunions (fixtures désormais en sous-dossier) + 6 tests
-d'exclusion de la réunion active (ligne en double, cf. § ci-dessous).
+Après la réorganisation 1 dossier/réunion (docs/43, 2026-07-27) : **1099 passed** sur
+`main` (0 échec, environnement complet) — tests étendus de `test_fichiers.py` (slug,
+nom de dossier, renommage), adaptation du layout dans tous les tests touchant des
+réunions (fixtures désormais en sous-dossier), + 6 tests d'exclusion de la réunion
+active (ligne en double, cf. § ci-dessous). Le pic à 1113 incluait les 14 tests du
+module de migration, retiré depuis (docs/43 §7).
 
 ## Environnements Python — ne pas confondre
 
@@ -108,7 +116,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
-| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1113 passed). Migration passée sur les **données réelles** (23 réunions → dossiers, collision `09-56`/`09-56-2` séparée). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat). Correctifs embarqués : réunion active exclue du listing (ligne en double) + migration tracée dans le log (`009badb`). Bilan & écarts : docs/43 §15. |
+| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — cf. docs/43 §7 et le § « Stockage des réunions » pour les noms legacy qui subsistent. ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
 
 ## Packaging macOS (Phase 4) — pièges
 

@@ -51,7 +51,7 @@ génériques** ; l'horodatage (et le titre) vivent dans le **nom du dossier**.
 | **Format dossier** | `AAAA-MM-JJ_HH-MM-SS` — et `AAAA-MM-JJ_HH-MM-SS_<slug-titre>` si un événement/titre est associé. Précision **seconde** pour les nouvelles réunions. |
 | **Fichiers internes** | noms **génériques** : `transcription.md`, `moi.opus`/`moi.wav`, `systeme.opus`/`systeme.wav`, `locuteurs.md`, `CR.md`, `bluemind.json`. |
 | **Renommage** | le dossier est renommé à **chaque changement de titre** : association BlueMind **et** édition manuelle du H1. Titre vidé / dissociation → le dossier **revient** à l'horodatage seul. |
-| **Migration** | **automatique au 1er démarrage** de la nouvelle version (one-shot, idempotente). |
+| **Migration** | ~~automatique au 1er démarrage (one-shot, idempotente)~~ — a tourné une fois, **code retiré depuis** (§7). |
 | **Suppression** | supprimer une réunion = `shutil.rmtree(dossier)`. Fin de la liste de suffixes. |
 | **Slug titre** | espaces → tirets ; accents **conservés** ; caractères interdits retirés ; tronqué à ~60 caractères. |
 
@@ -423,78 +423,22 @@ enregistrement**.
 
 ---
 
-## 7. Migration automatique au démarrage
+## 7. Migration des réunions à plat — **retirée** (2026-07-27)
 
-### 7.1 Nouveau module `core/migration_dossiers.py`
-
-```python
-def migrer_reunions_vers_dossiers(dossier_reunions: Path) -> int:
-    """Migre les réunions stockées à plat vers 1 dossier/réunion. Idempotente
-    (re-exécutable sans dégât). Retourne le nombre de réunions migrées.
-
-    Ne lève jamais : toute erreur sur une réunion est loggée et la migration continue
-    avec les suivantes (appelée au démarrage — ne doit jamais empêcher le lancement)."""
-```
-
-### 7.2 Algorithme
-
-Pour chaque `*.md` **à la racine** de `dossier_reunions` (donc `is_file()`, pas déjà en
-sous-dossier) dont le **stem** matche le motif réunion legacy
-`^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(-\d+)?$` et qui **n'est pas** un dérivé (`*_locuteurs.md`,
-`*_CR.md`, `*_moi.*`, `*_systeme.*`) :
-
-1. **Déduire le titre** : lire le sidecar `<stem>.bluemind.json` (`titre`) **ou** le H1 custom
-   du `.md` (`titre_reunion`) → slug (§3). Sinon pas de slug.
-2. **Nom du dossier** = `<stem>[_<slug>]`, collision → suffixe `-2`, `-3`… (le stem legacy
-   conserve minute + éventuel compteur `-N` d'origine, cf. §2.1/§2.3).
-3. `dossier_cible.mkdir(parents=True)`.
-4. **Déplacer** (rename dans le même volume) selon la correspondance :
-   | Ancien | Nouveau (dans le dossier) |
-   |---|---|
-   | `<stem>.md` | `transcription.md` |
-   | `<stem>_moi.opus` / `.wav` | `moi.opus` / `.wav` |
-   | `<stem>_systeme.opus` / `.wav` | `systeme.opus` / `.wav` |
-   | `<stem>_locuteurs.md` | `locuteurs.md` |
-   | `<stem>_CR.md` | `CR.md` |
-   | `<stem>.bluemind.json` | `bluemind.json` |
-5. Logger `INFO` : `stem → dossier_cible` + liste des satellites déplacés.
-
-**À ignorer** : `.DS_Store`, tout `.md` déjà dans un sous-dossier (idempotence : on ne traite
-que les fichiers **à la racine**), tout fichier ne matchant pas le motif.
-
-### 7.3 Idempotence & sûreté
-
-- Ré-exécution : plus aucun `.md` à la racine → 0 migré, aucun effet. ✅
-- Un `.md` à la racine dont le dossier cible existe **déjà** (migration partielle interrompue)
-  → collision → suffixe `-N` **ou**, mieux, détecter que le dossier existant correspond déjà à
-  ce stem et compléter le déplacement des satellites manquants. Choisir la variante simple
-  (suffixe `-N`) et logger un `WARNING` : cas seulement possible après un crash en plein
-  milieu ; ne pas sur-concevoir.
-- Déplacements via `Path.rename` (atomique intra-volume). `~/Documents` est le même volume que
-  les fichiers source → OK. Si `rename` échoue (cross-device improbable), repli `shutil.move`.
-
-### 7.4 Appel au démarrage — `__main__.py`
-
-Après le chargement de la config et **avant** la construction des vues/modèles
-(qui appellent `lister_reunions`), autour de [__main__.py:288](../src/debrief_meet/__main__.py) :
-
-```python
-from debrief_meet.core.migration_dossiers import migrer_reunions_vers_dossiers
-try:
-    n = migrer_reunions_vers_dossiers(Path(config.get("dossier_reunions")))
-    if n:
-        logger.info("Migration réunions → dossiers : %d réunion(s) migrée(s)", n)
-except Exception:
-    logger.warning("Migration réunions → dossiers : échec non bloquant", exc_info=True)
-```
-
-### 7.5 Données réelles concernées (sur le Mac de Sylvain)
-
-23 réunions à plat, dont **6 associées BlueMind** (auront un slug de titre), 1 collision legacy
-`2026-07-06_09-56-2` (deux réunions dans la minute 09:56). Vérifier après migration que les 2
-donnent bien 2 dossiers distincts (`2026-07-06_09-56` et `2026-07-06_09-56-2`).
-
----
+> Le plan prévoyait ici un module `core/migration_dossiers.py` appelé au démarrage, qui
+> convertissait les réunions du layout **à plat** d'avant docs/43 (`AAAA-MM-JJ_HH-MM.md` +
+> satellites suffixés) vers le layout en dossiers. Il a tourné **une fois**, sur la seule
+> installation existante (le poste de Sylvain, 23 réunions), puis **code et tests ont été
+> supprimés** : l'app n'est déployée nulle part ailleurs, donc plus aucune donnée à plat ne
+> peut se présenter.
+>
+> **Conséquence à connaître** : les dossiers issus de cette migration gardent un horodatage
+> à la **minute** (`2026-07-02_15-01`), voire un compteur de collision (`2026-07-06_09-56-2`),
+> là où les nouvelles réunions sont à la **seconde**. La lecture de ces noms reste donc
+> pleinement supportée dans `core/fichiers.py` — `_MOTIF_HORODATAGE` (secondes optionnelles),
+> la désambiguïsation du §2.3 et `_prefixe_horodatage` (qui préserve la précision d'origine
+> lors d'un renommage) ne sont **pas** du code mort : 22 des 24 dossiers réels en dépendent.
+> Ne pas les simplifier en croyant que « tout est en secondes ».
 
 ## 8. Suppression simplifiée (rappel)
 
@@ -551,9 +495,6 @@ sous-dossier, `rmtree`).
 - `renommer_dossier_reunion` : ajout de titre, changement de titre, titre vidé → retour à
   l'horodatage, no-op si nom inchangé, collision cible existante, préservation du préfixe
   legacy (minute → **ne fabrique pas** de secondes `-00`).
-- `migrer_reunions_vers_dossiers` : migration nominale (satellites déplacés), avec titre BlueMind,
-  avec H1 custom, collision legacy `-2`, **idempotence** (2ᵉ appel = 0), `.DS_Store` ignoré,
-  fichier non-réunion laissé en place, ne lève jamais sur erreur d'un item.
 - Suppression : `rmtree` retire bien tout le dossier ; garde-fou hors `dossier_reunions`.
 
 ---
@@ -571,9 +512,8 @@ sous-dossier, `rmtree`).
 6. `ui/reunion_view.py` : suppression `rmtree`, renommage sur titre/association, re-sélection,
    watcher sous-dossier (§9).
 7. `ui/gestionnaire_diarization.py` : `parent.name`.
-8. `core/migration_dossiers.py` + appel dans `__main__.py`.
-9. Suite de tests complète + nouveaux tests (§10).
-10. Mise à jour docs & mémoire (§13).
+8. Suite de tests complète + nouveaux tests (§10).
+9. Mise à jour docs & mémoire (§14).
 
 ---
 
@@ -587,8 +527,8 @@ sous-dossier, `rmtree`).
 - [ ] Vider le titre / dissocier → le dossier revient à l'horodatage seul.
 - [ ] « Tout supprimer » retire **le dossier entier** (transcription, audio, locuteurs, **CR**,
       sidecar) — vérifier qu'il ne reste rien.
-- [ ] Migration one-shot : les 23 réunions réelles → 23 dossiers ; les 6 associées ont un slug ;
-      la collision `09-56` / `09-56-2` donne 2 dossiers distincts ; 2ᵉ démarrage = 0 migré.
+- [x] Migration one-shot (code retiré depuis, §7) : les 23 réunions réelles → 23 dossiers,
+      les 6 associées avec slug, la collision `09-56` / `09-56-2` en 2 dossiers distincts.
 - [ ] Transcription **live** : l'historique se rafraîchit pendant l'enregistrement (watcher
       sous-dossier).
 - [ ] Journal & dictée : comportement inchangé.
@@ -605,10 +545,9 @@ sous-dossier, `rmtree`).
 - **`date_heure_reunion` lit le dossier** : tout code lisant l'identité via `md.stem` doit passer
   à `md.parent.name` — vérifier avec `grep -rn "\.stem" src/debrief_meet` en fin de chantier.
 - **Sécurité `rmtree`** : garde-fou « strictement sous `dossier_reunions` ».
-- **Sauvegarde avant migration réelle** : la migration déplace des fichiers réels
-  (`~/Documents/debriefMeet/reunions/`). Recommander à Sylvain une **copie de sauvegarde** du
-  dossier avant le 1ᵉʳ lancement de la version migrée. Pour valider sans risque, pointer
-  temporairement `dossier_reunions` (Préférences) vers une copie.
+- **Noms legacy en précision minute** : la migration retirée (§7) a laissé 22 dossiers en
+  `HH-MM` (+ 1 compteur `-2`). Le support de ces noms dans `core/fichiers.py` n'est **pas**
+  du code mort — ne pas le simplifier en supposant que tout est en secondes.
 - **`chemin_reunion` a une nouvelle signature** (`titre` optionnel) : vérifier tous les appelants.
 
 ---
@@ -629,33 +568,32 @@ Le plan a été suivi intégralement (§11), avec deux écarts et un ajout à no
 
 ### 15.1 Écart : la migration a tourné sur les données réelles sans sauvegarde
 
-Le §13 recommandait de sauvegarder `~/Documents/debriefMeet/reunions/` (ou de pointer
+Le plan recommandait de sauvegarder `~/Documents/debriefMeet/reunions/` (ou de pointer
 `dossier_reunions` vers une copie) **avant** le premier lancement. Ça n'a pas été fait :
 l'app a été lancée pour vérifier qu'elle démarrait, elle a chargé la config réelle et a
 migré les 23 réunions immédiatement. Résultat correct (vérifié : 23 dossiers, les 6
 associées BlueMind ont leur slug, la collision `09-56` / `09-56-2` donne 2 dossiers
-distincts), mais la précaution du §13 n'a pas joué son rôle.
+distincts), mais la précaution n'a pas joué son rôle.
 
-**Conséquence durable** : un `git checkout` vers un commit antérieur à `1ed3b17` rendrait
-les réunions **invisibles** dans l'UI (l'ancien listing ne lit que les `.md` à plat). Le
-rollback n'est donc plus une opération neutre — il faudrait une migration inverse.
+**Conséquence durable, renforcée depuis le retrait du code de migration (§7)** : un
+`git checkout` vers un commit antérieur à `1ed3b17` rendrait les réunions **invisibles**
+dans l'UI (l'ancien listing ne lit que les `.md` à plat), et il n'existe plus de migration
+à rejouer. Le rollback n'est donc pas une opération neutre — il demanderait une migration
+inverse écrite pour l'occasion.
 
-### 15.2 Écart : `configurer_logs()` doit précéder la migration
+### 15.2 Écart : dans `__main__.py`, `configurer_logs()` doit précéder le code métier
 
-Le §7.4 situait l'appel « après le chargement de la config et avant la construction des
-vues ». Appliqué littéralement, il tombait **entre `config.charger()` et
-`configurer_logs()`** : aucun handler installé, donc les traces de la migration partaient
-dans le vide — y compris les `WARNING` d'échec par réunion, alors que la migration
-continue volontairement sur les suivantes. Défaut invisible en tests unitaires (le
-`caplog` de pytest capture, lui), trouvé seulement sur le vrai log de Sylvain.
+Le plan situait l'appel de migration « après le chargement de la config et avant la
+construction des vues ». Appliqué littéralement, il tombait **entre `config.charger()` et
+`configurer_logs()`** : aucun handler installé, donc ses traces partaient dans le vide — y
+compris les `WARNING` d'échec par réunion, alors que la migration continuait volontairement
+sur les suivantes. Défaut invisible en tests unitaires (le `caplog` de pytest capture, lui),
+trouvé seulement sur le vrai log de Sylvain, après coup.
 
-Corrigé en `009badb` : la migration est appelée **après `configurer_logs()`** et **après
-les deux garde-fous d'instance unique** (mutex Windows + IPC), pour qu'un 2ᵉ lancement ne
-déplace pas de fichiers avant de ressortir. Elle reste très en amont des vues/modèles.
-
-**Leçon transposable** : dans `__main__.py`, tout code métier qui touche aux fichiers de
-l'utilisateur doit être placé après `configurer_logs()`, jamais entre le chargement de la
-config et l'installation des logs.
+Le code concerné a depuis été retiré (§7), mais **la leçon reste valable pour la suite** :
+dans `__main__.py`, tout code métier qui touche aux fichiers de l'utilisateur doit être
+placé après `configurer_logs()`, jamais entre le chargement de la config et l'installation
+des logs.
 
 ### 15.3 Ajout hors plan : réunion active exclue du listing
 
