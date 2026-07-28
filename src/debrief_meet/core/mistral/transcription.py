@@ -8,6 +8,7 @@ sécurité**, déclenchés uniquement sur échec — jamais le chemin normal.
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,14 +68,31 @@ def analyser_piste(chemin: Path) -> AnalysePiste:
     return AnalysePiste(duree_s=len(audio) / 16_000, silencieuse=preparer_asr(audio) is None)
 
 
+def _jetons_context_bias(noms: list[str]) -> list[str]:
+    """Voxtral (`context_bias_input_method=comma_separated`) refuse tout item contenant
+    une virgule OU une espace (400, code 3051, constaté 2026-07-28 avec les invités
+    BlueMind) : un nom complet « Sylvain Garcia » est donc invalide tel quel. On découpe
+    chaque entrée en jetons (mots), dédoublonnés en conservant l'ordre — « Sylvain Garcia »
+    → [« Sylvain », « Garcia »]. Le biais reste utile (Voxtral favorise ces mots)."""
+    jetons: list[str] = []
+    vus: set[str] = set()
+    for nom in noms:
+        for jeton in re.split(r"[,\s]+", (nom or "").strip()):
+            if jeton and jeton not in vus:
+                vus.add(jeton)
+                jetons.append(jeton)
+    return jetons
+
+
 def _construire_donnees(modele: str, langue: str | None, context_bias: list[str]) -> dict[str, object]:
     """`data` DOIT être un dict en multipart httpx (valeurs-listes = champs répétés) —
     une liste de tuples casse l'encodage du corps (piège rencontré par le spike)."""
     data: dict[str, object] = {"model": modele, "timestamp_granularities": "segment"}
     if langue:
         data["language"] = langue
-    if context_bias:
-        data["context_bias"] = context_bias[:100]
+    jetons = _jetons_context_bias(context_bias)
+    if jetons:
+        data["context_bias"] = jetons[:100]
     return data
 
 

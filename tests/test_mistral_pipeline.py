@@ -249,7 +249,9 @@ def test_association_injecte_sujet_et_participants_dans_le_cr(tmp_path, config_t
 
 @respx.mock
 def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, config_tmp):
-    """En repli Voxtral, les noms d'invités (tous) servent de context_bias (orthographe)."""
+    """En repli Voxtral, les noms d'invités (tous) servent de context_bias (orthographe).
+    Chaque nom est découpé en jetons (Voxtral refuse les espaces/virgules, code 3051) :
+    3 invités « Prénom Nom » → 6 jetons."""
     md = _md_placeholder(tmp_path)
     _piste(tmp_path, "moi")
     _ecrire_association(md)
@@ -261,5 +263,8 @@ def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, conf
     pipeline.generer_cr_reunion(md, config_tmp)
 
     corps = route_t.calls.last.request.content
-    assert corps.count(b'name="context_bias"') == 3   # tous les invités (même non cochés)
-    assert b"Alice Martin" in corps and b"Carol Absente" in corps
+    assert corps.count(b'name="context_bias"') == 6   # 3 invités × 2 mots (tous, même non cochés)
+    for jeton in (b"Alice", b"Martin", b"Carol", b"Absente"):
+        assert jeton in corps
+    # jamais d'item avec espace (ce qui provoquait le 400 côté Voxtral)
+    assert b"Alice Martin" not in corps

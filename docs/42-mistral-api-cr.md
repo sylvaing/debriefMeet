@@ -342,6 +342,14 @@ Si `<stem>.bluemind.json` existe (réunion associée à un événement, docs/40)
 noms d'invités et les passer en `context_bias` (max 100) → meilleure orthographe des noms
 propres. Purement additif ; absent = liste vide.
 
+⚠️ **Découpage en jetons obligatoire (fix 2026-07-28)** : Voxtral
+(`context_bias_input_method=comma_separated`) refuse tout item contenant une **virgule ou
+une espace** (400, code 3051). Un nom complet « Sylvain Garcia » est donc invalide tel
+quel. `transcription._construire_donnees` découpe chaque nom en jetons (« Sylvain »,
+« Garcia »), dédoublonnés — le biais reste efficace (Voxtral favorise ces mots). Sans ce
+découpage, associer la réunion à un événement **avant** de demander le CR faisait échouer
+toute la transcription Voxtral.
+
 ### 7.6 RGPD / localisation
 Mistral est **européen** (argument fort dans le contexte BlueMind/entreprise). Le
 mentionner dans la notice de confidentialité (§2) et la doc utilisateur. La clé API est

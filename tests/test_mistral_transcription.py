@@ -49,6 +49,19 @@ def test_construire_donnees_limite_context_bias_a_100():
     assert len(data["context_bias"]) == 100
 
 
+def test_construire_donnees_decoupe_les_noms_multi_mots():
+    """Régression 2026-07-28 : Voxtral refuse un item avec espace/virgule (400 code 3051).
+    Les noms complets des invités BlueMind sont découpés en jetons dédoublonnés."""
+    data = t._construire_donnees("m", None, ["Sylvain Garcia", "Bastien Lenoir", "Sylvain Dupont"])
+    assert data["context_bias"] == ["Sylvain", "Garcia", "Bastien", "Lenoir", "Dupont"]
+    assert all(" " not in j and "," not in j for j in data["context_bias"])
+
+
+def test_construire_donnees_ignore_les_entrees_vides():
+    data = t._construire_donnees("m", None, ["", "   ", "Bob"])
+    assert data["context_bias"] == ["Bob"]
+
+
 # ── analyser_piste (§7.4) ─────────────────────────────────────────────────────────
 
 def test_analyser_piste_audible(tmp_path):
