@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,6 +58,7 @@ class _InfosEvenement:
     titre: str | None = None
     noms_invites: list[str] = None  # tous les invités (context_bias transcription)
     participants: list[str] = None  # invités cochés (injectés dans le prompt CR)
+    debut_iso: str | None = None    # début de l'événement (iso) — date injectée dans le CR
 
     def __post_init__(self) -> None:
         self.noms_invites = self.noms_invites or []
@@ -106,7 +108,45 @@ def _infos_evenement(chemin_md: Path) -> _InfosEvenement:
         titre=asso.titre or None,
         noms_invites=[i.nom for i in asso.invites if i.nom],
         participants=[i.nom for i in asso.invites if i.coche and i.nom],
+        debut_iso=asso.debut or None,
     )
+
+
+def _date_lisible(infos: _InfosEvenement, chemin_md: Path) -> str | None:
+    """Date FR (« JJ/MM/AAAA HH:MM ») injectée dans le CR. Préfère la date de l'événement
+    BlueMind associé (== cartouche invités) ; repli sur la date d'enregistrement (nom du
+    dossier), toujours disponible même sans association."""
+    if infos.debut_iso:
+        try:
+            return datetime.fromisoformat(infos.debut_iso).strftime("%d/%m/%Y %H:%M")
+        except (ValueError, TypeError):
+            pass
+    dh = date_heure_reunion(chemin_md)
+    return dh.strftime("%d/%m/%Y %H:%M") if dh else None
+
+
+def _reinserer_bloc_invites(chemin_md: Path) -> None:
+    """Après réécriture Voxtral du `.md`, ré-insère le cartouche invités BlueMind que la
+    réécriture a effacé (si la réunion est associée). Le contexte CR vient du sidecar, pas
+    du texte ; ce bloc est là pour la **cohérence** avec les réunions associées et la
+    **portabilité** du `.md` (contexte lisible même hors sidecar). No-op si non associée."""
+    try:
+        from debrief_meet.core.bluemind import association
+        from debrief_meet.core.bluemind.participants import inserer_pour_reunion
+    except ImportError:
+        return
+    asso = association.lire(chemin_md)
+    if asso is None:
+        return
+    try:
+        debut_texte = datetime.fromisoformat(asso.debut).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        debut_texte = asso.debut or ""
+    invites = [
+        {"nom": i.nom, "email": i.email, "organisateur": i.organisateur, "part_status": i.part_status}
+        for i in asso.invites if i.coche
+    ]
+    inserer_pour_reunion(chemin_md, asso.titre or chemin_md.parent.name, debut_texte, invites)
 
 
 def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
@@ -199,9 +239,10 @@ def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
             source = "voxtral"
             if en_attente:
                 _ecrire_transcript_local(chemin_md, res)      # récupère la transcription en local
+                _reinserer_bloc_invites(chemin_md)            # la réécriture a effacé le cartouche
         cr_markdown, _usage_cr = generer_cr(
             client, transcript, prompt, config.get("mistral_modele_cr"),
-            sujet=sujet, participants=infos.participants)
+            sujet=sujet, participants=infos.participants, date=_date_lisible(infos, chemin_md))
 
     chemin_cr = chemin_cr_mistral(chemin_md)
     chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")

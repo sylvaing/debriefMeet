@@ -55,6 +55,21 @@ def test_generer_cr_injecte_les_participants():
 
 
 @respx.mock
+def test_generer_cr_injecte_la_date():
+    """La date de la réunion est fournie explicitement (le prompt demande « CR — … — [Date] »
+    que le modèle ne peut remplir sans elle)."""
+    route = respx.post(f"{URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "CR"}}]}))
+    client = ClientMistral(URL, "cle")
+
+    generer_cr(client, "transcript", "prompt", "mistral-small-latest", date="28/07/2026 10:31")
+
+    corps = route.calls.last.request.content
+    assert "Date de la réunion".encode() in corps
+    assert b"28/07/2026 10:31" in corps
+
+
+@respx.mock
 def test_generer_cr_sans_usage_renvoie_dict_vide():
     respx.post(f"{URL}/v1/chat/completions").mock(
         return_value=httpx.Response(200, json={"choices": [{"message": {"content": "CR"}}]}))

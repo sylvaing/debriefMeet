@@ -268,3 +268,40 @@ def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, conf
         assert jeton in corps
     # jamais d'item avec espace (ce qui provoquait le 400 côté Voxtral)
     assert b"Alice Martin" not in corps
+
+
+@respx.mock
+def test_association_injecte_la_date_dans_le_cr(tmp_path, config_tmp):
+    """La date de l'événement associé est injectée dans le CR (le prompt demande
+    « CR — [Sujet] — [Date] »). Débriefe depuis le transcript local."""
+    md = _md_avec_transcript(tmp_path)
+    _ecrire_association(md)                     # sidecar debut = 2026-01-01T10:00:00
+    _configurer(config_tmp)
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert b"01/01/2026 10:00" in route_cr.calls.last.request.content
+
+
+@respx.mock
+def test_voxtral_reinsere_le_cartouche_invites(tmp_path, config_tmp):
+    """Après réécriture Voxtral du `.md`, le cartouche invités BlueMind (effacé par la
+    réécriture) est ré-inséré depuis le sidecar — cohérence + portabilité (docs/42 §7.5)."""
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT
+
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _ecrire_association(md)                     # écrit le sidecar (pas le bloc dans le .md)
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    contenu = md.read_text(encoding="utf-8")
+    assert MARQUEUR_DEBUT in contenu            # cartouche ré-inséré
+    assert "Alice Martin" in contenu            # invité coché
+    assert "Carol Absente" not in contenu       # invité non coché exclu
+    assert "bonjour" in contenu                 # transcription Voxtral bien écrite

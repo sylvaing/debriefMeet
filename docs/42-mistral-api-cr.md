@@ -350,6 +350,19 @@ quel. `transcription._construire_donnees` découpe chaque nom en jetons (« Sylv
 découpage, associer la réunion à un événement **avant** de demander le CR faisait échouer
 toute la transcription Voxtral.
 
+**Date injectée dans le CR (2026-07-28)** : le prompt CR demande un titre
+« CR — [Sujet] — [Date] », mais le modèle n'a pas la date de façon fiable. On la lui
+passe donc **en clair** (`generer_cr(..., date=…)`), comme `sujet`/`participants` :
+`pipeline._date_lisible` prend la date de l'événement BlueMind associé si présente
+(== cartouche), sinon la date d'enregistrement (`date_heure_reunion`, nom du dossier).
+
+**Ré-insertion du cartouche après réécriture Voxtral (2026-07-28)** : en repli Voxtral,
+`_ecrire_transcript_local` réécrit le `.md` de zéro et efface donc le cartouche
+`<!-- bluemind:invites v1 -->` qu'une association aurait inséré. `_reinserer_bloc_invites`
+le ré-insère depuis le sidecar. Le contexte du CR, lui, vient **du sidecar** (pas du texte)
+— cette ré-insertion sert la **cohérence** (comme les autres réunions associées) et la
+**portabilité** du `.md` (contexte lisible hors sidecar).
+
 ### 7.6 RGPD / localisation
 Mistral est **européen** (argument fort dans le contexte BlueMind/entreprise). Le
 mentionner dans la notice de confidentialité (§2) et la doc utilisateur. La clé API est
