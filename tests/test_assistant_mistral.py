@@ -54,8 +54,11 @@ def test_verifier_teste_puis_succes(qapp, qtbot, tmp_path):
     a._champ_cle.setText("cle-valide")
     a._suivant()
     assert a._stack.currentIndex() == _PAGE_TEST
-    qtbot.waitUntil(lambda: a._succes, timeout=5000)
-    assert "réussie" in a._label_resultat.text().lower()
+    # Synchronisation sur l'observable asservie (le libellé), pas sur un drapeau
+    # interne : attendre autre chose que ce qu'on asserte est une course (flake VM
+    # 2026-07-30 — `_succes` vrai, libellé encore « Test de la connexion… »).
+    qtbot.waitUntil(lambda: "réussie" in a._label_resultat.text().lower(), timeout=5000)
+    assert a._succes is True
     assert a._btn_suiv.text() == "Terminer"
     assert config.get("mistral_cle_api") == "cle-valide"     # persistée sur succès
 
