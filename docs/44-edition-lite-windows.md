@@ -195,11 +195,11 @@ rétention est remplacée par une note ; le contrôle par réunion reste dans l'
 | 1 | `make test` en édition complète (défaut) — aucune régression | ✅ **1153 passed** (2 échecs d'env. attendus : helper Swift non compilé, audio canonique du benchmark) |
 | 2 | `DEBRIEFMEET_EDITION=lite pytest -m "not integration"` | ✅ **1153 passed**, mêmes 2 échecs |
 | 3 | Gate VM lite simulée (lite **+ sans `huggingface_hub`**), commande exacte de `build_app.cmd [4/6]` | ✅ **951 passed, 11 skipped, 0 échec** |
-| 4 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ |
-| 5 | `bash scripts/build_app_windows_vm.sh --lite` — build réel | ⬜ |
-| 6 | Taille du setup **mesurée** et consignée §7 (attendu 95-115 Mo) | ⬜ |
-| 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ⬜ |
-| 8 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ |
+| 4 | `bash scripts/build_app_windows_vm.sh --lite` — build réel | ✅ **2026-07-30**, gate VM **971 passed, 16 skipped, 0 échec** (§7) |
+| 5 | Taille du setup **mesurée** et consignée §7 | ✅ **116 Mo** (159 → −27 %) ; exclusions vérifiées sur le bundle |
+| 6 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ bloqué : environnement Qt local à réinitialiser (§7) |
+| 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ⬜ nécessite aussi le build de l'édition complète (phase B′) |
+| 8 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ nécessite une clé API |
 
 Les 11 tests sautés en gate lite sont ceux qui importent `huggingface_hub` dans leur
 corps (`test_diarization.py` ×8, `test_moteur_faster_whisper.py` ×3) — garde
@@ -227,11 +227,64 @@ passage deux invariants jusqu'ici tenus par un simple commentaire : le GUID « N
 CHANGER » et `AppMutex` == `instance_unique.NOM_MUTEX`), + 6 tests de
 `generer_version` dont l'anti-obsolescence, + ~18 tests lite explicites.
 
-## 7. Journal
+## 7. Journal — premier build lite réel (2026-07-30)
 
-*(à compléter au premier build réel : taille du setup, taille de `dist\debriefMeet`
-décompressé, écart à l'estimation 95-115 Mo. Hors fourchette ⇒ les excludes n'ont pas
-pris : vérifier `av`/`onnxruntime` dans le log PyInstaller.)*
+`bash scripts/build_app_windows_vm.sh --lite` →
+`dist/debriefMeet-lite-setup-0.2.0+20260730.59fa002.exe`
+
+| Mesure | Lite | Complète (réf. docs/41) | Écart |
+|---|---|---|---|
+| Setup `.exe` | **116 Mo** | 159 Mo | **−43 Mo (−27 %)** |
+| `dist\debriefMeet` décompressé | 395 Mo (1186 fichiers) | — | dont 108 Mo d'`ffmpeg.exe` |
+| Gate pytest VM | 971 passed, 16 skipped, 0 échec | 962 passed (Mac, réf.) | — |
+| Modèle téléchargé au 1ᵉʳ lancement | **aucun** | ~1,5 Go (`large-v3-turbo`) | −1,5 Go |
+
+**Exclusions vérifiées sur le bundle** (et non déduites de la taille) : `ctranslate2`,
+`av`, `onnxruntime`, `faster_whisper`, `tokenizers`, `huggingface_hub`, `hf_xet` →
+**tous absents** de `_internal\`. `soundcard`, `livekit`, `tzdata` et `ffmpeg` →
+**tous présents**, comme voulu.
+
+**116 Mo contre 95-115 Mo estimés** : la borne haute est dépassée de 1 Mo, l'estimation
+était donc légèrement optimiste (−27 % au lieu de −30 à −40 %). L'écart s'explique par
+le poids incompressible commun aux deux éditions — Qt/PySide6 et surtout les 108 Mo
+d'`ffmpeg.exe`, qui à eux seuls dominent le bundle décompressé. Le levier suivant est
+donc bien ffmpeg (cf. ci-dessous), pas la pile Whisper : elle est déjà entièrement
+sortie.
+
+### Incidents du premier build (4 tentatives)
+
+Trois blocages, dont **deux pré-existants révélés** par cette première gate VM depuis
+2026-07-12 :
+
+1. **`build_app.cmd` — guillemet parasite ssh** (de ce chantier). Windows OpenSSH
+   enveloppe la commande reçue dans un **second** `cmd /c` : son guillemet fermant fuit
+   dans le dernier argument, donc `%1` valait `lite"`. Or `%~1` ne retire que des
+   guillemets **appariés** → `if "lite"""==""` → « La syntaxe de la commande n'est pas
+   correcte ». Corrigé par un retrait explicite de tout guillemet + `if defined` (la
+   substitution `%VAR:"=%` n'est pas expansée sur une variable non définie : cmd laisse
+   le texte littéral et casse la ligne suivante). Validé sur la VM pour les 4 cas.
+2. **`tzdata` non déclaré** (pré-existant, `a7869c8` du 2026-07-27). Windows n'a aucune
+   base de fuseaux système ; `zoneinfo` y exige le paquet PyPI. `sync.py` et
+   `recurrence.py` enveloppant `ZoneInfo(...)` dans un `try/except`, l'absence ne
+   plantait pas — elle faisait **retomber silencieusement sur un offset figé**, soit
+   exactement le bug DST que docs/40 §5.2 corrigeait. L'édition complète était cassée à
+   l'identique. Déclaré en dépendance cœur avec marqueur `sys_platform == 'win32'` et
+   ajouté aux paquets collectés par le spec.
+3. **Deux hypothèses macOS non gardées** (pré-existant) :
+   `test_demarrage_auto_macos.py` comparait des chemins POSIX au contenu d'un plist, et
+   le test ffmpeg assertait `vendor/ffmpeg` alors que Windows utilise
+   `ffmpeg\ffmpeg.exe`. Le premier est sauté hors macOS, le second suit désormais la
+   branche de la plateforme — il **couvre** donc la disposition Windows.
+4. **Course dans `assistant_mistral`** : `_succes` était positionné avant l'écriture de
+   la clé et la mise à jour des libellés, exposant un état intermédiaire. Drapeau
+   déplacé en dernier ; le test se synchronise sur le libellé qu'il asserte.
+
+### Levier suivant, hors périmètre
+
+Les 108 Mo d'`ffmpeg.exe` (BtbN complet, ~34 Mo compressés) contre un build LGPL minimal
+à la `packaging/build_ffmpeg.sh` (~5-10 Mo sur macOS) rendraient ~25-30 Mo compressés aux
+**deux** éditions — soit, en proportion, un gain plus important pour le lite que tout ce
+qui reste à gratter côté Python. Mérite son propre docs/NN.
 
 Estimation d'origine, à partir des wheels win_amd64 (déjà compressés en deflate, donc
 majorant de la contribution marginale LZMA2) : `av` 27,6 Mo + `ctranslate2` 19,2 Mo +
