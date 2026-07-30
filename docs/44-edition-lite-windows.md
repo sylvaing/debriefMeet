@@ -197,9 +197,10 @@ rétention est remplacée par une note ; le contrôle par réunion reste dans l'
 | 3 | Gate VM lite simulée (lite **+ sans `huggingface_hub`**), commande exacte de `build_app.cmd [4/6]` | ✅ **951 passed, 11 skipped, 0 échec** |
 | 4 | `bash scripts/build_app_windows_vm.sh --lite` — build réel | ✅ **2026-07-30**, gate VM **971 passed, 16 skipped, 0 échec** (§7) |
 | 5 | Taille du setup **mesurée** et consignée §7 | ✅ **116 Mo** (159 → −27 %) ; exclusions vérifiées sur le bundle |
-| 6 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ bloqué : environnement Qt local à réinitialiser (§7) |
-| 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ⬜ nécessite aussi le build de l'édition complète (phase B′) |
-| 8 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ nécessite une clé API |
+| 6 | Build de l'édition **complète** depuis le même commit — non-régression de taille | ✅ **159 Mo**, gate VM **982 passed, 5 skipped** (§7) |
+| 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ✅ **4 runs, 0 échec**, dont `ctranslate2 RETIRE par le passage a lite` (§7) |
+| 8 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ environnement Qt local à réinitialiser (§7) |
+| 9 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ nécessite une clé API |
 
 Les 11 tests sautés en gate lite sont ceux qui importent `huggingface_hub` dans leur
 corps (`test_diarization.py` ×8, `test_moteur_faster_whisper.py` ×3) — garde
@@ -250,6 +251,45 @@ le poids incompressible commun aux deux éditions — Qt/PySide6 et surtout les 
 d'`ffmpeg.exe`, qui à eux seuls dominent le bundle décompressé. Le levier suivant est
 donc bien ffmpeg (cf. ci-dessous), pas la pile Whisper : elle est déjà entièrement
 sortie.
+
+### Fumée — `scripts/fumee_setup_vm.sh`, les deux setups (2026-07-30)
+
+Les deux éditions produites depuis **le même commit** (`59fa002`), donc directement
+comparables. `debriefMeet-setup` : **159 Mo**, exactement la référence docs/41 — l'édition
+complète n'a pas grossi (`tzdata` est négligeable). Gates VM :
+
+| | passed | skipped |
+|---|---|---|
+| complète | **982** | 5 |
+| lite | **971** | 16 |
+
+L'écart est de **11 dans les deux sens** : les 11 tests gardés par
+`importorskip("huggingface_hub")`, qui s'exécutent quand `faster-whisper` est installé et
+se sautent sinon. Cela valide d'un coup que le drapeau agit dans les deux sens, que les
+tests épinglés tournent (ils ne sont pas sautés), et qu'il n'y a **aucune contamination**
+entre deux builds enchaînés sur la même VM (propriété anti-obsolescence de `_version.py`).
+
+**Zéro `[ECHEC]`, sur les deux setups et sur 2 exécutions chacun** (standard de
+rejouabilité docs/37 §5-6 : 4 runs verts au total, code de sortie 0). Vérifications
+marquantes :
+
+- `ctranslate2 RETIRE par le passage a lite` — **l'assertion décisive** : elle prouve que
+  `[InstallDelete] {app}\_internal` fonctionne. Sans elle, ~150-200 Mo de DLL Whisper
+  mortes survivraient à la MAJ complète → lite et annuleraient tout le gain.
+- `ctranslate2 present apres passage au complet` — le sens inverse fonctionne aussi.
+- `raccourci menu Demarrer (debriefMeet Lite.lnk)` + `pas de raccourci de l'autre
+  edition` dans les deux sens — nettoyage des raccourcis par `[InstallDelete]`.
+- `entree de desinstallation unique (AppId partage)` — les 2 éditions sont bien un seul
+  produit pour Windows.
+- Les 4 sondes d'absence (`ctranslate2`, `av`, `onnxruntime`, `faster_whisper`) passent
+  sur le bundle **installé**, pas seulement sur `dist/`.
+- `config.json` et `Documents\debriefMeet` préservés à la MAJ **et** au changement
+  d'édition ; `%LOCALAPPDATA%\debriefMeet` bien supprimé au désinstall (D4).
+
+Les 2 `[INFO]` restants sont la limite SSH connue et inchangée (docs/37 §7 :
+`usPostUninstall` ne se déclenche jamais via SSH — désinstalleur non auto-supprimé,
+valeur de Registre non nettoyée). Non concernés par `[InstallDelete]`, qui tourne à
+l'installation.
 
 ### Incidents du premier build (4 tentatives)
 
