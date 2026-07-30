@@ -199,8 +199,19 @@ rétention est remplacée par une note ; le contrôle par réunion reste dans l'
 | 5 | Taille du setup **mesurée** et consignée §7 | ✅ **116 Mo** (159 → −27 %) ; exclusions vérifiées sur le bundle |
 | 6 | Build de l'édition **complète** depuis le même commit — non-régression de taille | ✅ **159 Mo**, gate VM **982 passed, 5 skipped** (§7) |
 | 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ✅ **4 runs, 0 échec**, dont `ctranslate2 RETIRE par le passage a lite` (§7) |
-| 8 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ environnement Qt local à réinitialiser (§7) |
-| 9 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ nécessite une clé API |
+| 8 | Suite complète relancée **dans les 2 éditions** après tous les correctifs | ✅ **1156 passed** chacune (24 s), 2 échecs d'env. attendus |
+| 9 | `DEBRIEFMEET_EDITION=lite` + lancement de l'app — vérification visuelle macOS | ⬜ demande une vraie session graphique (cf. note ci-dessous) |
+| 10 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ nécessite une clé API |
+
+**Lancer l'app ou les tests depuis un worktree — deux pièges.** (a) Le worktree n'a pas
+de `.venv` et l'install éditable du venv principal pointe vers le **dépôt principal** :
+sans `PYTHONPATH=$PWD/src`, `make run` exécute le code de `main` et on conclut à tort que
+rien n'a changé. (b) Les tests Qt exigent une session graphique attachée ; dans un
+contexte sans TTY ni `SECURITYSESSIONID`, `QApplication` se construit mais
+`processEvents()` ne rend jamais la main. Contournement pour la suite :
+`QT_QPA_PLATFORM=offscreen` (24 s au lieu d'un blocage). La vérification **visuelle**,
+elle, demande forcément une vraie session — et l'app installée doit être quittée d'abord
+(micro et raccourcis globaux partagés).
 
 Les 11 tests sautés en gate lite sont ceux qui importent `huggingface_hub` dans leur
 corps (`test_diarization.py` ×8, `test_moteur_faster_whisper.py` ×3) — garde
