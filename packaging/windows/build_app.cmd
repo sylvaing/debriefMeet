@@ -11,13 +11,24 @@ REM Argument 1 (optionnel) : edition compilee -- "complete" (defaut) ou "lite".
 REM lite = sans transcription locale, extra pip windows-lite (docs/44). Passe en
 REM argument et non par variable d'environnement : un `set` dans un `cmd /c` ne
 REM survit pas au `cmd /c` suivant a travers ssh, et l'argument apparait dans le log.
+REM PIEGE (diagnostique le 2026-07-30) : `%~1` ne retire que des guillemets APPARIES.
+REM Via ssh, Windows OpenSSH enveloppe la commande recue dans un SECOND `cmd /c` et son
+REM guillemet fermant fuit dans le dernier argument -> %1 vaut `lite"`, et le
+REM `if "%EDITION%"==""` suivant devient `if "lite"""==""` : "La syntaxe de la commande
+REM n'est pas correcte". D'ou le retrait explicite de tout guillemet.
+REM `if defined` plutot que `if "%VAR%"==""` : insensible aux guillemets parasites.
+REM La substitution %VAR:"=% n'est PAS expansee sur une variable non definie (cmd laisse
+REM le texte litteral, ce qui casse la ligne suivante) -> toujours la garder derriere
+REM `if defined`.
 set EDITION=%~1
-if "%EDITION%"=="" set EDITION=complete
-if /i "%EDITION%"=="complete" (
-    set EXTRA=windows
-) else if /i "%EDITION%"=="lite" (
-    set EXTRA=windows-lite
-) else (
+if defined EDITION set EDITION=%EDITION:"=%
+if not defined EDITION set EDITION=complete
+REM Ifs plats (pas de chaine if/else if/else) : meme style que le reste du fichier,
+REM et un seul bloc parenthese, plus robuste a lire comme a parser.
+set EXTRA=
+if /i "%EDITION%"=="complete" set EXTRA=windows
+if /i "%EDITION%"=="lite" set EXTRA=windows-lite
+if not defined EXTRA (
     echo ERREUR : edition inconnue "%EDITION%" ^(attendu : complete ou lite^)
     goto :error
 )
