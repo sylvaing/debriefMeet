@@ -85,7 +85,10 @@ datas.append((FFMPEG_LICENCE, "ffmpeg"))
 # ctranslate2/faster-whisper embarquent des DLL natives + données de config non
 # détectées par l'analyse statique de PyInstaller sans collect_all.
 PAQUETS_MOTEUR_LOCAL = ("faster_whisper", "ctranslate2", "huggingface_hub", "tokenizers")
-PAQUETS_COMMUNS = ("soundcard", "livekit")   # loopback WASAPI + AEC3 : les DEUX éditions
+# soundcard = loopback WASAPI, livekit = AEC3, tzdata = base de fuseaux (absente de
+# Windows, sans quoi `zoneinfo` retombe en silence sur un offset figé et les récurrences
+# BlueMind refont le bug DST de docs/40 §5.2) — les DEUX éditions.
+PAQUETS_COMMUNS = ("soundcard", "livekit", "tzdata")
 for paquet in (PAQUETS_COMMUNS if LITE else PAQUETS_MOTEUR_LOCAL + PAQUETS_COMMUNS):
     try:
         d, b, h = collect_all(paquet)

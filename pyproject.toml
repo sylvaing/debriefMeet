@@ -15,6 +15,12 @@ dependencies = [
     "scipy>=1.10",
     "httpx>=0.27",       # interco BlueMind (core/bluemind/client.py) — wheels purs, PyInstaller-friendly
     "python-dateutil>=2.8",  # expansion des séries récurrentes BlueMind (core/bluemind/recurrence.py) — pur Python
+    # Windows n'a AUCUNE base de fuseaux système : `zoneinfo` y est inerte sans ce
+    # paquet. `core/bluemind/sync.py` et `recurrence.py` enveloppent `ZoneInfo(...)`
+    # dans un try/except, donc l'absence ne plante pas — elle fait retomber
+    # silencieusement sur un offset figé, c'est-à-dire précisément le bug DST que
+    # docs/40 §5.2 corrigeait. Sur macOS/Linux la base système suffit.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

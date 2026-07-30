@@ -64,6 +64,16 @@ class TestPyproject:
         for extra in ("macos", "dev"):
             assert extra in contenu, f"Extra manquant dans pyproject.toml : {extra}"
 
+    def test_tzdata_declare_pour_windows(self):
+        """`zoneinfo` est inerte sur Windows sans `tzdata` (aucune base de fuseaux
+        système) : `ZoneInfo(...)` y lève, et comme `core/bluemind/sync.py` et
+        `recurrence.py` l'enveloppent dans un try/except, la régression est
+        SILENCIEUSE — retour à l'offset figé, soit le bug DST de docs/40 §5.2.
+        Diagnostiqué le 2026-07-30 sur la gate VM (erreur de collecte)."""
+        contenu = (ROOT / "pyproject.toml").read_text()
+        assert 'tzdata; sys_platform == \'win32\'' in contenu, \
+            "tzdata doit rester déclaré pour Windows (docs/44 §7)"
+
     def test_point_entree_declare(self):
         contenu = (ROOT / "pyproject.toml").read_text()
         assert "debrief-meet" in contenu
