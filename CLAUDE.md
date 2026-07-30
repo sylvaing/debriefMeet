@@ -46,6 +46,30 @@ exclusion elle s'affiche **deux fois** (bug pré-existant, constaté en test man
 `OrchestrateurReunion.reunion_demarree`) pose le chemin actif à la fois sur le watcher
 (§9) et sur `CaptureModel.definir_chemin_actif` ; le retour à `Mode.IDLE` le remet à None.
 
+## Éditions Windows (docs/44) — deux pièges à connaître
+
+Deux éditions sont compilées depuis **le même code source** : `complete` (transcription
+locale + diarization + Dictée/Journal) et `lite` (enregistrement Opus seul,
+transcription et CR délégués à l'API Mistral). L'édition est figée au build dans
+`EDITION_COMPILEE` (`src/debrief_meet/_version.py`, généré) et interrogée via
+`core/edition.py` — **jamais `edition()` directement dans le code métier, toujours les
+prédicats `avec_transcription_locale()` / `avec_diarization()` / `avec_dictee_journal()`**.
+
+1. **`AppId` identique ⇒ éditions mutuellement exclusives et `config.json` partagé.**
+   Installer lite remplace la complète et inversement. **Aucune clé de `_DEFAUTS` ne
+   doit varier selon l'édition** : `Config.charger()` jette les clés inconnues et
+   `set()` lève dessus, donc une forme propre au lite détruirait silencieusement les
+   réglages de l'autre édition. Toute garantie s'applique **au point d'usage**, jamais
+   par un défaut (un `transcription_live: true` hérité doit être neutralisé par
+   `core/reunion.py`, pas par `_DEFAUTS`).
+2. **Gater sur l'édition, jamais sur `ImportError`.** `moteur_faster_whisper.py`
+   n'importe `faster_whisper` nulle part au niveau module (c'est le worker qui le
+   fait) : dans un bundle lite le moteur se construirait sans erreur et ne mourrait
+   qu'à la première transcription, chez l'utilisateur.
+
+En dev : `DEBRIEFMEET_EDITION=lite make run` (l'env peut *restreindre* vers lite,
+jamais élargir vers complete).
+
 ## Commandes essentielles
 
 ```bash
@@ -70,6 +94,16 @@ Après l'interco Mistral (docs/42, 2026-07-21) : +85 tests unitaires (`test_mist
 `test_fichiers.py`/`test_reunion.py`/`test_reunion_view.py`) — **1042 passed** en
 environnement extras macOS + pyannote complets, sans `.venv-build`/`packaging/vendor/ffmpeg`
 (2 échecs attendus : helper Swift non compilé, audio canonique absent sur ce clone).
+Après l'édition lite Windows (docs/44, 2026-07-30) : **1153 passed** en édition
+complète *et* en édition lite (`DEBRIEFMEET_EDITION=lite`), avec les 2 échecs
+d'environnement habituels sur un clone partiel (helper Swift non compilé, audio
+canonique du benchmark). La gate VM lite (lite **+ sans `huggingface_hub`**, commande
+exacte de `build_app.cmd [4/6]`) : **951 passed, 11 skipped, 0 échec** — les 11 sautés
+sont ceux qui importent `huggingface_hub` dans leur corps (`importorskip`).
+Nouveaux : `test_edition.py`, `test_export_diagnostic.py`,
+`TestSpecWindowsEditions` (1ᵉʳˢ tests du dépôt sur le spec et le `.iss`), + ~18 tests
+lite explicites.
+
 Après la réorganisation 1 dossier/réunion (docs/43, 2026-07-27) : **1099 passed** sur
 `main` (0 échec, environnement complet) — tests étendus de `test_fichiers.py` (slug,
 nom de dossier, renommage), adaptation du layout dans tous les tests touchant des
@@ -116,6 +150,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
+| **Édition lite Windows — enregistrement Opus + IA distante (docs/44)** | 🔄 code + tests ✅ TERMINÉS (2026-07-30, 1153 passed dans les 2 éditions ; gate VM lite simulée 951 passed) — reste : build VM réel `--lite`, mesure de taille (attendu 159 Mo → ~95-115 Mo), fumée sur les 2 setups, validation manuelle. Embarque un bouton « Exporter les logs (.zip)… » dans Préférences › Journalisation (indépendant de l'édition). cf. docs/44 §6 |
 | **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
 
 ## Packaging macOS (Phase 4) — pièges
@@ -136,10 +171,14 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - VM : `192.168.1.29`, SSH `sylvaing` (mot de passe hors dépôt)
 - Script benchmark : `scripts/build_windows_vm.sh`
 - Script spike backends : `scripts/build_spike_backends_vm.sh` ← Phase 5
-- **Script app (setup installeur) : `scripts/build_app_windows_vm.sh`** ← Phase 5 (docs/32) — rsync
-  sources + `BUILD_INFO` (date+hash git), pytest bloquant sur la VM, PyInstaller onedir
-  (`packaging/windows/debriefMeet.spec`), Inno Setup (`packaging/windows/debriefMeet.iss`),
-  rapatrie `dist/debriefMeet-setup-<version>.exe`.
+- **Script app (setup installeur) : `scripts/build_app_windows_vm.sh [--lite]`** ← Phase 5
+  (docs/32) — rsync sources + `BUILD_INFO` (date+hash git), pytest bloquant sur la VM,
+  PyInstaller onedir (`packaging/windows/debriefMeet.spec`), Inno Setup
+  (`packaging/windows/debriefMeet.iss`), rapatrie
+  `dist/debriefMeet-setup-<version>.exe` — ou `dist/debriefMeet-lite-setup-<version>.exe`
+  avec `--lite` (édition lite, docs/44). L'édition traverse toute la chaîne :
+  extra pip `windows-lite`, `generer_version.py --edition`, excludes du spec, `#define`
+  du `.iss`. `scripts/fumee_setup_vm.sh` déduit l'édition du **nom** du setup.
   Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6 (`ISCC.exe`,
   souvent installé per-user par winget sous `%LOCALAPPDATA%\Programs\Inno Setup 6\`,
   pas forcément `Program Files (x86)`).
@@ -222,3 +261,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
 | **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main`** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15)** | `docs/43` |
+| **Édition lite Windows (enregistrement Opus + transcription/CR Mistral) — 🔄 code+tests faits, build VM à lancer** | `docs/44` |

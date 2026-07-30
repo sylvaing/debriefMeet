@@ -1,0 +1,255 @@
+# Édition « lite » Windows — enregistrement Opus + IA distante Mistral
+
+**Statut : 🔄 code + tests ✅ terminés (2026-07-30) — reste le build VM réel, la fumée
+et la mesure de taille (§6).**
+
+## 1. Contexte et problème
+
+Les postes Windows cibles (Bastien, Alix) n'ont pas de GPU et la transcription locale
+CPU int8 y est lente. Or l'interco Mistral (docs/42) sait déjà **tout** faire à
+distance : Voxtral transcrit les pistes `.opus`, `mistral-small` génère le CR. Le
+bundle Windows embarque pourtant toute la pile Whisper locale pour un moteur qui ne
+servira jamais sur ces machines, et l'app télécharge ~1,5 Go de `large-v3-turbo` au
+premier lancement.
+
+**Aucune fonctionnalité nouvelle n'est nécessaire** : tout existe déjà
+(`transcription_live=False`, `MARQUEUR_EN_ATTENTE`,
+`mistral.pipeline.generer_cr_reunion` qui transcrit un placeholder puis réécrit le
+`.md`). Le chantier consiste à **désactiver proprement à la compilation** le moteur
+local, la diarization, les modes Dictée/Journal et leurs UI, et à sortir les paquets
+correspondants du bundle.
+
+### Ce qui sort / ce qui reste
+
+| Sort de l'édition lite | Reste (indispensable à l'enregistrement + Mistral) |
+|---|---|
+| `faster-whisper`, `ctranslate2`, `tokenizers`, `huggingface_hub`, `hf_xet` | `soundcard` — loopback WASAPI : sans lui l'**autre partie** n'est pas enregistrée |
+| `onnxruntime`, `av` (tirés par faster-whisper, hooks PyInstaller dédiés) | `livekit` — AEC3, cf. §2 D2 |
+| Sélecteur de modèle Whisper (Préférences › Modèle) | `ffmpeg.exe` embarqué — encodage Opus + décodage 16 kHz (docs/41) |
+| Diarization : badge + assistant, action « Générer les locuteurs » | `sounddevice`, `numpy`/`scipy`, `httpx`, `python-dateutil` (deps cœur) |
+| Action « Transcrire la réunion » (transcription différée locale) | Interco BlueMind, interco Mistral, historique, rétention audio |
+| Modes **Dictée** et **Journal** (tray, pages, raccourcis) | Mode **Réunion** |
+| `pyannote`, `torch`, `mlx*` — déjà exclus du bundle Windows avant ce chantier | |
+
+## 2. Décisions figées (ne pas re-discuter)
+
+**D1 — Dictée et Journal masqués à la compilation.** Ils dépendent à 100 % du moteur
+local et n'ont pas d'équivalent distant utile (leur intérêt est le retour immédiat :
+presse-papiers / entrée du jour ; un aller-retour réseau le détruirait). Lite =
+« réunion » uniquement.
+
+**D2 — AEC (livekit) conservée.** Sans elle la piste `moi.opus` capte aussi les voix
+distantes : Voxtral les transcrirait deux fois et la fusion des deux pistes
+deviendrait illisible. livekit pèse bien moins que la pile Whisper — le gros du gain
+vient de `faster-whisper` et de ses dépendances natives.
+
+**D3 — `AppId` inchangé → éditions mutuellement exclusives.** Installer lite remplace
+la complète et inversement ; une seule entrée dans « Applications installées », mêmes
+`%LOCALAPPDATA%\debriefMeet` et `Documents\debriefMeet`. Seuls changent le nom affiché
+(`debriefMeet Lite`) et le nom du setup (`debriefMeet-lite-setup-<version>.exe`).
+**Conséquence structurante :** une nouvelle install lite hérite du `config.json` d'une
+install complète → aucune valeur par défaut ne peut servir de garantie (cf. D5).
+
+**D4 — Source unique de vérité : `EDITION_COMPILEE` dans le `_version.py` généré.** Le
+spec PyInstaller le lit par regex, le runtime par import. Pas de variable
+d'environnement lue indépendamment par plusieurs consommateurs : ce serait autant
+d'occasions de divergence, et la pire est silencieuse — un bundle privé de
+`ctranslate2` dont l'app se croit complète proposerait une transcription locale qui
+meurt au premier usage. Effet de bord précieux : `generer_version.py` tourne à l'étape
+`[3/6]`, **avant** la gate pytest `[4/6]` → la gate d'un build lite teste l'édition
+lite, avec une ligne de commande pytest inchangée.
+
+**D5 — Aucune clé de `_DEFAUTS` ne change entre éditions.** `Config.charger()`
+(`core/config.py:99-101`) jette les clés inconnues et `set()` lève sur clé inconnue :
+une forme de `_DEFAUTS` propre au lite détruirait silencieusement les réglages de
+l'édition complète au changement d'édition. Toute garantie est appliquée **au point
+d'usage**, jamais par un défaut. Corollaire : `mistral_source_transcription` reste
+`"auto"` — en lite `_lire_transcript_local` rend `None` sur le placeholder, donc
+`"auto"` et `"voxtral"` sont behaviouralement identiques.
+
+## 3. Mécanisme
+
+```
+scripts/build_app_windows_vm.sh --lite
+        └→ build_app.cmd lite
+              ├─ [1/6] pip install -e .[windows-lite,dev]      ← extra sans faster-whisper
+              ├─ [3/6] generer_version.py --edition lite
+              │           ├→ src/debrief_meet/_version.py   : EDITION_COMPILEE = "lite"
+              │           └→ packaging/windows/version.iss  : #define MonAppEdition "lite"
+              ├─ [4/6] pytest  ← lit _version.py, tourne donc DANS l'édition lite
+              ├─ [5/6] pyinstaller  ← le spec regexe _version.py → excludes lite
+              └─ [6/6] ISCC         ← le .iss lit #define → AppName + OutputBaseFilename
+```
+
+**Runtime** — `src/debrief_meet/core/edition.py` (stdlib seule, règle d'or respectée) :
+
+- `edition()` → `"complete" | "lite"`. Résolution **monotone** : `EDITION_COMPILEE`
+  puis `DEBRIEFMEET_EDITION`, qui peut *restreindre* (complète → lite) mais **jamais
+  élargir**. Un bundle lite qui se croirait complet ferait tomber la fabrique sur
+  `MoteurStub`, dont la sortie `[stub — pas de transcription réelle]` serait écrite
+  dans un vrai débrief.
+- L'environnement est relu **à chaque appel** (et non figé à l'import) : c'est ce qui
+  rend l'édition lite testable par un simple `monkeypatch.setenv`, sans
+  `importlib.reload` (dangereux avec Qt, docs/26), et exerçable en dev par
+  `DEBRIEFMEET_EDITION=lite make run`. Coût : un `dict.get` à la construction d'un
+  widget et au démarrage d'une réunion — jamais dans la boucle audio.
+- Valeur inconnue → repli `complete` + WARNING, jamais d'exception.
+- Prédicats de capacité, seuls interrogés par le code métier :
+  `avec_transcription_locale()`, `avec_diarization()`, `avec_dictee_journal()`.
+  Le préfixe `avec_` est obligatoire : `edition.diarization()` à côté de
+  `diarization.configuree()` dans le même fichier serait un piège de lecture.
+
+## 4. Fichiers touchés
+
+### Runtime
+
+| Fichier | Changement |
+|---|---|
+| `core/edition.py` | **nouveau** — le module ci-dessus |
+| `__init__.py` | `_version` importé comme module + `getattr` : un `_version.py` sans `EDITION_COMPILEE` ne fait plus retomber `VERSION_COMPLETE` en `+dev` |
+| `core/raccourcis.py` | `actions()` filtre `ACTIONS` — **point d'étranglement unique**, alimente l'enregistrement OS **et** les éditeurs de Préférences |
+| `platform/factory.py` | `Adaptateurs.moteur: MoteurTranscription \| None`, gate sur l'**édition** (cf. §5) |
+| `core/reunion.py` | `_transcription_live` forcé False en lite — **site unique** (§5) ; `moteur` optionnel ; `debloquer=None` |
+| `ui/preferences_view.py` | `_sections()` remplace les 2 tuples parallèles ; Audio sans les cases menteuses ; raccourcis pilotés par `actions()` |
+| `ui/reunion_view.py` | actions « Transcrire » / « Générer les locuteurs » **non ajoutées** (§5) |
+| `ui/tray.py` | `_actions_modes` + table `_MODES_MENU` ; `_actualiser_libelles` réduit à 2 règles |
+| `ui/fenetre_principale.py` | `_index_pages` : les `PAGE_*` redeviennent des identifiants, plus des positions |
+| `ui/recording_controller.py` | vues Dictée/Journal optionnelles |
+| `ui/remote_ia_view.py` | case « forcer Voxtral » masquée (inerte en lite) |
+| `platform/infos_systeme.py`, `core/logs.py` | `edition` dans l'en-tête de session, le zip de diagnostic et la 1ʳᵉ ligne de log |
+| `__main__.py` | orchestrateurs Dictée/Journal, garde IPC, préchargement de modèle, chaîne `aboutToQuit` |
+
+### Packaging
+
+`pyproject.toml` (extra `windows-lite`), `packaging/windows/generer_version.py`
+(`--edition`), `debriefMeet.spec` (`_edition_compilee()`, `EXCLUDES_LITE`),
+`debriefMeet.iss` (bloc ISPP, `[InstallDelete]`), `build_app.cmd` (argument `%~1`),
+`scripts/build_app_windows_vm.sh` (`--lite`), `scripts/fumee_setup_vm.sh` (§6).
+
+### Bonus embarqué — bouton d'export des logs
+
+`ui/export_diagnostic.py` (**nouveau**) factorise le corps de
+`tray._exporter_diagnostic` ; Préférences › Journalisation gagne
+« Exporter les logs (.zip)… », qui réutilise le zip de `core/diagnostic.py` (logs +
+config + infos machine, **jamais de texte transcrit**, docs/31 §3.7.1). Indépendant de
+l'édition, mais d'autant plus utile en lite : c'est le seul moyen de diagnostiquer un
+échec de transcription distante à distance. Corrigé au passage : la note affichait en
+dur `~/Library/Logs/debriefMeet/`, **faux sur Windows**.
+
+## 5. Pièges (lire avant de toucher au code)
+
+**La fabrique doit gater sur l'ÉDITION, pas sur `ImportError`.**
+`platform/windows/moteur_faster_whisper.py` n'importe `faster_whisper` **nulle part au
+niveau module** (c'est le sous-processus worker qui le fait) : dans un bundle lite le
+moteur se construirait sans erreur et ne mourrait qu'à la première transcription, chez
+l'utilisateur. Un `except ImportError` ne protège de rien.
+Gardé par `tests/test_factory_windows.py::test_lite_aucun_moteur_local`.
+
+**`moteur = None`, jamais `MoteurStub`.**
+`GestionnaireDiarization.disponible()` est littéralement `self._moteur is not None` :
+un stub rendrait « Transcrire la réunion » **actif**, et `MoteurStub._transcrire_pret`
+écrirait `[stub — pas de transcription réelle]` par-dessus une vraie réunion.
+
+**`reunion_view` : gater est obligatoire, pas cosmétique.** Dans `_actions_reunion`,
+`actions.append(...)` était **inconditionnel** ; `dispo`/`prete` ne pilotent que
+`actif` et l'infobulle. En lite toute réunion est « en attente » jusqu'à ce que Mistral
+écrive le transcript → **chaque ligne** afficherait une icône grisée « Moteur de
+transcription indisponible », et l'autre branche renverrait vers une ligne de
+Préférences › Audio qui n'existe plus.
+
+**Le garde IPC est une correction de justesse.** `--toggle` peut encore arriver d'un
+raccourci bureau survivant à une MAJ complète → lite (AppId identique). Sans garde,
+`MachineEtats` bascule en `Mode.DICTEE` **sans orchestrateur à l'écoute** : rien
+n'enregistre, le tray ne rougit pas, et `Mode.REUNION` reste ensuite refusé —
+verrouillage silencieux de la seule fonctionnalité de l'app. `--toggle` et
+`--toggle-journal` restent **acceptés et ignorés** dans `_parser()` : les retirer
+ferait `argparse` sortir en 2, invisible avec `console=False`.
+
+**`_transcription_live` : un seul site correct** (`core/reunion.py`, dans
+`_demarrer()`). C'est la variable que lisent toutes les branches aval — rétention
+forcée, placeholder du `.md`, routage du tick, arrêt court-circuité. Gater plus tard
+(dans `_sur_tick`) laisserait `_demarrer` appeler `EcrivainReunion.creer()` **et**
+sauter la rétention → une réunion avec ni audio ni transcript.
+
+**`av` et `onnxruntime` doivent être exclus NOMMÉMENT.** Notre code ne les importe
+jamais (zéro occurrence dans `src/`), ils n'entrent que via `faster_whisper` — mais
+`_pyinstaller_hooks_contrib` fournit un hook dédié pour chacun, donc sans exclusion
+explicite ils restent dans le bundle. À eux deux ~41 Mo de wheel : le plus gros du gain.
+
+**`[InstallDelete]` du `.iss` n'est pas optionnel.** `[Files]` **copie par-dessus** et
+ne fait jamais de miroir : les fichiers présents dans l'ancienne install et absents de
+la nouvelle survivent (Inno ne les retire qu'au désinstall, depuis son log — or une MAJ
+ne rejoue pas l'ancien désinstalleur). Sans vider `{app}\_internal`, installer lite
+par-dessus la complète laisserait ~150-200 Mo de DLL Whisper mortes et **annulerait tout
+le gain sur le chemin de mise à jour**. Prouvé par la phase B′ de la fumée.
+
+**Les cases à cocher qui mentent.** `transcription_live` et `retention_audio` sont
+forcés par l'orchestrateur en lite : les afficher serait un contrôle sans effet. La
+rétention est remplacée par une note ; le contrôle par réunion reste dans l'Historique
+(« Supprimer l'audio (garde le débrief) »).
+
+## 6. Definition of Done
+
+| # | Gate | Statut |
+|---|---|---|
+| 1 | `make test` en édition complète (défaut) — aucune régression | ✅ **1153 passed** (2 échecs d'env. attendus : helper Swift non compilé, audio canonique du benchmark) |
+| 2 | `DEBRIEFMEET_EDITION=lite pytest -m "not integration"` | ✅ **1153 passed**, mêmes 2 échecs |
+| 3 | Gate VM lite simulée (lite **+ sans `huggingface_hub`**), commande exacte de `build_app.cmd [4/6]` | ✅ **951 passed, 11 skipped, 0 échec** |
+| 4 | `DEBRIEFMEET_EDITION=lite make run` — vérification visuelle macOS | ⬜ |
+| 5 | `bash scripts/build_app_windows_vm.sh --lite` — build réel | ⬜ |
+| 6 | Taille du setup **mesurée** et consignée §7 (attendu 95-115 Mo) | ⬜ |
+| 7 | `bash scripts/fumee_setup_vm.sh` sur les **deux** setups, 2 fois chacun | ⬜ |
+| 8 | Réunion réelle enregistrée sur la VM → « Générer le CR (Mistral) » avec clé réelle | ⬜ |
+
+Les 11 tests sautés en gate lite sont ceux qui importent `huggingface_hub` dans leur
+corps (`test_diarization.py` ×8, `test_moteur_faster_whisper.py` ×3) — garde
+`pytest.importorskip("huggingface_hub")`, **par test et non par module** : les ~40
+autres tests de `test_diarization.py` sont du Python pur (étiquetage, attribution,
+fusion) et doivent continuer à tourner en lite.
+
+### Stratégie de test : épingler plutôt que sauter
+
+Les modules dont le **sujet** est une fonctionnalité absente en lite portent une
+fixture `autouse` `edition_complete_sauf_si_lite` (`tests/conftest.py`) qui épingle
+l'édition complète, sauf pour les tests demandant explicitement `edition_lite`.
+
+Épingler plutôt que `skipif(est_lite())` : un test sauté ne garde **rien**, alors qu'un
+test épinglé continue de garder du code réellement livré (l'édition complète l'est
+aussi), y compris pendant la gate d'un build lite. Les 8 modules concernés :
+`test_raccourcis`, `test_factory_windows`, `test_remote_ia_view`, `test_reunion`,
+`test_preferences_view`, `test_reunion_view`, `test_fenetre_principale`, `test_tray`.
+
+Nouveaux tests : `tests/test_edition.py` (11), `tests/test_export_diagnostic.py` (5),
+`TestSpecWindowsEditions` dans `tests/test_build.py` (12 — **les premiers tests du
+dépôt portant sur le spec et le `.iss`**, lecture structurelle par `ast` pour qu'un
+commentaire citant `ctranslate2` ne puisse pas tromper le test ; ils épinglent au
+passage deux invariants jusqu'ici tenus par un simple commentaire : le GUID « NE JAMAIS
+CHANGER » et `AppMutex` == `instance_unique.NOM_MUTEX`), + 6 tests de
+`generer_version` dont l'anti-obsolescence, + ~18 tests lite explicites.
+
+## 7. Journal
+
+*(à compléter au premier build réel : taille du setup, taille de `dist\debriefMeet`
+décompressé, écart à l'estimation 95-115 Mo. Hors fourchette ⇒ les excludes n'ont pas
+pris : vérifier `av`/`onnxruntime` dans le log PyInstaller.)*
+
+Estimation d'origine, à partir des wheels win_amd64 (déjà compressés en deflate, donc
+majorant de la contribution marginale LZMA2) : `av` 27,6 Mo + `ctranslate2` 19,2 Mo +
+`onnxruntime` 13,8 Mo + `hf_xet` 4,0 Mo + `tokenizers` 2,8 Mo + `faster_whisper`/
+`huggingface_hub` ~3 Mo ≈ **70 Mo**. Recoupé avec la composition connue (setup 125 Mo
+avant ffmpeg → 159 Mo après, soit 108 Mo d'`ffmpeg.exe` compressés à ~34 Mo, ratio
+31 %) : **159 Mo → ~95-115 Mo**, et ~150-200 Mo de moins décompressés dans `{app}`.
+
+Le gain le plus visible pour l'utilisateur est ailleurs : lite ne télécharge
+**jamais** `large-v3-turbo` (~1,5 Go) — l'app est utilisable dès la fin de l'install.
+
+### Levier suivant, hors périmètre
+
+Le binaire BtbN complet (108 Mo, ~34 Mo compressés) contre un build LGPL minimal à la
+`packaging/build_ffmpeg.sh` (~5-10 Mo sur macOS) rendrait encore ~25-30 Mo compressés
+aux **deux** éditions. Indépendant de ce chantier, mérite son propre docs/NN.
+
+Verrue connue et assumée : le bouton « Configurer… » de la diarization dans
+Préférences › Audio est **déjà mort sur Windows** dans les deux éditions (`pyannote` et
+`torch` sont exclus du bundle Windows depuis toujours). Lite le fait disparaître ;
+l'édition complète Windows le conserve.

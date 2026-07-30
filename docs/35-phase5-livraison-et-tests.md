@@ -14,6 +14,15 @@
   (ex. `debriefMeet-setup-0.2.0+20260710.3f2a1c9.exe`). Le hash git dans le nom =
   correspondance exacte log ↔ exécutable ↔ commit (docs/31 §3.2). Ne jamais
   renommer le fichier avant envoi.
+- **Depuis docs/44, deux éditions** : `debriefMeet-setup-*.exe` (complète) et
+  `debriefMeet-lite-setup-*.exe` (lite — enregistrement Opus seul, transcription et CR
+  via l'API Mistral). Un poste reçoit **une** édition : l'`AppId` étant identique,
+  installer l'une remplace l'autre. La version reste une chaîne unique, l'édition n'y
+  est jamais collée — elle se lit dans le nom du setup et dans la ligne `edition` de
+  l'en-tête de session. **En édition lite, une clé API Mistral est obligatoire** : sans
+  elle l'app enregistre mais ne peut jamais transcrire — à dire en première ligne de la
+  notice utilisateur (§2), et l'assistant de clé doit être proposé au premier lancement.
+  Checklist §3 : l'item « dictée » ne s'applique pas au lite.
 - **Avant chaque livraison** (ordre imposé) :
   1. suite `pytest -m "not integration"` verte sur Mac ;
   2. build VM via `scripts/build_app_windows_vm.sh` (inclut le pytest VM bloquant,

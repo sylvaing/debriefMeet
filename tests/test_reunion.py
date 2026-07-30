@@ -7,10 +7,16 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 
 from debrief_meet.core.config import Config
-from debrief_meet.core.modes import EtatVisuel, MachineEtats
+from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
 from debrief_meet.core.reunion import OrchestrateurReunion
 from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 from tests.fakes.adapters import MicroFake, MoteurFake, SystemeFake
+
+
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : la transcription en direct, absente en lite — édition complète épinglée sauf test lite explicite
+    (docs/44)."""
 
 
 class _FauxSurveillant(QObject):
@@ -798,3 +804,40 @@ def test_terminer_joint_le_thread_meme_apres_isRunning_faux(qapp, qtbot, monkeyp
     # Avant le correctif : 0 appel (garde isRunning() court-circuitait). Après : 1.
     assert len(appels) == 1
     assert appels[0][0] is orch._thread
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def test_lite_force_l_audio_seul_malgre_la_config(qapp, tmp_path, edition_lite):
+    """Le config.json d'une install complète survit à la MAJ vers lite (AppId
+    identique) : `transcription_live: true` ne doit pas y ressusciter la transcription."""
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path, transcription_live=True, retention_audio=False)
+
+    machine.toggle_reunion()
+    assert orch._transcription_live is False
+    assert orch._enregistreur is not None      # rétention forcée : l'audio part à Mistral
+    machine.toggle_reunion()
+    assert machine.mode is Mode.IDLE           # jamais d'état TRANSCRIPTION
+
+
+def test_lite_ecrit_un_placeholder_transcriptible_plus_tard(qapp, tmp_path, edition_lite):
+    from debrief_meet.core.fichiers import transcription_en_attente
+
+    machine = MachineEtats()
+    _creer(machine, tmp_path, transcription_live=True)
+    machine.toggle_reunion()
+    machine.toggle_reunion()
+
+    md = next(m for m in tmp_path.glob("**/*.md"))
+    assert transcription_en_attente(md), \
+        "le .md doit porter le marqueur « en attente » pour que Mistral le reprenne"
+
+
+def test_lite_sans_moteur_ne_crashe_pas_a_l_arret(qapp, tmp_path, edition_lite):
+    """`moteur=None` : `terminer()` passait `debloquer=self._moteur.terminer`."""
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path, moteur=None, transcription_live=True)
+    machine.toggle_reunion()
+    machine.toggle_reunion()
+    orch.terminer()

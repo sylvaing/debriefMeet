@@ -35,10 +35,14 @@ from debrief_meet.ui.icones import icone_bascule
 from debrief_meet.ui.journal_view import JournalView
 from debrief_meet.ui.preferences_view import PreferencesView
 from debrief_meet.ui.recording_controller import RecordingController
+from debrief_meet.core import edition
 from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.theme import C, M, MONO, SANS
 from debrief_meet.ui.wavemark import wavemark_icon
 
+# Identifiants **stables** des pages (ids du QButtonGroup) — et non des positions dans
+# la pile : en édition lite les pages Dictée et Journal n'existent pas (docs/44), donc
+# `_index_pages` traduit l'identifiant en index réel rendu par `addWidget()`.
 PAGE_REUNION, PAGE_DICTEE, PAGE_JOURNAL, PAGE_PREFERENCES = range(4)
 
 
@@ -67,17 +71,20 @@ class FenetrePrincipale(QMainWindow):
 
         self._reunion_view = ReunionView(
             config, machine, presse_papiers, gestionnaire, bluemind_store, gestionnaire_cr_mistral, self)
-        self._dictee_view = DicteeView(config, machine, self)
-        self._journal_view = JournalView(config, machine, presse_papiers, self)
+        self._dictee_view = DicteeView(config, machine, self) \
+            if edition.avec_dictee_journal() else None
+        self._journal_view = JournalView(config, machine, presse_papiers, self) \
+            if edition.avec_dictee_journal() else None
         self._preferences_view = PreferencesView(
             config, demarrage_auto, moteur, reappliquer_raccourcis,
             bluemind_reinitialiser_sync, bluemind_declencher_sync, self)
 
         self._pages = QStackedWidget(self)
-        self._pages.addWidget(self._reunion_view)       # PAGE_REUNION
-        self._pages.addWidget(self._dictee_view)         # PAGE_DICTEE
-        self._pages.addWidget(self._journal_view)        # PAGE_JOURNAL
-        self._pages.addWidget(self._preferences_view)    # PAGE_PREFERENCES
+        self._index_pages: dict[int, int] = {}
+        self._ajouter_page(PAGE_REUNION, self._reunion_view)
+        self._ajouter_page(PAGE_DICTEE, self._dictee_view)
+        self._ajouter_page(PAGE_JOURNAL, self._journal_view)
+        self._ajouter_page(PAGE_PREFERENCES, self._preferences_view)
 
         toolbar = self._construire_toolbar()
 
@@ -95,6 +102,13 @@ class FenetrePrincipale(QMainWindow):
             machine, self._reunion_view, self._dictee_view, self._journal_view, self)
 
         self.definir_etat_visuel(EtatVisuel.REPOS)
+
+    def _ajouter_page(self, id_page: int, vue: QWidget | None) -> None:
+        """`addWidget()` rend l'index réel : les constantes PAGE_* restent des
+        identifiants stables, jamais des positions dans la pile."""
+        if vue is None:
+            return
+        self._index_pages[id_page] = self._pages.addWidget(vue)
 
     # ── Toolbar ────────────────────────────────────────────────────────────────
 
@@ -125,14 +139,19 @@ class FenetrePrincipale(QMainWindow):
         self._groupe_nav = QButtonGroup(barre)
         self._groupe_nav.setExclusive(True)
 
+        # Un onglet par page réellement construite (Dictée/Journal absentes en lite).
         self._nav_reunion = self._creer_bouton_nav("Réunion", "users-three", barre)
-        self._nav_dictee = self._creer_bouton_nav("Dictée", "microphone", barre)
-        self._nav_journal = self._creer_bouton_nav("Journal", "notebook", barre)
+        self._nav_dictee = self._creer_bouton_nav("Dictée", "microphone", barre) \
+            if PAGE_DICTEE in self._index_pages else None
+        self._nav_journal = self._creer_bouton_nav("Journal", "notebook", barre) \
+            if PAGE_JOURNAL in self._index_pages else None
         for bouton, page in (
             (self._nav_reunion, PAGE_REUNION),
             (self._nav_dictee, PAGE_DICTEE),
             (self._nav_journal, PAGE_JOURNAL),
         ):
+            if bouton is None:
+                continue
             self._groupe_nav.addButton(bouton, page)
             lay.addWidget(bouton)
         self._nav_reunion.setChecked(True)
@@ -172,15 +191,15 @@ class FenetrePrincipale(QMainWindow):
     # ── Navigation ─────────────────────────────────────────────────────────────
 
     def _sur_nav_change(self, page: int) -> None:
-        self._pages.setCurrentIndex(page)
+        self._pages.setCurrentIndex(self._index_pages[page])
 
     def afficher_reunion(self) -> None:
         self._nav_reunion.setChecked(True)
-        self._pages.setCurrentIndex(PAGE_REUNION)
+        self._pages.setCurrentIndex(self._index_pages[PAGE_REUNION])
 
     def afficher_preferences(self) -> None:
         self._bouton_prefs.setChecked(True)
-        self._pages.setCurrentIndex(PAGE_PREFERENCES)
+        self._pages.setCurrentIndex(self._index_pages[PAGE_PREFERENCES])
 
     def selectionner_reunion(self, chemin_md) -> None:
         """Relais pour le clic sur une notification (cf. tray) — ouvre la page

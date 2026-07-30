@@ -7,6 +7,22 @@ cd /d %VM_DIR%
 if errorlevel 1 ( echo ERREUR : impossible de cd vers %VM_DIR% & goto :error )
 echo [build_app.cmd] Repertoire : %CD%
 
+REM Argument 1 (optionnel) : edition compilee -- "complete" (defaut) ou "lite".
+REM lite = sans transcription locale, extra pip windows-lite (docs/44). Passe en
+REM argument et non par variable d'environnement : un `set` dans un `cmd /c` ne
+REM survit pas au `cmd /c` suivant a travers ssh, et l'argument apparait dans le log.
+set EDITION=%~1
+if "%EDITION%"=="" set EDITION=complete
+if /i "%EDITION%"=="complete" (
+    set EXTRA=windows
+) else if /i "%EDITION%"=="lite" (
+    set EXTRA=windows-lite
+) else (
+    echo ERREUR : edition inconnue "%EDITION%" ^(attendu : complete ou lite^)
+    goto :error
+)
+echo [build_app.cmd] Edition : %EDITION% ^(extra pip : %EXTRA%^)
+
 echo [1/6] Creation du venv Python 3.13...
 if exist .venv-build ( rmdir /s /q .venv-build )
 py -3.13 -m venv .venv-build
@@ -14,7 +30,9 @@ if errorlevel 1 goto :error
 call .venv-build\Scripts\activate.bat
 python -m pip install --upgrade pip
 if errorlevel 1 goto :error
-python -m pip install -e .[windows,dev]
+REM Crochets non quotes : `[` et `]` ne sont pas speciaux pour cmd.exe (ils le
+REM seraient en PowerShell/zsh) -- ne pas "corriger" en ajoutant des quotes.
+python -m pip install -e .[%EXTRA%,dev]
 if errorlevel 1 goto :error
 python -m pip install pyinstaller
 if errorlevel 1 goto :error
@@ -23,8 +41,10 @@ echo [2/6] Telechargement/verification ffmpeg (lgpl, cache VM)...
 call packaging\windows\telecharger_ffmpeg.cmd
 if errorlevel 1 goto :error
 
-echo [3/6] Generation de la version (_version.py + version.iss)...
-python packaging\windows\generer_version.py --build-info BUILD_INFO
+echo [3/6] Generation de la version + edition (_version.py + version.iss)...
+REM Doit passer AVANT pytest [4/6] : le spec, le .iss et core/edition.py lisent tous
+REM les fichiers generes ici -- la gate de tests tourne donc dans l'edition construite.
+python packaging\windows\generer_version.py --build-info BUILD_INFO --edition %EDITION%
 if errorlevel 1 goto :error
 
 echo [4/6] Suite de tests (bloquant - build refuse si rouge, docs/32)...

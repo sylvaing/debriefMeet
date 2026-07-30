@@ -62,6 +62,23 @@ Petit script (exécuté sur la VM, mais écrit en Python portable) :
 
 ### 3.2 `packaging/windows/debriefMeet.spec` (PyInstaller)
 
+> **Mise à jour docs/44 (2026-07-30) — un seul spec pour deux éditions.** Le spec lit
+> `EDITION_COMPILEE` dans `src/debrief_meet/_version.py` par regex (généré à l'étape
+> `[3/6]`, donc juste avant) — **pas** une variable d'environnement : le module
+> `core/edition.py` embarqué lit le *même* fichier, les `excludes` du bundle et le
+> comportement de l'app ne peuvent donc pas se contredire. En lite : `EXCLUDES_LITE`
+> ajoute `faster_whisper`, `ctranslate2`, `tokenizers`, `huggingface_hub`, `hf_xet`,
+> `onnxruntime`, `av` ; `collect_all` se réduit à `soundcard` + `livekit` ; le
+> hiddenimport `_fw_worker` disparaît. `av` et `onnxruntime` doivent être exclus
+> **nommément** (hooks `_pyinstaller_hooks_contrib` dédiés).
+> Le `.iss` branche sur `#define MonAppEdition` : seuls `AppName`,
+> `OutputBaseFilename`, le nom du raccourci et la description `[Run]` varient — `AppId`,
+> `DefaultDirName`, `AppMutex` et `[UninstallDelete]` restent **gelés** (éditions
+> mutuellement exclusives). Une section `[InstallDelete]` vide `{app}\_internal` avant
+> copie, sans quoi passer de la complète à la lite laisserait les DLL Whisper sur le
+> disque (`[Files]` copie par-dessus, il ne fait jamais de miroir) et annulerait tout le
+> gain de taille. Hygiène couverte par `tests/test_build.py::TestSpecWindowsEditions`.
+
 - Mode **onedir** (pas onefile) : démarrage rapide, DLL lourdes (ctranslate2, Qt),
   et Inno gère très bien un dossier.
 - S'inspirer de `packaging/debriefMeet.spec` (macOS) pour `datas`/`hiddenimports`
@@ -151,6 +168,14 @@ Section `[UninstallDelete]` + section `[Code]` si besoin :
   touche jamais à un cache partagé avec d'autres applications.
 
 ## 5. Mise à jour par-dessus — comportement attendu
+
+> **Changer d'édition par-dessus (docs/44).** L'`AppId` étant identique, installer
+> `debriefMeet-lite-setup-*.exe` sur une install complète (ou l'inverse) est traité par
+> Inno comme une **mise à jour** : même dossier, une seule entrée dans « Applications
+> installées », `config.json` et `Documents\debriefMeet` préservés. La section
+> `[InstallDelete]` vide `{app}\_internal` avant la copie — indispensable, cf. §3.2.
+> Validé par la phase B′ de `scripts/fumee_setup_vm.sh`, qui vérifie que
+> `_internal\ctranslate2` a bien **disparu** après le passage à lite.
 
 1. L'utilisateur télécharge le nouveau setup, double-clique, SmartScreen (2 clics,
    cf. notice docs/35), Inno détecte l'app qui tourne (AppMutex) → propose la fermeture.

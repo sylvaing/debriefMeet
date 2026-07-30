@@ -157,6 +157,12 @@ Au même rang que la règle d'or des couches :
   transcription et rédaction du CR. Continuer ? » + case « ne plus demander »).
 - **Mistral non configuré → interco invisible.** Pas de clé API en config ⇒ aucun bouton,
   aucune requête, aucun message. Strictement additif (comme `bluemind_url` vide).
+  ⚠️ **Règle inversée en édition lite (docs/44)** : là, Mistral n'est plus un
+  complément mais **le seul** moyen de transcrire. La clé API y est donc
+  **obligatoire** et doit être mise en avant (assistant proposé au premier lancement,
+  WARNING au démarrage si la clé est vide, notice utilisateur), pas masquée. La case
+  « Toujours transcrire via Voxtral » y est en revanche retirée : sans transcription
+  locale, `mistral_source_transcription="auto"` est déjà équivalent à `"voxtral"`.
 - **Aucune régression du local.** `platform/`, `factory.py`, `reunion.py`, la boucle de
   transcription live et le mode hors-ligne **ne changent pas**.
 - **Toute I/O réseau vit dans un worker en tâche de fond** (jamais le thread UI). Comme

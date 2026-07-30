@@ -13,6 +13,12 @@ from debrief_meet.ui.fenetre_principale import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : les 4 pages, dont Dictée et Journal — édition complète
+    épinglée sauf test lite explicite (docs/44)."""
+
+
 def _config(tmp_path):
     cfg = Config(chemin=tmp_path / "config.json")
     cfg.set("dossier_reunions", str(tmp_path / "r"))
@@ -94,3 +100,31 @@ def test_onglets_navigables_pendant_enregistrement(fen, machine):
     fen._nav_journal.click()
     assert fen._pages.currentIndex() == PAGE_JOURNAL
     assert machine.mode == Mode.REUNION
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def test_lite_deux_pages_sans_dictee_ni_journal(qapp, machine, tmp_path, edition_lite):
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    try:
+        assert fenetre._pages.count() == 2          # Réunion + Préférences
+        assert fenetre._dictee_view is None
+        assert fenetre._journal_view is None
+        assert fenetre._nav_dictee is None
+        assert fenetre._nav_journal is None
+    finally:
+        fenetre._recording_controller._timer.stop()
+
+
+def test_lite_les_pages_restantes_restent_atteignables(qapp, machine, tmp_path, edition_lite):
+    """Les constantes PAGE_* ne sont plus des index de pile : Préférences est en
+    position 1 en lite, et `afficher_preferences()` doit quand même y aller."""
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    try:
+        fenetre.afficher_preferences()
+        assert fenetre._pages.currentWidget() is fenetre._preferences_view
+        fenetre.afficher_reunion()
+        assert fenetre._pages.currentWidget() is fenetre._reunion_view
+        assert fenetre._index_pages[PAGE_PREFERENCES] == 1
+    finally:
+        fenetre._recording_controller._timer.stop()

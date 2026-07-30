@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
+from debrief_meet.core import edition
 from debrief_meet.core.config import Config
-from debrief_meet.core.diagnostic import dossier_diagnostic_par_defaut, exporter_diagnostic
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
+from debrief_meet.ui.export_diagnostic import exporter_et_informer
 from debrief_meet.ui import dialogues
 from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.fenetre_principale import FenetrePrincipale
@@ -28,6 +29,13 @@ from debrief_meet.ui.theme import C
 logger = logging.getLogger(__name__)
 
 _TAILLE_ICONE_MENU = 14
+
+# mode → (libellé en cours, libellé au repos, clé de raccourci, icône, méthode de bascule)
+_MODES_MENU = {
+    Mode.DICTEE:  ("⏹ Arrêter Dictée",  "Démarrer Dictée",  "raccourci_dictee",  "microphone",  "toggle_dictee"),
+    Mode.REUNION: ("⏹ Arrêter Réunion", "Démarrer Réunion", "raccourci_reunion", "users-three", "toggle_reunion"),
+    Mode.JOURNAL: ("⏹ Arrêter Journal", "Démarrer Journal", "raccourci_journal", "notebook",    "toggle_journal"),
+}
 
 # Couleurs des lignes du menu tray (§8.8 debriefMeet-C) : exception à la palette
 # maison, alignée sur les libellés système macOS (texte #1D1D1F, pas ink-900).
@@ -152,23 +160,20 @@ class IconeTray(QSystemTrayIcon):
         menu.setObjectName("trayMenu")
         self._menu = menu
 
-        self._action_dictee = QAction(_icone_menu("microphone"), "Démarrer Dictée", menu)
-        self._action_dictee.triggered.connect(self._machine.toggle_dictee)
-        menu.addAction(self._action_dictee)
-
-        self._action_reunion = QAction(_icone_menu("users-three"), "Démarrer Réunion", menu)
-        self._action_reunion.triggered.connect(self._machine.toggle_reunion)
-        menu.addAction(self._action_reunion)
-
-        self._action_journal = QAction(_icone_menu("notebook"), "Démarrer Journal", menu)
-        self._action_journal.triggered.connect(self._machine.toggle_journal)
-        menu.addAction(self._action_journal)
-
-        # Qt masque par défaut les raccourcis dans les menus contextuels
-        # (`shortcutVisibleInContextMenu`) — notre QMenu s'affiche via popup()
-        # comme un menu contextuel, donc invisible sans ce forçage explicite.
-        for action in (self._action_dictee, self._action_reunion, self._action_journal):
+        # Un item par mode de l'édition courante : Dictée et Journal n'existent pas en
+        # lite, faute de moteur local (docs/44).
+        self._actions_modes: dict[Mode, QAction] = {}
+        for mode, (_actif, repos, _cle, icone, bascule) in _MODES_MENU.items():
+            if mode is not Mode.REUNION and not edition.avec_dictee_journal():
+                continue
+            action = QAction(_icone_menu(icone), repos, menu)
+            action.triggered.connect(getattr(self._machine, bascule))
+            # Qt masque par défaut les raccourcis dans les menus contextuels
+            # (`shortcutVisibleInContextMenu`) — notre QMenu s'affiche via popup()
+            # comme un menu contextuel, donc invisible sans ce forçage explicite.
             action.setShortcutVisibleInContextMenu(True)
+            menu.addAction(action)
+            self._actions_modes[mode] = action
 
         menu.addSeparator()
 
@@ -218,16 +223,13 @@ class IconeTray(QSystemTrayIcon):
         self.setIcon(icone_wavemark_pour_etat(etat))
 
     def _actualiser_libelles(self, mode: Mode) -> None:
-        configs = {
-            Mode.IDLE:    ("Démarrer Dictée",   True,  "Démarrer Réunion",  True,  "Démarrer Journal",  True),
-            Mode.DICTEE:  ("⏹ Arrêter Dictée",  True,  "Démarrer Réunion",  False, "Démarrer Journal",  False),
-            Mode.REUNION: ("Démarrer Dictée",   False, "⏹ Arrêter Réunion", True,  "Démarrer Journal",  False),
-            Mode.JOURNAL: ("Démarrer Dictée",   False, "Démarrer Réunion",  False, "⏹ Arrêter Journal", True),
-        }
-        td, ed, tr, er, tj, ej = configs[mode]
-        self._action_dictee.setText(td);  self._action_dictee.setEnabled(ed)
-        self._action_reunion.setText(tr); self._action_reunion.setEnabled(er)
-        self._action_journal.setText(tj); self._action_journal.setEnabled(ej)
+        """La table 4×6 d'origine se réduisait à deux règles — et lèverait KeyError en
+        lite sur un `Mode.DICTEE` arrivé d'un raccourci bureau resté d'une install
+        complète."""
+        for m, action in self._actions_modes.items():
+            actif, repos, _cle, _icone, _bascule = _MODES_MENU[m]
+            action.setText(actif if mode is m else repos)
+            action.setEnabled(mode is m or mode is Mode.IDLE)
 
     def _ouvrir_preferences(self) -> None:
         self._fenetre_principale.afficher_preferences()
@@ -241,26 +243,15 @@ class IconeTray(QSystemTrayIcon):
     def rafraichir_raccourcis(self) -> None:
         """Affiche les glyphes de raccourcis (⌃⌥⌘D…) dans le menu — purement décoratif,
         la capture réelle est faite par l'adaptateur Carbon (docs/28)."""
-        self._action_dictee.setShortcut(QKeySequence.fromString(self._config.get("raccourci_dictee")))
-        self._action_reunion.setShortcut(QKeySequence.fromString(self._config.get("raccourci_reunion")))
-        self._action_journal.setShortcut(QKeySequence.fromString(self._config.get("raccourci_journal")))
+        for mode, action in self._actions_modes.items():
+            cle = _MODES_MENU[mode][2]
+            action.setShortcut(QKeySequence.fromString(self._config.get(cle) or ""))
 
     def _exporter_diagnostic(self) -> None:
-        """Doit marcher même quand tout le reste est cassé (docs/31 §3.6) : code
-        trivial, sans dépendance au moteur, erreurs affichées plutôt que loguées
-        silencieusement."""
-        try:
-            from debrief_meet.platform.infos_systeme import collecter_infos_systeme
-            chemin = exporter_diagnostic(dossier_diagnostic_par_defaut(), collecter_infos_systeme())
-            dialogues.informer(
-                self._fenetre_principale, titre="Diagnostic exporté",
-                description=f"Diagnostic exporté sur le Bureau : {chemin.name}\n"
-                "Envoyez ce fichier à Sylvain.",
-            )
-        except Exception as exc:
-            logger.error("Export diagnostic impossible (%s)", exc, exc_info=True)
-            dialogues.avertir(self._fenetre_principale, titre="Erreur",
-                              description=f"Impossible d'exporter le diagnostic :\n{exc}")
+        """Doit marcher même quand tout le reste est cassé (docs/31 §3.6) — d'où le
+        chemin de code partagé avec le bouton de Préférences › Journalisation, plutôt
+        qu'une délégation de l'un à l'autre."""
+        exporter_et_informer(self._fenetre_principale)
 
     # ── Notifications de diarization ────────────────────────────────────────────
 

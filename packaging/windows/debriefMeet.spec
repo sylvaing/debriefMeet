@@ -11,6 +11,11 @@ Build (sur la VM, venv Python 3.13) :
 Variante debug (console visible — utile pour déboguer à distance sans machine
 Windows de dev) : définir DEBRIEFMEET_CONSOLE=1 dans l'environnement avant de
 lancer pyinstaller. v1 livrée en console=False.
+
+Édition compilée : lue dans `src/debrief_meet/_version.py` (généré par
+generer_version.py --edition, étape 3/6 de build_app.cmd) — source UNIQUE de vérité,
+partagée avec le module `core/edition.py` embarqué. En lite, toute la pile de
+transcription locale sort du bundle (docs/44).
 """
 import os
 import re
@@ -32,14 +37,37 @@ ICONE = os.path.join(SPECPATH, "debriefMeet.ico")
 
 CONSOLE = os.environ.get("DEBRIEFMEET_CONSOLE") == "1"
 
+
+def _edition_compilee():
+    """Édition lue dans `_version.py` (généré juste avant ce spec, build_app.cmd 3/6).
+
+    Pas de variable d'environnement : le module `core/edition.py` embarqué lit le MÊME
+    fichier, donc les `excludes` ci-dessous et le comportement à l'exécution ne peuvent
+    pas se contredire — un bundle privé de ctranslate2 mais dont l'app se croit complète
+    proposerait une transcription locale qui meurt au premier usage. Fichier absent
+    (pyinstaller lancé à la main) → édition complète.
+    """
+    try:
+        contenu = open(os.path.join(SRC, "debrief_meet", "_version.py"), encoding="utf-8").read()
+    except OSError:
+        return "complete"
+    m = re.search(r'EDITION_COMPILEE\s*=\s*"([^"]+)"', contenu)
+    return m.group(1) if m else "complete"
+
+
+EDITION = _edition_compilee()
+LITE = EDITION == "lite"
+print(f"[spec] edition = {EDITION}")
+
 # ── Ressources embarquées ─────────────────────────────────────────────────────
 datas = [
     (ASSETS, os.path.join("debrief_meet", "ui", "assets")),
 ]
 binaries = []
-hiddenimports = [
-    "debrief_meet.platform.windows._fw_worker",  # relancé via --fw-worker
-]
+hiddenimports = []
+if not LITE:
+    # Relancé via --fw-worker ; aucun moteur local en lite → aucun worker à relancer.
+    hiddenimports.append("debrief_meet.platform.windows._fw_worker")
 
 # ffmpeg embarqué (lgpl BtbN, rétention Opus — docs/41) : téléchargé par
 # telecharger_ffmpeg.cmd, jamais commité. Échec dur si absent : le spec ne
@@ -56,14 +84,9 @@ datas.append((FFMPEG_LICENCE, "ffmpeg"))
 # ── Dépendances lourdes (moteur CT2, loopback, AEC) ────────────────────────────
 # ctranslate2/faster-whisper embarquent des DLL natives + données de config non
 # détectées par l'analyse statique de PyInstaller sans collect_all.
-for paquet in (
-    "faster_whisper",
-    "ctranslate2",
-    "huggingface_hub",
-    "tokenizers",
-    "soundcard",
-    "livekit",
-):
+PAQUETS_MOTEUR_LOCAL = ("faster_whisper", "ctranslate2", "huggingface_hub", "tokenizers")
+PAQUETS_COMMUNS = ("soundcard", "livekit")   # loopback WASAPI + AEC3 : les DEUX éditions
+for paquet in (PAQUETS_COMMUNS if LITE else PAQUETS_MOTEUR_LOCAL + PAQUETS_COMMUNS):
     try:
         d, b, h = collect_all(paquet)
         datas += d
@@ -71,6 +94,17 @@ for paquet in (
         hiddenimports += h
     except Exception as exc:  # paquet absent / non collectable → on continue
         print(f"[spec] collect_all({paquet}) ignoré : {exc}")
+
+# Rien de macOS/diarization dans le bundle Windows (docs/33 §2.7, docs/30 §8).
+EXCLUDES = ["tkinter", "pytest", "matplotlib", "mlx", "mlx_whisper", "pyannote", "torch"]
+# Lite : toute la pile de transcription locale sort (docs/44). `av` et `onnxruntime` ne
+# sont JAMAIS importés par notre code (zéro occurrence dans src/) — ils n'entrent que
+# via faster_whisper, mais _pyinstaller_hooks_contrib fournit un hook dédié pour chacun
+# (hook-av.py, hook-onnxruntime.py) : il faut donc les exclure NOMMÉMENT, sinon ils
+# restent dans le bundle (~41 Mo de wheel à eux deux, le plus gros du gain).
+# `hf_xet` est tiré par huggingface_hub 1.x (ceinture + bretelles).
+EXCLUDES_LITE = ["faster_whisper", "ctranslate2", "tokenizers", "huggingface_hub",
+                 "hf_xet", "onnxruntime", "av"]
 
 block_cipher = None
 
@@ -82,8 +116,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    # Rien de macOS/diarization dans le bundle Windows v1 (docs/33 §2.7, docs/30 §8).
-    excludes=["tkinter", "pytest", "matplotlib", "mlx", "mlx_whisper", "pyannote", "torch"],
+    excludes=(EXCLUDES + EXCLUDES_LITE) if LITE else EXCLUDES,
     cipher=block_cipher,
     noarchive=False,
 )

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 
+from debrief_meet.core import edition
 from debrief_meet.core.arret_threads import arreter_thread
 from debrief_meet.core.audio import reechantillonner
 from debrief_meet.core.fichiers import (
@@ -96,7 +97,7 @@ class OrchestrateurReunion(QObject):
         machine: MachineEtats,
         micro: CaptureMicro,
         systeme: CaptureAudioSysteme,
-        moteur: MoteurTranscription,
+        moteur: MoteurTranscription | None,   # None en édition lite (docs/44)
         config: "Config",
         delai_termine_ms: int = 500,
         surveillant: "QObject | None" = None,
@@ -153,7 +154,13 @@ class OrchestrateurReunion(QObject):
 
     def _demarrer(self) -> None:
         self._actif = True
-        self._transcription_live = bool(self._config.get("transcription_live"))
+        # Édition lite : jamais de transcription en direct, quoi qu'en dise la config —
+        # un config.json écrit par l'édition complète survit à la mise à jour (AppId
+        # identique, docs/44). C'est le SEUL site à gater : `_transcription_live` pilote
+        # ensuite la rétention forcée, le placeholder du .md, le routage du tick et le
+        # chemin d'arrêt court-circuité.
+        self._transcription_live = (
+            edition.avec_transcription_locale() and bool(self._config.get("transcription_live")))
         self._debut = datetime.now()
         self._avec_micro = False
         self._avec_systeme = False
@@ -353,6 +360,11 @@ class OrchestrateurReunion(QObject):
         offset_s: float,
         finale: bool,
     ) -> None:
+        # Garde défensive : inatteignable (aucun tick de transcription quand
+        # `_transcription_live` est False), mais convertit un AttributeError dans une app
+        # livrée en simple silence.
+        if self._moteur is None:
+            return
         # Sérialisation : ne jamais écraser un worker encore en vol (sinon son objet C++,
         # possédé par son wrapper Python, peut être détruit pendant qu'un signal est livré
         # → crash). On attend la fin du précédent (quit() explicite + wait, comme terminer()).
@@ -487,7 +499,8 @@ class OrchestrateurReunion(QObject):
             logger.debug("OrchestrateurReunion : attente fin du thread de transcription…")
             arreter_thread(
                 self._thread, 10_000,
-                debloquer=self._moteur.terminer,     # tue les sous-processus MLX → débloque read()
+                # tue les sous-processus MLX → débloque read() ; None en lite (pas de moteur)
+                debloquer=self._moteur.terminer if self._moteur is not None else None,
                 garder=(self._worker,),
             )
         if self._enregistreur is not None:

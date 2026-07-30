@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import pytest
+
 from PySide6.QtWidgets import QSystemTrayIcon
 
 from debrief_meet.core.config import Config
-from debrief_meet.core.modes import MachineEtats
+from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.ui.fenetre_principale import PAGE_PREFERENCES, PAGE_REUNION, FenetrePrincipale
 from debrief_meet.ui.tray import IconeTray
+
+
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : les 3 items de mode du menu — édition complète épinglée sauf test lite explicite
+    (docs/44)."""
 
 
 def _config(tmp_path):
@@ -188,3 +196,36 @@ def test_clic_droit_affiche_le_menu(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(tray._menu, "popup", lambda pos: appels.append(pos))
     tray._on_activation(QSystemTrayIcon.ActivationReason.Context)
     assert len(appels) == 1
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def test_lite_menu_sans_dictee_ni_journal(qapp, tmp_path, edition_lite):
+    machine = MachineEtats()
+    cfg = _config(tmp_path)
+    fenetre = FenetrePrincipale(machine, cfg)
+    try:
+        tray = IconeTray(machine, cfg, fenetre_principale=fenetre)
+        libelles = [a.text() for a in tray._menu.actions() if a.text()]
+        assert libelles == [
+            "Démarrer Réunion", "Ouvrir debriefMeet", "Préférences…",
+            "Exporter le diagnostic…", "Quitter",
+        ]
+        assert set(tray._actions_modes) == {Mode.REUNION}
+    finally:
+        fenetre._recording_controller._timer.stop()
+
+
+def test_lite_actualiser_libelles_survit_a_un_mode_absent(qapp, tmp_path, edition_lite):
+    """Un `--toggle` d'un raccourci bureau resté d'une install complète amène
+    Mode.DICTEE : la table 4×6 d'origine lèverait KeyError ici."""
+    machine = MachineEtats()
+    cfg = _config(tmp_path)
+    fenetre = FenetrePrincipale(machine, cfg)
+    try:
+        tray = IconeTray(machine, cfg, fenetre_principale=fenetre)
+        tray._actualiser_libelles(Mode.DICTEE)
+        assert tray._actions_modes[Mode.REUNION].text() == "Démarrer Réunion"
+        assert not tray._actions_modes[Mode.REUNION].isEnabled()
+    finally:
+        fenetre._recording_controller._timer.stop()

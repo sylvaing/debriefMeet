@@ -28,6 +28,15 @@ windows = [
     "livekit>=1.1",      # AEC3 — wheel py3-none-win_amd64 confirmé sur PyPI (docs/30 §5.2, docs/34 §7)
     "soundcard",         # loopback WASAPI — sounddevice/PortAudio ne sait pas le faire (docs/34 §2)
 ]
+# Édition « lite » Windows (docs/44) : enregistrement Opus + transcription/CR via l'API
+# Mistral uniquement. Sans faster-whisper → sans ctranslate2/av/onnxruntime/tokenizers/
+# huggingface_hub (~70 Mo de wheels en moins dans le bundle).
+# pip ne sait pas soustraire d'un extra : les lignes ci-dessous DUPLIQUENT volontairement
+# l'extra `windows` — toute modification là-haut doit être reportée ici.
+windows-lite = [
+    "livekit>=1.1",      # AEC3 conservée : nettoie la piste « Moi » avant l'Opus envoyé à Voxtral
+    "soundcard",         # loopback WASAPI — indispensable à l'enregistrement réunion (docs/34 §2)
+]
 linux = [
     "faster-whisper",
 ]
