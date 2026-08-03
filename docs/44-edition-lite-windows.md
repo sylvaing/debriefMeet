@@ -357,3 +357,101 @@ Verrue connue et assumée : le bouton « Configurer… » de la diarization dans
 Préférences › Audio est **déjà mort sur Windows** dans les deux éditions (`pyannote` et
 `torch` sont exclus du bundle Windows depuis toujours). Lite le fait disparaître ;
 l'édition complète Windows le conserve.
+
+---
+
+## 8. Retour de terrain — micro non enregistré chez Alix (2026-07-31 → 08-03)
+
+Premier usage réel du lite, et première utilisation du bouton « Exporter les logs ».
+Symptôme rapporté : « le son du micro n'est pas enregistré ».
+
+### 8.1 Ce que le premier diagnostic a montré
+
+Aucun WARNING, aucune exception — mais le micro **redémarré toutes les ~1,1 s** :
+92 événements `audioInputsChanged`, 144 reconnexions. Chaque `redemarrer()` coûte
+0,3 s d'attente de fermeture + 0,2 s de warm-up **jeté**, donc le flux est affamé.
+Conséquence en cascade, lisible dans les logs AEC :
+
+| Tranche | RMS brut | RMS nettoyé | Atténuation | Calage |
+|---|---|---|---|---|
+| 1 | 0,00947 | 0,00874 | −0,7 dB | −583 ms |
+| 2 | 0,00660 | 0,00407 | −4,2 dB | +594 ms |
+| 3 | 0,00311 | 0,00120 | −8,3 dB | −439 ms |
+| 4 | 0,00543 | **0,00097** | **−15,0 dB** | +87 ms |
+
+Le calage oscille de −583 à +594 ms et les logs disent `saut micro=0` pendant que la
+référence avance : l'AEC ne peut pas se caler et soustrait n'importe quoi. Seuil de
+silence à 0,008 ⇒ la piste finit **sous le seuil**.
+
+**Fuite de secrets découverte au passage** : le zip embarquait `config.json` en clair,
+donc la clé API Mistral et le token BlueMind de Alix. Corrigé en premier (commit
+`a6b2052`, `core/diagnostic.caviarder`) — cf. docs/31 §3.6.
+
+### 8.2 Deux causes possibles appelant des correctifs OPPOSÉS
+
+`docs/25` a **délibérément supprimé** la comparaison « est-ce vraiment notre
+périphérique ? » : `resoudre_peripherique` lisait une table PortAudio périmée et jugeait
+« inchangé » un vrai retrait d'AirPods. La reconnexion inconditionnelle est donc un
+**correctif macOS**, couvert par 12 tests de `test_reunion.py`. Impossible d'y toucher à
+l'aveugle. Deux hypothèses restaient :
+
+1. la liste des entrées **change réellement** (matériel qui énumère en boucle) ;
+2. Qt émet un **signal parasite** à liste constante.
+
+D'où une étape purement observationnelle (même commit) : journaliser l'écart entre deux
+relevés de la liste **Qt** — et non de la table PortAudio, dont la péremption est
+justement ce que docs/25 reprochait à l'ancienne comparaison.
+
+### 8.3 Verdict du second diagnostic
+
+| | occurrences |
+|---|---|
+| Liste **INCHANGÉE** → signal Qt parasite | **3086** |
+| Liste réellement modifiée | **3** |
+
+Les 3 réels sont le même casque Bluetooth (`Headset (casque Bluetooth)`) qui se
+connecte/déconnecte — exactement le scénario que docs/25 protège. Ampleur : **3082
+reconnexions en 65 min**. Machine : Windows 11, puce Realtek SST.
+
+### 8.4 Correctif — gardé sur Windows, et pourquoi
+
+`SurveillantPeripheriques` ignore l'événement à liste inchangée **si et seulement si
+`sys.platform == "win32"`**.
+
+Le réflexe serait de corriger pour tout le monde. C'est **refusé** : la comparaison porte
+sur `description()`, donc elle ne verrait PAS deux cas qui concernent macOS —
+un changement de taux d'échantillonnage à périphérique constant (AirPods 24↔48 kHz,
+docs/20) et un changement de périphérique **par défaut** à liste constante (`micro_index`
+vaut `None`, l'app doit suivre le défaut). Sur macOS ces cas sont aujourd'hui couverts par
+la reconnexion inconditionnelle. **Aucune donnée macOS ne permet de les supprimer sans
+risque** — et macOS fonctionne, Windows est cassé : on ne met pas en risque celui qui
+marche pour réparer l'autre.
+
+Trois précautions :
+
+- **Paramètre de constructeur** `supprimer_parasites`, défaut dérivé de `sys.platform`.
+  Les tests le passent explicitement, sinon les 3 tests d'anti-rebond existants
+  s'inverseraient sur la gate VM Windows (verts sur Mac, rouges au build).
+- **Repli fail-open** : un relevé vide (Qt indisponible, ou plus aucune entrée) ne doit
+  jamais passer pour « inchangé ». Une panne de l'instrumentation désactiverait sinon en
+  silence la reconnexion à chaud.
+- **Filet conservé** : le watchdog « tranche muette » (`core/reunion.py`) reconnecte si
+  le buffer micro reste vide sur une tranche entière — un événement ignoré à tort est
+  donc rattrapé.
+
+`test_hors_windows_liste_inchangee_emet_quand_meme` verrouille explicitement le
+comportement macOS.
+
+### 8.5 Ce qui reste ouvert
+
+- **Non vérifié** que le son revient : la chaîne causale est étayée, mais « le micro sera
+  enregistré » est une prédiction. Le prochain diagnostic dira si les 3086 parasites ont
+  disparu.
+- **Facteur indépendant** : le micro est faible à la source (0,003–0,009 brut contre un
+  seuil à 0,008). Même sans tempête c'est marginal, et la piste Opus envoyée à Voxtral
+  **n'est pas normalisée** — `normaliser_asr` vit dans `MoteurTranscription.transcrire()`,
+  que lite n'appelle jamais. Concerne les deux éditions dès qu'on passe par Mistral.
+- **AEC non touchée** volontairement : si la tempête cesse, elle devrait se caler seule.
+  C'était le chantier le plus risqué pour macOS, il est probablement devenu inutile.
+- Trou de journalisation mineur : `att None` au lieu d'une valeur d'atténuation quand le
+  micro est quasi muet.
