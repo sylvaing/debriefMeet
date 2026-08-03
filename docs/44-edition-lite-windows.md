@@ -1,7 +1,8 @@
 # Édition « lite » Windows — enregistrement Opus + IA distante Mistral
 
-**Statut : 🔄 code + tests ✅ terminés (2026-07-30) — reste le build VM réel, la fumée
-et la mesure de taille (§6).**
+**Statut : ✅ code, tests, builds réels et fumée terminés (2026-07-30) — livré et utilisé
+en réel (§8). Setup lite 116 Mo contre 159 Mo pour la complète (−27 %). Reste : chaîne
+de bout en bout avec du vrai contenu audio, et 4 points mineurs listés en §8.7.**
 
 ## 1. Contexte et problème
 
@@ -442,16 +443,67 @@ Trois précautions :
 `test_hors_windows_liste_inchangee_emet_quand_meme` verrouille explicitement le
 comportement macOS.
 
-### 8.5 Ce qui reste ouvert
+### 8.5 Validation terrain (2026-08-03, build `69e1283`)
 
-- **Non vérifié** que le son revient : la chaîne causale est étayée, mais « le micro sera
-  enregistré » est une prédiction. Le prochain diagnostic dira si les 3086 parasites ont
-  disparu.
-- **Facteur indépendant** : le micro est faible à la source (0,003–0,009 brut contre un
-  seuil à 0,008). Même sans tempête c'est marginal, et la piste Opus envoyée à Voxtral
-  **n'est pas normalisée** — `normaliser_asr` vit dans `MoteurTranscription.transcrire()`,
-  que lite n'appelle jamais. Concerne les deux éditions dès qu'on passe par Mistral.
-- **AEC non touchée** volontairement : si la tempête cesse, elle devrait se caler seule.
-  C'était le chantier le plus risqué pour macOS, il est probablement devenu inutile.
+⚠️ **Le log est rotatif** : un diagnostic contient plusieurs sessions, parfois de
+plusieurs versions. Segmenter sur la ligne `Logs activés … — <version>` **avant** de
+compter, sinon les chiffres des anciens builds faussent tout (constaté : 3154
+reconnexions au total, dont 0 pour le build corrigé).
+
+**Le correctif fonctionne**, sur deux sessions successives :
+
+| | avant | après |
+|---|---|---|
+| Événements à liste inchangée | 3086 | 12 puis 2 |
+| **dont ignorés** | 0 | **12 puis 2** (tous) |
+| **Reconnexions micro** | **3082** (65 min) | **0 puis 1** |
+| Calage AEC | oscillant −583 → +594 ms | **`AEC calée`** |
+
+Le changement réel (casque Bluetooth branché) est bien passé à travers le filtre.
+
+**L'AEC s'est réparée d'elle-même**, comme espéré : elle affiche
+`AEC non calé → passthrough (voix préservée)` puis `AEC calée`. Le garde-fou qu'on
+envisageait d'ajouter **existait déjà** — il ne se déclenchait pas parce que la tempête
+faisait croire à l'AEC qu'elle était calée. Chantier AEC **abandonné**, sans regret :
+c'était le plus risqué pour macOS.
+
+### 8.6 Le silence était un problème de sélection de périphérique
+
+Cause finale, **indépendante** de la tempête et invisible tant que celle-ci masquait
+tout : Windows dirigeait l'entrée vers le micro interne Realtek pendant que
+l'utilisatrice portait des écouteurs Bluetooth. L'app ouvrait donc
+`Microphone Array (2- Realtek(R)` (RMS **0,0000**) tandis que la capture système sortait
+sur `écouteurs One Plus`. Après changement de la source d'entrée dans Windows :
+
+| | Realtek (défaut Windows) | Casque, explicitement |
+|---|---|---|
+| RMS brut | 0,0000 | **0,12770** / **0,12056** |
+| vs seuil 0,008 | sous le seuil | **×16 au-dessus** |
+| Atténuation AEC | −15 dB | −0,49 / −0,20 dB |
+| Tranches « Audio silencieux » | toutes | **aucune** |
+
+**Hypothèse infirmée — à ne pas ressortir** : on avait cru à un « micro faible à la
+source » (0,003–0,009 brut) justifiant de normaliser la piste Opus avant envoi à Voxtral.
+Faux : ces valeurs étaient le Realtek captant du bruit de pièce à vide. Avec le bon
+périphérique on est à 0,127. La piste Opus n'est effectivement pas normalisée
+(`normaliser_asr` vit dans `MoteurTranscription.transcrire()`, que lite n'appelle jamais),
+mais **ce n'était pas le problème** et rien n'est à corriger là.
+
+### 8.7 Ce qui reste ouvert
+
+- **Sélecteur de micro ambigu** — `ui/preferences_view.py` n'affiche que `d['name']`,
+  donc le même casque apparaît **trois fois à l'identique** (MME, DirectSound, WASAPI),
+  plus deux entrées `Input (@System32\drivers\bthhfenum.sys…)`. C'est ce qui a rendu le
+  contournement impraticable et poussé à modifier Windows à la place. Ajouter l'API audio
+  au libellé (`Headset (casque Bluetooth) — WASAPI`) le rendrait utilisable.
+- **Suivre le périphérique par défaut quand il change** — avec `micro_index=None`, l'app
+  n'a pas suivi la bascule vers le casque. Chantier distinct, et **la question macOS se
+  repose** : `micro_index=None` y fonctionne, donc ne pas généraliser sans données macOS.
+- **Sync BlueMind cassée** — `'NoneType' object has no attribute 'get'` avalé par le
+  `except` silencieux de docs/40 §1.1, alors que l'interco **est** configurée. Rien à voir
+  avec le micro ; à traiter séparément.
+- Chaîne de bout en bout **non validée avec du vrai contenu** : le CR Voxtral a été
+  produit, mais à partir de silence. Reste à enregistrer en parlant puis à déclencher
+  « Générer le CR (Mistral) » depuis l'Historique.
 - Trou de journalisation mineur : `att None` au lieu d'une valeur d'atténuation quand le
   micro est quasi muet.
