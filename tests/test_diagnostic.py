@@ -92,3 +92,61 @@ def test_dossier_par_defaut_utilise_le_bureau_si_present(monkeypatch, tmp_path):
     (tmp_path / "Desktop").mkdir()
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert dossier_diagnostic_par_defaut() == tmp_path / "Desktop"
+
+
+# ── Caviardage des secrets (2026-07-31) ──────────────────────────────────────
+
+def test_caviarde_les_secrets_connus():
+    from debrief_meet.core.diagnostic import caviarder
+
+    propre = caviarder({"mistral_cle_api": "sk-abc123", "bluemind_token": "t" * 36})
+    assert propre["mistral_cle_api"] == "<masqué — 9 caractères>"
+    assert propre["bluemind_token"] == "<masqué — 36 caractères>"
+
+
+def test_caviarde_par_heuristique_pas_par_liste_figee():
+    """Un fournisseur ajouté demain ne doit pas fuiter faute d'avoir été énuméré."""
+    from debrief_meet.core.diagnostic import caviarder
+
+    propre = caviarder({"openai_cle_api": "x" * 51, "un_token_quelconque": "y" * 12,
+                        "webhook_secret": "z" * 8})
+    assert all(v.startswith("<masqué") for v in propre.values())
+
+
+def test_secret_vide_reste_vide():
+    """La distinction configuré / pas configuré est justement ce qu'on diagnostique
+    (édition lite sans clé Mistral = enregistre mais ne transcrira jamais)."""
+    from debrief_meet.core.diagnostic import caviarder
+
+    assert caviarder({"mistral_cle_api": ""})["mistral_cle_api"] == ""
+
+
+def test_ne_touche_pas_aux_valeurs_non_secretes():
+    from debrief_meet.core.diagnostic import caviarder
+
+    donnees = {"bluemind_url": "https://bm.exemple.com", "modele": "large-v3-turbo",
+               "intervalle_reunion": 30, "aec_actif": True, "micro_index": None}
+    assert caviarder(donnees) == donnees
+
+
+def test_zip_ne_contient_aucun_secret_en_clair(tmp_path, monkeypatch):
+    """Test de bout en bout : c'est le CONTENU DU ZIP qui part chez le mainteneur."""
+    import json, zipfile
+    from debrief_meet.core import diagnostic
+    from debrief_meet.core.config import Config
+
+    cfg = Config(chemin=tmp_path / "config.json")
+    cfg.set("mistral_cle_api", "CLE-SECRETE-A-NE-PAS-DIVULGUER")
+    cfg.set("bluemind_token", "TOKEN-SECRET-A-NE-PAS-DIVULGUER")
+    cfg.sauvegarder()
+    monkeypatch.setattr("debrief_meet.core.config._chemin_config",
+                        lambda: tmp_path / "config.json")
+
+    chemin = diagnostic.exporter_diagnostic(tmp_path / "sortie", {"os": "test"})
+    with zipfile.ZipFile(chemin) as zf:
+        brut = zf.read("config.json").decode("utf-8")
+        lue = json.loads(brut)
+    assert "CLE-SECRETE-A-NE-PAS-DIVULGUER" not in brut
+    assert "TOKEN-SECRET-A-NE-PAS-DIVULGUER" not in brut
+    assert lue["mistral_cle_api"].startswith("<masqué")
+    assert lue["bluemind_token"].startswith("<masqué")
