@@ -75,7 +75,9 @@ def resoudre_identite(client: ClientBlueMind, email: str) -> IdentiteResolue:
 
     if reponse is not None and reponse.status_code != 204:
         donnees = reponse.json()
-        valeur = donnees.get("value", {}) if isinstance(donnees, dict) else {}
+        # `or {}` : un `"value": null` (clé présente) échapperait au défaut de `get`
+        # et ferait lever `_nom_affiche` — cf. docs/40 §5.3.
+        valeur = (donnees.get("value") or {}) if isinstance(donnees, dict) else {}
         return IdentiteResolue(
             domain_uid=domain_guess,
             user_uid=donnees.get("uid", ""),
@@ -98,7 +100,7 @@ def resoudre_identite(client: ClientBlueMind, email: str) -> IdentiteResolue:
         raise ErreurIdentiteIntrouvable(f"Aucun utilisateur BlueMind trouvé pour {email}")
 
     entree = valeurs[0]
-    valeur = entree.get("value", {}) if isinstance(entree, dict) else {}
+    valeur = (entree.get("value") or {}) if isinstance(entree, dict) else {}
     domain_uid = _domain_uid_depuis_path(valeur.get("path", "")) or domain_guess
     return IdentiteResolue(
         domain_uid=domain_uid,

@@ -402,3 +402,62 @@ mapping après diarization ; notification à H-5 et démarrage pré-associé en 
   liste de présence » ; insertion idempotente ;
 - `make test` vert sans réseau ; tests d'intégration verts contre le serveur de test ;
 - validation manuelle §10 faite avec l'utilisateur.
+
+---
+
+## 5.3 Sync cassée par un item à valeur nulle — et rendue silencieuse (2026-08-03)
+
+Découvert sur un diagnostic terrain (édition lite Windows) : la synchro de l'utilisatrice
+échouait à **chaque** tentative sur
+
+    'NoneType' object has no attribute 'get'
+
+donc son calendrier restait **totalement vide**, alors que l'interco était correctement
+configurée (url + email + token renseignés).
+
+### Cause — le piège de `dict.get(cle, defaut)`
+
+```python
+valeur = item.get("value", item)     # ← FAUX
+main = valeur.get("main", valeur)    # ← lève si `value` était null
+```
+
+Le défaut de `dict.get` ne s'applique que si la clé est **absente**. BlueMind renvoie des
+items avec `"value": null` — clé **présente**, valeur nulle — donc `valeur` valait `None`.
+Le motif était répété **8 fois** (`sync.evenement_depuis_json`, `recurrence.est_serie`,
+`recurrence.expanser_serie`, `identite` ×2). Corrigé en `item.get("value") or item`.
+
+`est_serie` étant appelée **avant** la construction de l'événement, c'est elle qui levait
+en premier — l'exception remontait jusqu'au worker et emportait la synchro entière.
+
+### Garantie structurelle ajoutée
+
+Les accès nuls connus sont corrigés, mais la forme exacte du JSON reste « pressentie »
+(§3) : impossible d'énumérer toutes les malformations (un `attendees: [null]` casserait
+ailleurs). `_evenements_depuis_item` porte donc désormais un `try/except` qui **ignore
+l'item fautif en le nommant** (`uid`) plutôt que de perdre le calendrier. C'est la
+promesse que la docstring d'`expanser_serie` faisait déjà — elle est maintenant tenue au
+bon niveau.
+
+### La panne était invisible — corrigé aussi
+
+`_sur_erreur` loggait en **DEBUG** au nom de la règle « interco invisible » (§1.1). Or :
+
+- `synchroniser_si_necessaire` est déjà gardé par `configuree()`, donc arriver dans
+  `_sur_erreur` signifie **toujours** « configurée mais en échec », jamais « pas
+  configurée » ;
+- `logs_debug` vaut **False par défaut sur macOS**, donc la panne n'y laissait aucune
+  trace.
+
+Passé en **WARNING**. La règle §1.1 porte sur l'**UI** (aucun bouton, aucune popup pour
+une interco non configurée), pas sur le journal : une interco configurée qui échoue doit
+être visible dans les logs, sinon il faut un diagnostic terrain pour la découvrir — ce qui
+est exactement ce qui s'est passé.
+
+### Ce qui n'est pas prouvé
+
+Le `"value": null` est **déduit** du message d'erreur, pas observé : les logs ne
+contiennent pas le JSON reçu. Le correctif couvre `value` et `main` nuls, et la garde
+structurelle couvre le reste — mais si le WARNING « Item de calendrier ignoré (uid=…) »
+apparaît chez un utilisateur, c'est qu'une autre malformation subsiste, et cette fois elle
+sera nommée.
