@@ -44,14 +44,12 @@ def test_format_version_complete(module_isole, tmp_path):
 
 
 def test_ecrit_version_py(module_isole, tmp_path):
-    """Égalité exacte (et pas `in`) : `debriefMeet.spec` regexe ce fichier pour en
-    lire l'édition — connaître son contenu au caractère près a de la valeur."""
+    """Égalité exacte (et pas `in`) : les fichiers sont réécrits intégralement, un
+    reliquat d'un générateur antérieur (ex. EDITION_COMPILEE de docs/44) doit être
+    purgé — connaître le contenu au caractère près a de la valeur."""
     module_isole.generer(_build_info(tmp_path))
     contenu = module_isole.VERSION_PY.read_text(encoding="utf-8")
-    assert contenu == (
-        'VERSION_COMPLETE = "0.2.0+20260703.a1b2c3d"\n'
-        'EDITION_COMPILEE = "complete"\n'
-    )
+    assert contenu == 'VERSION_COMPLETE = "0.2.0+20260703.a1b2c3d"\n'
 
 
 def test_ecrit_version_iss(module_isole, tmp_path):
@@ -61,43 +59,23 @@ def test_ecrit_version_iss(module_isole, tmp_path):
     assert '#define MonAppVersionNum "0.2.0.0"' in contenu
 
 
-# ── Édition compilée (docs/44) ───────────────────────────────────────────────
-
-def test_edition_defaut_est_complete(module_isole, tmp_path):
-    module_isole.generer(_build_info(tmp_path))
-    assert 'EDITION_COMPILEE = "complete"' in module_isole.VERSION_PY.read_text(encoding="utf-8")
-    assert '#define MonAppEdition "complete"' in module_isole.VERSION_ISS.read_text(encoding="utf-8")
-
-
-def test_edition_lite_ecrite_dans_les_deux_fichiers(module_isole, tmp_path):
-    module_isole.generer(_build_info(tmp_path), edition="lite")
-    assert 'EDITION_COMPILEE = "lite"' in module_isole.VERSION_PY.read_text(encoding="utf-8")
-    assert '#define MonAppEdition "lite"' in module_isole.VERSION_ISS.read_text(encoding="utf-8")
-
-
-def test_edition_inconnue_leve(module_isole, tmp_path):
-    """`choices=` ne garde que la CLI — l'appel direct doit se garder tout seul."""
-    with pytest.raises(SystemExit):
-        module_isole.generer(_build_info(tmp_path), edition="turbo")
-
-
-def test_edition_ecrase_la_precedente(module_isole, tmp_path):
+def test_reecriture_purge_les_reliquats_d_edition(module_isole, tmp_path):
     """Anti-obsolescence : la copie des sources sur la VM écrase mais ne supprime
-    rien — un `_version.py`/`version.iss` « lite » laissé par le build précédent ne
-    doit pas contaminer le build complet suivant (spec ET module embarqué)."""
-    build_info = _build_info(tmp_path)
-    module_isole.generer(build_info, edition="lite")
-    module_isole.generer(build_info, edition="complete")
-    assert "lite" not in module_isole.VERSION_PY.read_text(encoding="utf-8")
-    assert "lite" not in module_isole.VERSION_ISS.read_text(encoding="utf-8")
+    rien — un `_version.py`/`version.iss` portant l'ancienne édition (docs/44) laissé
+    par un build antérieur doit disparaître au build suivant."""
+    module_isole.VERSION_PY.write_text(
+        'VERSION_COMPLETE = "0.1.0+ancien"\nEDITION_COMPILEE = "lite"\n', encoding="utf-8")
+    module_isole.VERSION_ISS.write_text(
+        '#define MonAppEdition "lite"\n', encoding="utf-8")
+    module_isole.generer(_build_info(tmp_path))
+    assert "EDITION_COMPILEE" not in module_isole.VERSION_PY.read_text(encoding="utf-8")
+    assert "MonAppEdition" not in module_isole.VERSION_ISS.read_text(encoding="utf-8")
 
 
-def test_version_iss_exactement_trois_defines(module_isole, tmp_path):
-    """Garde-fou contre un `#ifndef MonAppEdition` du .iss qui masquerait un
-    générateur ayant cessé d'émettre l'édition."""
-    module_isole.generer(_build_info(tmp_path), edition="lite")
+def test_version_iss_exactement_deux_defines(module_isole, tmp_path):
+    module_isole.generer(_build_info(tmp_path))
     lignes = [l for l in module_isole.VERSION_ISS.read_text(encoding="utf-8").splitlines() if l.strip()]
-    assert len(lignes) == 3
+    assert len(lignes) == 2
     assert all(l.startswith("#define ") for l in lignes)
 
 

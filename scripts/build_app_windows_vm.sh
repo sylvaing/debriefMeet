@@ -6,12 +6,10 @@
 # process detache est tue a la fermeture de session SSH).
 #
 # Usage (depuis le Mac) :
-#   bash scripts/build_app_windows_vm.sh            # edition complete (defaut)
-#   bash scripts/build_app_windows_vm.sh --lite     # edition lite (docs/44)
+#   bash scripts/build_app_windows_vm.sh
 #
-# L'edition pilote l'extra pip (windows / windows-lite), les excludes du spec, le nom
-# affiche et le nom du setup. Les deux setups portent des noms distincts et sont
-# mutuellement exclusifs a l'installation (meme AppId).
+# Un seul setup depuis docs/45 (les editions complete/lite de docs/44 ont disparu —
+# le mode distant/local est un reglage utilisateur dans les Preferences).
 #
 # Pre-requis Mac : sshpass (brew install sshpass).
 # Pre-requis VM (a installer une fois, cf. docs/32 §3.4) :
@@ -30,19 +28,7 @@ VM_DONE_WIN='C:\Users\sylvaing\build\debrief-meet\build_app.done'
 RACINE="$(cd "$(dirname "$0")/.." && pwd)"
 SORTIE="${SORTIE:-$RACINE/dist}"
 
-# Edition compilee (docs/44) — surchargeable par l'env comme SORTIE, ou via --lite.
-EDITION="${EDITION:-complete}"
-case "${1:-}" in
-    --lite)     EDITION=lite ;;
-    --complete) EDITION=complete ;;
-    "")         ;;
-    *) echo "Usage: $0 [--lite|--complete]" >&2; exit 2 ;;
-esac
-if [ "$EDITION" = "lite" ]; then
-    PREFIXE_SETUP="debriefMeet-lite-setup"
-else
-    PREFIXE_SETUP="debriefMeet-setup"
-fi
+PREFIXE_SETUP="debriefMeet-setup"
 
 # Connexions SERIELLES (jamais en parallele) : sshd refuse les rafales d'auth
 # password (MaxStartups) -> Permission denied. -o NumberOfPasswordPrompts=1 fait
@@ -56,7 +42,6 @@ ssh_vm() {
 
 echo "=== debriefMeet — build setup Windows ==="
 echo "VM      : ${VM_USER}@${VM_HOST}"
-echo "Edition : ${EDITION}"
 
 # BUILD_INFO : date + hash git court — la copie sur la VM n'est PAS un depot git
 # (docs/32 §3.1), generer_version.py (execute sur la VM) en a besoin pour calculer
@@ -75,8 +60,8 @@ ssh_vm "cmd /c mkdir C:\\Users\\sylvaing\\build\\debrief-meet 2>nul" || true
 # debriefMeet-setup-*.exe (versions differentes) s'accumulent dans dist\ au fil
 # des builds -- le rapatriement ci-dessous suppose un seul resultat (bug vecu
 # le 2026-07-06 : dir /b a rendu 3 noms concatenes, scp a echoue).
-# Deux globs : "debriefMeet-setup-*" ne matche PAS "debriefMeet-lite-setup-*", un seul
-# effacement laisserait donc trainer les setups de l'autre edition.
+# Deux globs : "debriefMeet-setup-*" ne matche PAS "debriefMeet-lite-setup-*" — le
+# second purge les reliquats de l'ancienne edition lite (docs/44) encore sur la VM.
 ssh_vm "cmd /c del /q $VM_REPO\\dist\\debriefMeet-setup-*.exe 2>nul" || true
 ssh_vm "cmd /c del /q $VM_REPO\\dist\\debriefMeet-lite-setup-*.exe 2>nul" || true
 
@@ -93,7 +78,7 @@ COPYFILE_DISABLE=1 tar czf - \
 echo ""
 echo "[4/4] Build natif sur la VM (venv + pytest bloquant + PyInstaller + Inno Setup)"
 echo "      NE PAS fermer ce terminal — un process detache serait tue a la deconnexion SSH."
-ssh_vm "cmd /c $VM_REPO\\packaging\\windows\\build_app.cmd $EDITION"
+ssh_vm "cmd /c $VM_REPO\\packaging\\windows\\build_app.cmd"
 
 RC="$(ssh_vm "type $VM_DONE_WIN" 2>/dev/null | tr -dc '0-9' | head -c 1)"
 if [ "$RC" != "0" ]; then
