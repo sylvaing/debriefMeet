@@ -52,23 +52,6 @@ def test_version_complete_ignore_un_attribut_de_paquet_perime(monkeypatch):
     importlib.reload(debrief_meet)
     try:
         assert debrief_meet.VERSION_COMPLETE == debrief_meet.__version__ + "+dev"
-        assert debrief_meet.EDITION_COMPILEE == "complete"
-    finally:
-        monkeypatch.delitem(sys.modules, "debrief_meet._version", raising=False)
-        importlib.reload(debrief_meet)
-
-
-def test_edition_compilee_absente_ne_degrade_pas_la_version(monkeypatch):
-    """Un `_version.py` produit par un générateur antérieur (sans EDITION_COMPILEE) ne
-    doit pas faire retomber VERSION_COMPLETE en « +dev » — d'où deux blocs try séparés."""
-    faux = types.ModuleType("debrief_meet._version")
-    faux.VERSION_COMPLETE = "0.2.0+20260101.abcdef0"
-    monkeypatch.setitem(sys.modules, "debrief_meet._version", faux)
-    import debrief_meet
-    importlib.reload(debrief_meet)
-    try:
-        assert debrief_meet.VERSION_COMPLETE == "0.2.0+20260101.abcdef0"
-        assert debrief_meet.EDITION_COMPILEE == "complete"
     finally:
         monkeypatch.delitem(sys.modules, "debrief_meet._version", raising=False)
         importlib.reload(debrief_meet)

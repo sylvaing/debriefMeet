@@ -115,7 +115,7 @@ def test_caviarde_par_heuristique_pas_par_liste_figee():
 
 def test_secret_vide_reste_vide():
     """La distinction configuré / pas configuré est justement ce qu'on diagnostique
-    (édition lite sans clé Mistral = enregistre mais ne transcrira jamais)."""
+    (mode distant sans clé Mistral = enregistre mais ne transcrira jamais)."""
     from debrief_meet.core.diagnostic import caviarder
 
     assert caviarder({"mistral_cle_api": ""})["mistral_cle_api"] == ""

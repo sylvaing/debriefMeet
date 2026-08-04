@@ -10,7 +10,7 @@ from typing import Any
 import platformdirs
 
 from debrief_meet import APP_NAME, VERSION_COMPLETE
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 
 _ROOT_LOGGER = "debrief_meet"
 # Le DEBUG est bavard (une tranche de réunion loggue RMS/porte/RTF, docs/31 §3.7.2) —
@@ -54,10 +54,10 @@ def configurer_logs(actifs: bool, debug: bool = False) -> None:
     )
     root.addHandler(handler)
     root.setLevel(logging.DEBUG if debug else logging.INFO)
-    # Édition consignée dès la 1ʳᵉ ligne du fichier : ne dépend pas du thread de collecte
-    # des infos système, donc présente même si celle-ci dégrade (docs/44).
-    root.info("Logs activés (debug=%s) — %s (édition %s)",
-              debug, VERSION_COMPLETE, edition.edition())
+    # Mode consigné dès la 1ʳᵉ ligne du fichier : ne dépend pas du thread de collecte
+    # des infos système, donc présent même si celle-ci dégrade (docs/45).
+    root.info("Logs activés (debug=%s) — %s (mode %s)",
+              debug, VERSION_COMPLETE, mode_transcription.mode())
 
 
 def journaliser_entete_session(infos: dict) -> None:

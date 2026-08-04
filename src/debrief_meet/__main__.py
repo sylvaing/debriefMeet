@@ -152,7 +152,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
 
     from PySide6.QtWidgets import QSystemTrayIcon
 
-    from debrief_meet.core import edition
+    from debrief_meet.core import mode_transcription
     from debrief_meet.core.config import Config
     from debrief_meet.core.logs import configurer_logs, installer_traces_crash, journaliser_entete_session
     from debrief_meet.core.modes import MachineEtats, Mode
@@ -173,6 +173,11 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     # Config
     config = Config()
     config.charger()
+
+    # Mode de transcription (docs/45) — figé ici pour la durée du process, AVANT
+    # configurer_logs (qui logge le mode en première ligne) et avant toute
+    # construction gatée (fabrique, orchestrateurs, raccourcis, fenêtre, tray).
+    mode_transcription.initialiser(config)
 
     # Logs
     configurer_logs(
@@ -221,25 +226,25 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     adaptateurs = creer_adaptateurs()
     # Préchargement du modèle déplacé après l'affichage du tray (cf. plus bas) : au 1er
     # lancement, on télécharge avec une fenêtre de progression au lieu d'un gel silencieux.
-    # Dictée et Journal n'existent pas en édition lite (docs/44) : aucun moteur local.
+    # Dictée et Journal n'existent pas en mode distant (docs/45) : aucun moteur local.
     orch_dictee = OrchestrateurDictee(
         machine=machine,
         micro=adaptateurs.micro,
         moteur=adaptateurs.moteur,
         presse_papiers=adaptateurs.presse_papiers,
         config=config,
-    ) if edition.avec_dictee_journal() else None
+    ) if mode_transcription.avec_dictee_journal() else None
 
     # Câblage commandes IPC
     def _executer_commande(cmd: str) -> None:
-        # Le garde d'édition est une question de justesse, pas de rangement : `--toggle`
-        # peut encore arriver d'un raccourci bureau survivant à une MAJ complète → lite
-        # (AppId identique). Sans lui, `MachineEtats` basculerait en Mode.DICTEE sans
-        # orchestrateur à l'écoute — rien n'enregistre, le tray ne rougit pas, et le mode
-        # Réunion reste ensuite refusé : verrouillage silencieux de la seule
-        # fonctionnalité de l'app.
-        if cmd in ("toggle", "toggle-journal") and not edition.avec_dictee_journal():
-            logger.warning("Commande IPC %r indisponible dans cette édition — ignorée", cmd)
+        # Le garde de mode est une question de justesse, pas de rangement : `--toggle`
+        # peut encore arriver d'un raccourci bureau créé quand le mode était « local »,
+        # après une bascule en « distant ». Sans lui, `MachineEtats` basculerait en
+        # Mode.DICTEE sans orchestrateur à l'écoute — rien n'enregistre, le tray ne
+        # rougit pas, et le mode Réunion reste ensuite refusé : verrouillage silencieux
+        # de la seule fonctionnalité de l'app.
+        if cmd in ("toggle", "toggle-journal") and not mode_transcription.avec_dictee_journal():
+            logger.warning("Commande IPC %r indisponible en mode distant — ignorée", cmd)
         elif cmd == "toggle":
             machine.toggle_dictee()
         elif cmd == "toggle-reunion":
@@ -297,7 +302,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         moteur=adaptateurs.moteur,
         dossier_journal=Path(config.get("dossier_journal")),
         config=config,
-    ) if edition.avec_dictee_journal() else None
+    ) if mode_transcription.avec_dictee_journal() else None
 
     # Gestionnaire de diarization persistant (survit à l'ouverture/fermeture de l'Historique).
     from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
@@ -395,8 +400,8 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         from debrief_meet.ui.chargeur_modele import precharger_au_demarrage
         precharger_au_demarrage(adaptateurs.moteur, config)
     else:
-        # Gain le plus visible de l'édition lite : aucun modèle (~1,5 Go) téléchargé au
-        # premier lancement, l'app est utilisable immédiatement (docs/44).
+        # Gain le plus visible du mode distant (le défaut) : aucun modèle (~1,5 Go)
+        # téléchargé au premier lancement, l'app est utilisable immédiatement (docs/45).
         logger.info("Aucun moteur local — pas de préchargement de modèle")
 
     # Arrêt propre à la fermeture — l'ordre est important :

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import EtatVisuel, MachineEtats, Mode
 from debrief_meet.ui.export_diagnostic import exporter_et_informer
@@ -160,11 +160,11 @@ class IconeTray(QSystemTrayIcon):
         menu.setObjectName("trayMenu")
         self._menu = menu
 
-        # Un item par mode de l'édition courante : Dictée et Journal n'existent pas en
-        # lite, faute de moteur local (docs/44).
+        # Un item par mode disponible : Dictée et Journal n'existent pas en mode
+        # distant, faute de moteur local (docs/45).
         self._actions_modes: dict[Mode, QAction] = {}
         for mode, (_actif, repos, _cle, icone, bascule) in _MODES_MENU.items():
-            if mode is not Mode.REUNION and not edition.avec_dictee_journal():
+            if mode is not Mode.REUNION and not mode_transcription.avec_dictee_journal():
                 continue
             action = QAction(_icone_menu(icone), repos, menu)
             action.triggered.connect(getattr(self._machine, bascule))

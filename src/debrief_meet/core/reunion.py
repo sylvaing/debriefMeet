@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core.arret_threads import arreter_thread
 from debrief_meet.core.audio import reechantillonner
 from debrief_meet.core.fichiers import (
@@ -159,13 +159,14 @@ class OrchestrateurReunion(QObject):
 
     def _demarrer(self) -> None:
         self._actif = True
-        # Édition lite : jamais de transcription en direct, quoi qu'en dise la config —
-        # un config.json écrit par l'édition complète survit à la mise à jour (AppId
-        # identique, docs/44). C'est le SEUL site à gater : `_transcription_live` pilote
-        # ensuite la rétention forcée, le placeholder du .md, le routage du tick et le
-        # chemin d'arrêt court-circuité.
+        # Mode distant : jamais de transcription en direct, quoi qu'en dise la config —
+        # `transcription_live` garde sa valeur pour un retour en mode local (docs/45).
+        # C'est le SEUL site à gater : `_transcription_live` pilote ensuite la rétention
+        # forcée, le placeholder du .md, le routage du tick et le chemin d'arrêt
+        # court-circuité.
         self._transcription_live = (
-            edition.avec_transcription_locale() and bool(self._config.get("transcription_live")))
+            mode_transcription.avec_transcription_locale()
+            and bool(self._config.get("transcription_live")))
         self._debut = datetime.now()
         self._avec_micro = False
         self._avec_systeme = False

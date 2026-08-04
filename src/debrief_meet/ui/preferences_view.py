@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core import raccourcis as raccourcis_core
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
@@ -252,11 +252,11 @@ class PreferencesView(QWidget):
 
         Méthode et non constante de module : les constructeurs sont des méthodes liées
         (c'est précisément pourquoi il y avait deux tuples parallèles auparavant). Lue à
-        la construction de la vue, donc l'édition est prise en compte sans rebuild.
+        la construction de la vue, donc le mode est pris en compte sans rebuild.
         """
         sections: list[tuple[str, str, Callable[[], QWidget]]] = []
-        if edition.avec_transcription_locale():
-            # Sélecteur de modèle Whisper : sans objet en lite (aucun moteur embarqué).
+        if mode_transcription.avec_transcription_locale():
+            # Sélecteur de modèle Whisper : sans objet en distant (aucun moteur construit).
             sections.append(("Modèle", "brain", self._section_modele))
         sections += [
             ("Audio", "waveform", self._section_audio),
@@ -369,9 +369,9 @@ class PreferencesView(QWidget):
         bloc_checks = QVBoxLayout()
         bloc_checks.setSpacing(11)
 
-        # En lite l'orchestrateur force l'audio seul (core/reunion.py) : afficher la case
-        # serait un contrôle menteur.
-        if edition.avec_transcription_locale():
+        # En mode distant l'orchestrateur force l'audio seul (core/reunion.py) : afficher
+        # la case serait un contrôle menteur.
+        if mode_transcription.avec_transcription_locale():
             self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
             self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
             self._check_transcription_live.setToolTip(
@@ -391,7 +391,7 @@ class PreferencesView(QWidget):
         self._check_aec.toggled.connect(lambda c: self._definir("aec_actif", c))
         bloc_checks.addWidget(self._check_aec)
 
-        if edition.avec_transcription_locale():
+        if mode_transcription.avec_transcription_locale():
             self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
             self._check_retention.setChecked(bool(self._config.get("retention_audio")))
             self._check_retention.setToolTip(
@@ -402,11 +402,11 @@ class PreferencesView(QWidget):
             bloc_checks.addWidget(self._check_retention)
         lay.addLayout(bloc_checks)
 
-        if edition.avec_transcription_locale():
+        if mode_transcription.avec_transcription_locale():
             lay.addWidget(self._construire_ligne_diarization())
         else:
-            # Rétention non négociable en lite : c'est l'audio qui est envoyé à l'IA
-            # distante. Le contrôle par réunion reste dans l'Historique (« Supprimer
+            # Rétention non négociable en mode distant : c'est l'audio qui est envoyé à
+            # l'IA distante. Le contrôle par réunion reste dans l'Historique (« Supprimer
             # l'audio (garde le débrief) »).
             lay.addWidget(_note(
                 "L'audio des réunions est toujours conservé : c'est lui qui sert à la "

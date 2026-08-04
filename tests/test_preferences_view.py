@@ -14,12 +14,6 @@ from debrief_meet.ui.preferences_view import PreferencesView
 from tests.fakes.adapters import MoteurFake
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : les sections Modèle/Audio/Raccourcis complètes — édition complète épinglée sauf test lite explicite
-    (docs/44)."""
-
-
 def _config(tmp_path):
     return Config(chemin=tmp_path / "config.json")
 
@@ -390,17 +384,17 @@ def test_bouton_export_delegue_au_helper_partage(qapp, tmp_path, monkeypatch):
     assert appels == [vue]
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
 def _titres_sections(vue) -> list[str]:
     return [vue._nav.item(i).text() for i in range(vue._nav.count())]
 
 
-def test_lite_pas_de_section_modele(qapp, tmp_path, edition_lite):
+def test_distant_pas_de_section_modele(qapp, tmp_path, mode_distant):
     vue = PreferencesView(_config(tmp_path))
     titres = _titres_sections(vue)
     assert "Modèle" not in titres
-    assert "Remote IA" in titres          # c'est elle qui porte la transcription en lite
+    assert "Remote IA" in titres          # c'est elle qui porte la transcription en distant
     assert vue._pages.count() == vue._nav.count() == len(titres)
 
 
@@ -412,16 +406,16 @@ def test_sections_derivees_et_index_alignes(qapp, tmp_path):
     assert vue._pages.currentIndex() == vue._nav.count() - 1
 
 
-def test_lite_audio_sans_case_menteuse(qapp, tmp_path, edition_lite):
+def test_distant_audio_sans_case_menteuse(qapp, tmp_path, mode_distant):
     """`transcription_live` et `retention_audio` sont forcés par l'orchestrateur en
-    lite : afficher les cases serait un contrôle qui ment."""
+    distant : afficher les cases serait un contrôle qui ment."""
     vue = PreferencesView(_config(tmp_path))
     assert not hasattr(vue, "_check_transcription_live")
     assert not hasattr(vue, "_check_retention")
     assert vue._check_aec is not None      # l'AEC reste (décision docs/44)
 
 
-def test_lite_audio_explique_la_retention_obligatoire(qapp, tmp_path, edition_lite):
+def test_distant_audio_explique_la_retention_obligatoire(qapp, tmp_path, mode_distant):
     from PySide6.QtWidgets import QLabel
     vue = PreferencesView(_config(tmp_path))
     page = vue._pages.widget(_titres_sections(vue).index("Audio")).widget()
@@ -429,9 +423,9 @@ def test_lite_audio_explique_la_retention_obligatoire(qapp, tmp_path, edition_li
     assert "toujours conservé" in textes
 
 
-def test_lite_un_seul_editeur_de_raccourci(qapp, tmp_path, edition_lite):
+def test_distant_un_seul_editeur_de_raccourci(qapp, tmp_path, mode_distant):
     """`_reinitialiser_raccourcis` indexait un dict de 3 éditeurs codé en dur →
-    KeyError en lite."""
+    KeyError en mode distant."""
     vue = PreferencesView(_config(tmp_path))
     assert list(vue._edits_raccourcis) == ["raccourci_reunion"]
     vue._reinitialiser_raccourcis()       # ne doit pas lever
