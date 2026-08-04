@@ -54,15 +54,25 @@ def exporter_et_informer(parent: QWidget | None) -> Path | None:
                           description=f"Impossible d'exporter les logs :\n{exc}")
         return None
 
-    # Gabarit construit à la main plutôt que `dialogues.confirmer` : celui-ci code en
-    # dur « Annuler », libellé absurde pour une action déjà réussie.
-    dlg = dialogues.DialogueGabarit(
-        parent, titre="Logs exportés",
-        description=f"Archive déposée sur le Bureau : {chemin.name}\n"
-                    "Envoyez ce fichier à Sylvain.",
-        icone="file-zip", intention=dialogues.Intention.ACCENT)
-    dlg.bouton_annuler().setText("Fermer")
-    dlg.definir_action("Révéler dans le dossier")
-    if dlg.exec() == dialogues.QDialog.DialogCode.Accepted:
+    # Le zip est ÉCRIT à ce stade : plus rien en aval ne doit pouvoir faire perdre
+    # l'application. Un `icone="file-zip"` inventé (absent des 38 SVG embarqués) a
+    # crashé l'app ici chez une utilisatrice le 2026-08-04 — après un export réussi.
+    try:
+        # Gabarit construit à la main plutôt que `dialogues.confirmer` : celui-ci code
+        # en dur « Annuler », libellé absurde pour une action déjà réussie.
+        dlg = dialogues.DialogueGabarit(
+            parent, titre="Logs exportés",
+            description=f"Archive déposée sur le Bureau : {chemin.name}\n"
+                        "Envoyez ce fichier à Sylvain.",
+            icone="file-text", intention=dialogues.Intention.ACCENT)
+        dlg.bouton_annuler().setText("Fermer")
+        dlg.definir_action("Révéler dans le dossier")
+        reveler_demande = dlg.exec() == dialogues.QDialog.DialogCode.Accepted
+    except Exception as exc:  # noqa: BLE001 — l'export a réussi, on ne perd pas l'app
+        logger.error("Confirmation d'export impossible (%s) — zip écrit : %s",
+                     exc, chemin, exc_info=True)
+        return chemin
+
+    if reveler_demande:
         reveler(chemin)
     return chemin

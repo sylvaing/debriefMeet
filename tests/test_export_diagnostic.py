@@ -110,3 +110,33 @@ def test_reveler_ignore_un_chemin_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(export_diagnostic.subprocess, "Popen", appels.append)
     export_diagnostic.reveler(tmp_path / "absent.zip")
     assert appels == []
+
+
+def test_dialogue_reel_se_construit(qapp):
+    """Comble le trou qui a laissé passer le crash du 2026-08-04 : les tests ci-dessus
+    remplacent `DialogueGabarit` par un double, donc l'icône réelle n'était jamais
+    chargée. Ici on construit le VRAI dialogue avec les mêmes paramètres, sans `exec()`."""
+    from debrief_meet.ui import dialogues
+
+    dlg = dialogues.DialogueGabarit(
+        None, titre="Logs exportés", description="Archive déposée sur le Bureau : x.zip",
+        icone="file-text", intention=dialogues.Intention.ACCENT)
+    dlg.bouton_annuler().setText("Fermer")
+    dlg.definir_action("Révéler dans le dossier")
+    assert dlg.bouton_action().text() == "Révéler dans le dossier"
+
+
+def test_echec_du_dialogue_ne_perd_pas_le_zip(qapp, zip_factice, monkeypatch, caplog):
+    """Le zip est écrit AVANT la confirmation : plus rien en aval ne doit faire perdre
+    l'application (le crash réel est survenu après un export réussi)."""
+    import logging
+
+    cible, _ = zip_factice
+
+    def _boum(*a, **kw):
+        raise FileNotFoundError("icône absente")
+
+    monkeypatch.setattr(export_diagnostic.dialogues, "DialogueGabarit", _boum)
+    with caplog.at_level(logging.ERROR, logger="debrief_meet.ui.export_diagnostic"):
+        assert export_diagnostic.exporter_et_informer(None) == cible
+    assert "zip écrit" in caplog.text
