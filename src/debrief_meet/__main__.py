@@ -174,6 +174,14 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     config = Config()
     config.charger()
 
+    # Premier lancement (docs/45) : choix du mode AVANT initialiser(), pour que le
+    # choix soit effectif dès ce démarrage. Joue aussi une fois sur les installations
+    # antérieures (clé `accueil_fait` absente de leur config.json) — personne ne perd
+    # la transcription locale sans un choix explicite.
+    if not config.get("accueil_fait"):
+        from debrief_meet.ui.premier_lancement import PremierLancement
+        PremierLancement(config).exec()
+
     # Mode de transcription (docs/45) — figé ici pour la durée du process, AVANT
     # configurer_logs (qui logge le mode en première ligne) et avant toute
     # construction gatée (fabrique, orchestrateurs, raccourcis, fenêtre, tray).
