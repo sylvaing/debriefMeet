@@ -354,6 +354,9 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         bluemind_declencher_sync=synchro_bluemind.synchroniser_si_necessaire,
         bluemind_sur_ouverture=synchro_bluemind.synchroniser_si_necessaire,
         bluemind_store=synchro_bluemind.store,
+        # L'objet complet (et pas seulement son store) : le flux CR Mistral force une
+        # resync et **attend** sa fin avant de proposer une association (docs/42).
+        bluemind_synchro=synchro_bluemind,
         gestionnaire_cr_mistral=gestionnaire_cr_mistral)
 
     # Tray

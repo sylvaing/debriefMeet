@@ -41,16 +41,29 @@ def _libelle_section(texte: str) -> QLabel:
 
 
 class DialogAssociationBluemind(DialogueGabarit):
-    def __init__(self, chemin_md: Path, evenements: list[Evenement], parent: QWidget | None = None) -> None:
+    """Trois sorties possibles quand `contexte_cr` est vrai (proposition faite juste avant
+    un CR Mistral, docs/42) : `Rejected` = renoncer à tout ; `Accepted` avec
+    `association_ignoree` = continuer sans associer ; `Accepted` seul = associé (relire
+    `chemin_md`). Sans `contexte_cr`, le dialogue garde ses deux sorties historiques."""
+
+    def __init__(self, chemin_md: Path, evenements: list[Evenement], parent: QWidget | None = None,
+                 contexte_cr: bool = False) -> None:
         super().__init__(
-            parent, titre="Associer à un événement",
-            description="Un événement du calendrier BlueMind correspond à cette réunion.",
+            parent,
+            titre="Associer avant le CR ?" if contexte_cr else "Associer à un événement",
+            description=(
+                "Un événement du calendrier BlueMind correspond. L'associer transmet son "
+                "titre, sa date et ses participants au compte-rendu — et les noms au moteur "
+                "de transcription."
+                if contexte_cr else
+                "Un événement du calendrier BlueMind correspond à cette réunion."),
             icone="calendar-check", intention=Intention.ACCENT, largeur_carte=440)
         self._chemin_md = chemin_md
         self._evenements = evenements
         self._evenement_choisi: Evenement | None = None
         self._checks_invites: list[tuple[QCheckBox, dict]] = []
         self._check_titre: QCheckBox | None = None
+        self._association_ignoree = False
 
         self._pages = QStackedWidget(self)
         self.zone_corps.addWidget(self._pages)
@@ -66,6 +79,11 @@ class DialogAssociationBluemind(DialogueGabarit):
         self._pages.addWidget(self._page_recap)
 
         self.definir_action("Associer", self._valider)
+        if contexte_cr:
+            # Bouton **toujours actif**, y compris sur la page de choix où « Associer »
+            # est désactivé faute d'événement sélectionné : ne pas choisir doit rester
+            # une sortie possible sans renoncer au CR.
+            self.ajouter_bouton_secondaire("Sans association", self._ignorer)
 
         if len(evenements) == 1:
             self._selectionner_evenement(evenements[0])
@@ -79,6 +97,17 @@ class DialogAssociationBluemind(DialogueGabarit):
         été renommé (titre appliqué, docs/43 §6.1) : l'appelant doit relire cette
         propriété après `exec()` pour recharger/re-sélectionner la bonne ligne."""
         return self._chemin_md
+
+    @property
+    def association_ignoree(self) -> bool:
+        """Vrai si l'utilisateur a cliqué « Sans association » (variante `contexte_cr`) :
+        le dialogue est accepté mais **rien n'a été écrit** — l'appelant enchaîne sur son
+        action (le CR) avec la réunion non associée."""
+        return self._association_ignoree
+
+    def _ignorer(self) -> None:
+        self._association_ignoree = True
+        self.accept()
 
     # ── Choix (si plusieurs correspondances) ────────────────────────────────────
 

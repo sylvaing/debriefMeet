@@ -23,6 +23,13 @@ def _evt(uid="evt-1", titre="Point projet X", debut=None, invites=None, organisa
     )
 
 
+def _bouton(dlg, label):
+    """Bouton du pied portant ce libellé, ou None (les boutons secondaires ne sont pas
+    exposés par une propriété dédiée)."""
+    from PySide6.QtWidgets import QPushButton
+    return next((b for b in dlg.findChildren(QPushButton) if b.text() == label), None)
+
+
 def _md(tmp_path, nom="2026-07-08_14-00-00", texte="# Réunion — 2026-07-08 14:00\n\nTexte\n"):
     dossier = tmp_path / nom
     dossier.mkdir()
@@ -104,3 +111,41 @@ def test_titre_custom_non_ecrase_si_decoche(qapp, tmp_path):
     dlg._valider()
     assert "# Mon titre perso" in dlg.chemin_md.read_text(encoding="utf-8")
     assert dlg.chemin_md == md   # pas de renommage (titre non appliqué)
+
+
+# ── Variante « avant le CR » : 3ᵉ sortie « Sans association » (docs/42) ─────────
+
+def test_sans_contexte_cr_pas_de_troisieme_bouton(qapp, tmp_path):
+    """Non-régression des deux appelants historiques (menu ⋯ et colonne calendrier)."""
+    dlg = DialogAssociationBluemind(_md(tmp_path), [_evt()])
+    assert dlg.association_ignoree is False
+    assert _bouton(dlg, "Sans association") is None
+
+
+def test_contexte_cr_ajoute_sans_association(qapp, tmp_path):
+    md = _md(tmp_path)
+    dlg = DialogAssociationBluemind(md, [_evt()], contexte_cr=True)
+    bouton = _bouton(dlg, "Sans association")
+    assert bouton is not None
+    bouton.click()
+    assert dlg.association_ignoree is True
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert association.lire(md) is None          # accepté MAIS rien écrit
+
+
+def test_sans_association_actif_meme_sur_la_page_de_choix(qapp, tmp_path):
+    """Avec plusieurs correspondances, « Associer » est désactivé faute de choix : ne pas
+    choisir doit rester possible sans renoncer au CR."""
+    md = _md(tmp_path, nom="r", texte="# Réunion\n")
+    dlg = DialogAssociationBluemind(md, [_evt(uid="e1"), _evt(uid="e2")], contexte_cr=True)
+    assert dlg.bouton_action().isEnabled() is False
+    assert _bouton(dlg, "Sans association").isEnabled() is True
+
+
+def test_contexte_cr_valide_normalement(qapp, tmp_path):
+    """« Associer » garde exactement le même effet dans la variante CR."""
+    md = _md(tmp_path)
+    dlg = DialogAssociationBluemind(md, [_evt()], contexte_cr=True)
+    dlg._valider()
+    assert dlg.association_ignoree is False
+    assert association.lire(dlg.chemin_md) is not None

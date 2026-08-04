@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
 from debrief_meet.core import edition
 from debrief_meet.core.bluemind import association as bluemind_association
 from debrief_meet.core.bluemind.matching import evenements_correspondants
-from debrief_meet.core.bluemind.store import StoreCalendrier
+from debrief_meet.core.bluemind.store import Evenement, StoreCalendrier
+from debrief_meet.core.bluemind.sync import SynchroCalendrier
 from debrief_meet.core.config import Config
 from debrief_meet.core.fichiers import (
     chemin_cr_mistral,
@@ -44,6 +45,7 @@ from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui import dialogues
 from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
+from debrief_meet.ui.attente_sync_bluemind import attendre_sync
 from debrief_meet.ui.calendrier_delegate import CalendrierColonneDelegate, CalendrierSpec
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import (
@@ -97,6 +99,7 @@ class ReunionView(QWidget):
         gestionnaire: GestionnaireDiarization | None = None,
         store_bluemind: StoreCalendrier | None = None,
         gestionnaire_cr_mistral: GestionnaireCRMistral | None = None,
+        synchro_bluemind: SynchroCalendrier | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -106,6 +109,10 @@ class ReunionView(QWidget):
         self._gestionnaire = gestionnaire
         self._store_bluemind = store_bluemind
         self._gestionnaire_cr_mistral = gestionnaire_cr_mistral
+        # Sert **uniquement** à rafraîchir la réplique avant la proposition d'association
+        # du flux CR (docs/42 §4.1) : la détection au paint reste locale, sur `_store_bluemind`.
+        self._synchro_bluemind = synchro_bluemind
+        self._proposition_en_cours = False
 
         self._modele = CaptureModel(self._dossier(), est_reunion=True, parent=self)
         self._proxy = QSortFilterProxyModel(self)
@@ -308,6 +315,21 @@ class ReunionView(QWidget):
 
     # ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
 
+    def _evenements_correspondants_pour(self, chemin: Path) -> list[Evenement]:
+        """Correspondances de la réplique locale pour cette réunion (§6.1) : pré-filtre SQL
+        large autour du début, puis tolérance fine de `evenements_correspondants`. Liste
+        vide si BlueMind n'est pas configuré ou si la date d'enregistrement est illisible."""
+        if self._store_bluemind is None:
+            return []
+        debut = date_heure_reunion(chemin)
+        if debut is None:
+            return []
+        marge = timedelta(hours=6)
+        debut_ms = int((debut - marge).timestamp() * 1000)
+        fin_ms = int((debut + marge).timestamp() * 1000)
+        candidats = self._store_bluemind.evenements_dans_plage(debut_ms, fin_ms)
+        return evenements_correspondants(candidats, debut, duree_reunion(chemin))
+
     def _etat_bluemind_pour(self, chemin: Path) -> _EtatBluemind | None:
         """Détection **automatique et locale** (réplique) — aucun réseau sur ce
         chemin (§6.2). None si BlueMind n'est pas configuré (interco invisible) ;
@@ -320,14 +342,7 @@ class ReunionView(QWidget):
             titre = asso.titre if asso else chemin.parent.name
             return _EtatBluemind("linked", titre)
 
-        debut = date_heure_reunion(chemin)
-        if debut is None:
-            return _EtatBluemind("none")
-        marge = timedelta(hours=6)
-        debut_ms = int((debut - marge).timestamp() * 1000)
-        fin_ms = int((debut + marge).timestamp() * 1000)
-        candidats = self._store_bluemind.evenements_dans_plage(debut_ms, fin_ms)
-        correspondances = evenements_correspondants(candidats, debut, duree_reunion(chemin))
+        correspondances = self._evenements_correspondants_pour(chemin)
         if not correspondances:
             return _EtatBluemind("none")
         return _EtatBluemind(
@@ -493,9 +508,55 @@ class ReunionView(QWidget):
 
     # ── CR Mistral (déléguée au gestionnaire persistant, docs/42) ───────────────
 
+    def _proposer_association_avant_cr(self, chemin: Path) -> Path | None:
+        """Propose l'association BlueMind **avant** l'envoi (docs/40 §6, docs/42) : le
+        sidecar fournit au CR le sujet, la date et les participants, et les noms d'invités
+        servent de `context_bias` à Voxtral — un CR n'étant pas régénéré, c'est le seul
+        moment où l'utilisateur peut encore enrichir le contexte.
+
+        Retourne le chemin sur lequel lancer le job (**celui d'après renommage** si le
+        titre de l'événement a été appliqué), ou None si l'utilisateur renonce au CR.
+        No-op transparent si BlueMind n'est pas configuré, si la réunion est déjà associée
+        ou si aucun événement ne correspond."""
+        if self._store_bluemind is None or bluemind_association.existe(chemin):
+            return chemin
+
+        # Resync forcée : la détection ne doit pas manquer un événement créé depuis la
+        # dernière synchro (les autres déclencheurs sont tous « au fil de l'eau »).
+        if attendre_sync(self._synchro_bluemind, self):
+            self._modele.recharger()                  # la colonne calendrier suit la réplique
+
+        evenements = self._evenements_correspondants_pour(chemin)
+        if not evenements:
+            return chemin
+
+        from debrief_meet.ui.bluemind_association import DialogAssociationBluemind
+        dlg = DialogAssociationBluemind(chemin, evenements, self, contexte_cr=True)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return None                               # « Annuler » : ni association, ni CR
+        if dlg.association_ignoree:
+            return chemin                             # « Sans association » : CR quand même
+        # Le dossier a pu être renommé (titre appliqué, docs/43 §6.1) : le job doit porter
+        # sur le nouveau chemin, sinon il travaillerait sur un dossier disparu.
+        nouveau = dlg.chemin_md
+        self.selectionner_reunion(nouveau)
+        return nouveau if nouveau.exists() else chemin
+
     def _generer_cr_mistral(self, chemin: Path) -> None:
         if self._gestionnaire_cr_mistral is None or not self._gestionnaire_cr_mistral.disponible():
             return
+        if self._proposition_en_cours:
+            # Attente de sync + dialogue laissent tourner l'event loop : sans ce garde-fou,
+            # un second clic (menu ⋯ ou colonne calendrier) rentrerait une 2ᵉ fois dans le flux.
+            return
+        self._proposition_en_cours = True
+        try:
+            chemin_cible = self._proposer_association_avant_cr(chemin)
+        finally:
+            self._proposition_en_cours = False
+        if chemin_cible is None:
+            return
+        chemin = chemin_cible
         if not self._config.get("mistral_confidentialite_acceptee"):
             # Confirmation au premier envoi (docs/42 §2) — mémorisée ensuite (vaut
             # « ne plus demander », pas de case à cocher dédiée en v1).

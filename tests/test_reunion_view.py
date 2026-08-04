@@ -505,6 +505,232 @@ def test_cr_mistral_echoue_affiche_message(qapp, machine, tmp_path, monkeypatch)
     assert appels
 
 
+# ── Proposition d'association BlueMind avant le CR (docs/42 + docs/40 §6) ───────
+
+class FauxDialogAssociation:
+    """Substitut de `DialogAssociationBluemind` : `issue` décide de la sortie simulée
+    (« associer » / « ignorer » / « annuler ») sans ouvrir de fenêtre."""
+
+    from PySide6.QtWidgets import QDialog as _QDialog
+    DialogCode = _QDialog.DialogCode
+    instances: list = []
+
+    issue = "associer"
+    nouveau_chemin = None            # chemin renvoyé après « associer » (renommage simulé)
+
+    def __init__(self, chemin_md, evenements, parent=None, contexte_cr=False):
+        self.chemin_md_initial = chemin_md
+        self.evenements = evenements
+        self.contexte_cr = contexte_cr
+        FauxDialogAssociation.instances.append(self)
+
+    @property
+    def chemin_md(self):
+        return FauxDialogAssociation.nouveau_chemin or self.chemin_md_initial
+
+    @property
+    def association_ignoree(self):
+        return FauxDialogAssociation.issue == "ignorer"
+
+    def exec(self):
+        if FauxDialogAssociation.issue == "annuler":
+            return self.DialogCode.Rejected
+        return self.DialogCode.Accepted
+
+
+@pytest.fixture
+def faux_dialog_association(monkeypatch):
+    """Remplace le dialogue F1 (import tardif → résolu à l'appel) et remet à zéro l'état
+    de classe entre les tests."""
+    FauxDialogAssociation.instances = []
+    FauxDialogAssociation.issue = "associer"
+    FauxDialogAssociation.nouveau_chemin = None
+    monkeypatch.setattr("debrief_meet.ui.bluemind_association.DialogAssociationBluemind",
+                        FauxDialogAssociation)
+    return FauxDialogAssociation
+
+
+def _vue_cr_avec_bluemind(tmp_path, machine, store=None, synchro=None):
+    """Vue prête pour le flux CR : confidentialité déjà acceptée (isole la proposition)."""
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    g = FauxGestionnaireCRMistral()
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), store_bluemind=store,
+                      gestionnaire_cr_mistral=g, synchro_bluemind=synchro)
+    return vue, g
+
+
+def _store_correspondant(tmp_path, nom="2026-01-01_10-00-00"):
+    from datetime import datetime
+    debut = datetime(2026, 1, 1, 10, 0)
+    return _store_avec_evenement(
+        tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
+
+
+def test_cr_sans_store_bluemind_ne_propose_rien(qapp, machine, tmp_path, faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine)          # store_bluemind=None
+    vue._generer_cr_mistral(md)
+    assert faux_dialog_association.instances == []
+    assert g.lances == [md]
+
+
+def test_cr_sans_correspondance_ne_propose_rien(qapp, machine, tmp_path, faux_dialog_association):
+    from datetime import datetime
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    loin = datetime(2026, 6, 1, 10, 0)
+    store = _store_avec_evenement(
+        tmp_path, int(loin.timestamp() * 1000), int(loin.timestamp() * 1000) + 1800_000)
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=store)
+    vue._generer_cr_mistral(md)
+    assert faux_dialog_association.instances == []
+    assert g.lances == [md]
+
+
+def test_cr_deja_associee_ne_propose_rien(qapp, machine, tmp_path, faux_dialog_association):
+    from debrief_meet.core.bluemind.association import Association, ecrire
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    ecrire(md, Association(event_uid="e1", cal_uid="cal", titre="Point projet X",
+                           debut="2026-01-01T10:00:00", invites=[]))
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert faux_dialog_association.instances == []
+    assert g.lances == [md]
+
+
+def test_cr_propose_lassociation_si_correspondance(qapp, machine, tmp_path, faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert len(faux_dialog_association.instances) == 1
+    dlg = faux_dialog_association.instances[0]
+    assert dlg.contexte_cr is True                 # variante à 3 boutons
+    assert [e.uid for e in dlg.evenements] == ["evt-1"]
+    assert g.lances == [md]
+
+
+def test_cr_lance_sur_le_nouveau_chemin_apres_renommage(qapp, machine, tmp_path,
+                                                        faux_dialog_association):
+    """« Associer » applique le titre → le dossier est renommé : le job doit porter sur le
+    nouveau chemin, sinon il travaillerait sur un dossier disparu (docs/43 §6.1)."""
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    nouveau_dossier = tmp_path / "2026-01-01_10-00-00_Point-projet-X"
+    md.parent.rename(nouveau_dossier)
+    faux_dialog_association.nouveau_chemin = nouveau_dossier / "transcription.md"
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert g.lances == [nouveau_dossier / "transcription.md"]
+
+
+def test_cr_repli_sur_le_chemin_dorigine_si_nouveau_absent(qapp, machine, tmp_path,
+                                                           faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    faux_dialog_association.nouveau_chemin = tmp_path / "jamais-cree" / "transcription.md"
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert g.lances == [md]
+
+
+def test_cr_sans_association_lance_quand_meme(qapp, machine, tmp_path, faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    faux_dialog_association.issue = "ignorer"
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert g.lances == [md]
+
+
+def test_cr_annule_ne_lance_rien(qapp, machine, tmp_path, faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    faux_dialog_association.issue = "annuler"
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    vue._generer_cr_mistral(md)
+    assert g.lances == []
+
+
+def test_association_proposee_avant_la_confidentialite(qapp, machine, tmp_path, monkeypatch,
+                                                       faux_dialog_association):
+    """Ordre voulu : l'association change ce qui part chez Mistral, donc elle passe avant
+    la confirmation d'envoi du premier usage."""
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    cfg = _config(tmp_path)                       # confidentialité PAS encore acceptée
+    g = FauxGestionnaireCRMistral()
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                      store_bluemind=_store_correspondant(tmp_path), gestionnaire_cr_mistral=g)
+    ordre = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *a, **k: (ordre.append("confidentialite"), True)[1])
+    exec_initial = FauxDialogAssociation.exec
+    monkeypatch.setattr(FauxDialogAssociation, "exec",
+                        lambda self: (ordre.append("association"), exec_initial(self))[1])
+    vue._generer_cr_mistral(md)
+    assert ordre == ["association", "confidentialite"]
+    assert g.lances == [md]
+
+
+def test_confidentialite_refusee_apres_association_ne_lance_rien(qapp, machine, tmp_path,
+                                                                 monkeypatch,
+                                                                 faux_dialog_association):
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    cfg = _config(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                      store_bluemind=_store_correspondant(tmp_path), gestionnaire_cr_mistral=g)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: False)
+    vue._generer_cr_mistral(md)
+    assert len(faux_dialog_association.instances) == 1   # l'association a bien été proposée
+    assert g.lances == []
+
+
+def test_cr_reentrance_bloquee_pendant_la_proposition(qapp, machine, tmp_path, monkeypatch,
+                                                      faux_dialog_association):
+    """Le dialogue (et l'attente de sync) laissent tourner l'event loop : un 2ᵉ clic ne
+    doit pas rentrer une deuxième fois dans le flux."""
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path))
+    imbrique = []
+
+    def exec_qui_reclique(self):
+        vue._generer_cr_mistral(md)               # simule le second clic
+        imbrique.append(len(faux_dialog_association.instances))
+        return self.DialogCode.Accepted
+
+    monkeypatch.setattr(FauxDialogAssociation, "exec", exec_qui_reclique)
+    vue._generer_cr_mistral(md)
+    assert imbrique == [1]                        # aucun dialogue supplémentaire
+    assert g.lances == [md]                       # un seul lancement
+
+
+def test_cr_force_une_sync_avant_la_detection(qapp, machine, tmp_path, monkeypatch,
+                                              faux_dialog_association):
+    """La détection ne doit pas manquer un événement créé depuis la dernière synchro."""
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path),
+                                   synchro=object())
+    appels = []
+    monkeypatch.setattr(rv_module, "attendre_sync",
+                        lambda synchro, parent: (appels.append(synchro), True)[1])
+    vue._generer_cr_mistral(md)
+    assert len(appels) == 1
+    assert g.lances == [md]
+
+
+def test_pas_de_sync_si_reunion_deja_associee(qapp, machine, tmp_path, monkeypatch,
+                                              faux_dialog_association):
+    """Rien à proposer → aucune attente réseau imposée à l'utilisateur."""
+    from debrief_meet.core.bluemind.association import Association, ecrire
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    ecrire(md, Association(event_uid="e1", cal_uid="cal", titre="T",
+                           debut="2026-01-01T10:00:00", invites=[]))
+    vue, g = _vue_cr_avec_bluemind(tmp_path, machine, store=_store_correspondant(tmp_path),
+                                   synchro=object())
+    appels = []
+    monkeypatch.setattr(rv_module, "attendre_sync",
+                        lambda synchro, parent: (appels.append(synchro), True)[1])
+    vue._generer_cr_mistral(md)
+    assert appels == []
+    assert g.lances == [md]
+
+
 # ── « Ouvrir le CR » (action présente seulement si le CR existe) ────────────────
 
 def _action_par_tooltip(actions, tooltip):

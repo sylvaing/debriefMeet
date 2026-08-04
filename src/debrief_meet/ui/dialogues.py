@@ -151,7 +151,8 @@ class DialogueGabarit(CarteFlottante):
         self.zone_corps.setSpacing(12)
         self.corps.addLayout(self.zone_corps)
 
-        pied = QHBoxLayout()
+        self._pied = QHBoxLayout()
+        pied = self._pied
         pied.addStretch()
         self._bouton_annuler = QPushButton("Annuler")
         self._bouton_annuler.setObjectName("secondary")
@@ -168,6 +169,16 @@ class DialogueGabarit(CarteFlottante):
     def definir_action(self, label: str, on_click: Callable[[], None] | None = None) -> None:
         self._bouton_action.setText(label)
         self._bouton_action.clicked.connect(on_click if on_click is not None else self.accept)
+
+    def ajouter_bouton_secondaire(self, label: str, on_click: Callable[[], None]) -> QPushButton:
+        """Troisième voie, insérée **avant** « Annuler » (même style secondaire) — pour un
+        choix qui n'est ni l'action principale ni un renoncement (p. ex. « Sans
+        association » : on continue, mais sans faire ce que le dialogue propose)."""
+        bouton = QPushButton(label)
+        bouton.setObjectName("secondary")
+        bouton.clicked.connect(on_click)
+        self._pied.insertWidget(self._pied.indexOf(self._bouton_annuler), bouton)
+        return bouton
 
     def masquer_annuler(self) -> None:
         self._bouton_annuler.hide()

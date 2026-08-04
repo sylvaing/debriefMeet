@@ -207,6 +207,8 @@ vit dans `ui/`.
 ## 4. Flux de bout en bout (le bouton « Générer le CR »)
 
 1. **Pré-conditions.** Clé API configurée (sinon bouton absent).
+1bis. **Proposition d'association BlueMind** (ajouté 2026-08-04, cf. §4.1) — avant tout
+   envoi, si la réunion n'est pas encore associée et qu'un événement correspond.
 2. **Choix de la source du transcript** (logique adaptative, décision 1) :
    - **par défaut** : chercher un **transcript local** — le `.md` de la réunion (ou
      `<stem>_locuteurs.md` si présent). Non vide → c'est la source, **on saute la
@@ -248,6 +250,42 @@ vit dans `ui/`.
    (§11).
 9. **Erreurs** : toute exception `client.py` → message clair au clic (clé invalide, quota,
    429, réseau, format refusé, durée dépassée), rien d'écrit à moitié sur disque.
+
+### 4.1 Proposition d'association BlueMind avant l'envoi (2026-08-04)
+
+Le CR n'est **pas régénéré** : le clic sur « Générer le CR (Mistral) » est le dernier
+moment où l'utilisateur peut encore enrichir le contexte. Or tout ce que l'association
+BlueMind apporte est consommé par ce flux — sujet, date et participants injectés dans le
+prompt (§7.5), noms d'invités en `context_bias` Voxtral. L'association étant une action
+**séparée** (item « Associer à la réunion », icône de la colonne calendrier), rien ne
+poussait à la faire avant : les CR partaient couramment « à froid ».
+
+`ReunionView._proposer_association_avant_cr` s'exécute donc en tête de
+`_generer_cr_mistral` :
+
+1. no-op transparent si BlueMind n'est pas configuré (`store_bluemind is None`) ou si
+   `bluemind.json` existe déjà — aucune attente, aucun dialogue ;
+2. **resync forcée et attendue** (`ui/attente_sync_bluemind.attendre_sync`, `QProgressDialog`
+   indéterminé + `QEventLoop`, garde de temps 15 s) : contrairement aux autres déclencheurs
+   de sync (ouverture de fenêtre, timer, passage en mode Réunion) qui sont tous « au fil de
+   l'eau », la détection ne doit pas manquer un événement créé depuis la dernière synchro.
+   Sync en échec ou dépassement du délai → on enchaîne sur la réplique telle quelle, sans
+   message d'erreur (docs/40 §1.1) ;
+3. détection via `_evenements_correspondants_pour` (même code que la colonne calendrier et
+   le menu ⋯, docs/40 §6.1) ; aucune correspondance → on continue directement ;
+4. sinon `DialogAssociationBluemind(..., contexte_cr=True)` — variante à **trois sorties** :
+   « Associer » (écrit le sidecar, applique éventuellement le titre), « Sans association »
+   (`association_ignoree`, le CR part quand même) et « Annuler » (ni association ni CR).
+
+Deux points qui se cassent facilement en modifiant ce flux :
+
+- **Ordre association → confidentialité.** L'association change *ce qui part* chez Mistral,
+  donc elle précède la confirmation d'envoi du premier usage. Un envoi finalement refusé
+  laisse l'association en place — c'est un acquis utile, pas un effet de bord.
+- **Chemin après renommage.** « Associer » avec application du titre **renomme le dossier**
+  (docs/43 §6.1) : `lancer()` doit recevoir `dlg.chemin_md`, sinon le job travaillerait sur
+  un dossier disparu. Un drapeau `_proposition_en_cours` bloque la réentrance, l'attente de
+  sync et le dialogue laissant tourner l'event loop.
 
 ## 5. Détails API Mistral (vérifiés 2026-07-20)
 
