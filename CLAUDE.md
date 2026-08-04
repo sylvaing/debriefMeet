@@ -111,6 +111,12 @@ réunions (fixtures désormais en sous-dossier), + 6 tests d'exclusion de la ré
 active (ligne en double, cf. § ci-dessous). Le pic à 1113 incluait les 14 tests du
 module de migration, retiré depuis (docs/43 §7).
 
+Après la proposition d'association BlueMind avant le CR Mistral (docs/42 §4.1,
+2026-08-04) : **1222 passed** sur `main` (0 échec, environnement complet) — +29 tests,
+dont `test_attente_sync_bluemind.py` (nouveau) et les 3 sorties du dialogue F1 en
+variante `contexte_cr`. Mesuré à **1215 passed** en clone partiel, en édition complète
+*et* lite.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -149,7 +155,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Fix crash QThread à l'arrêt (docs/26)** | ✅ TERMINÉ (2026-07-03, 589 passed) — registre workers MLX + kill forcé, helper `arreter_thread`/`proteger_thread` |
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
-| **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK |
+| **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK. **Complété le 2026-08-04** : le flux « Générer le CR (Mistral) » **propose l'association BlueMind avant l'envoi** quand un événement correspond (le CR n'étant jamais régénéré, c'est le dernier moment pour enrichir sujet/date/participants + `context_bias` Voxtral) — resync forcée et **attendue**, dialogue F1 à 3 sorties (Associer / Sans association / Annuler), association **avant** la confirmation de confidentialité. ⚠️ « Associer » applique le titre donc **renomme le dossier** : le job doit partir sur `dlg.chemin_md`. Fusionné (`56a4462`), validé manuellement, 1222 passed. cf. docs/42 §4.1 |
 | **Édition lite Windows — enregistrement Opus + IA distante (docs/44)** | 🔄 code + tests + **builds réels + fumée** ✅ (2026-07-30) — `debriefMeet-lite-setup-0.2.0+20260730.59fa002.exe` **116 Mo** contre 159 Mo pour la complète (−27 %), **aucun modèle téléchargé** au 1ᵉʳ lancement. Gates VM : **982 passed/5 skipped** (complète) et **971/16** (lite) — l'écart de 11 dans les 2 sens = les `importorskip("huggingface_hub")`. Fumée **0 échec** sur les 2 setups, dont l'assertion décisive « ctranslate2 retiré par le passage à lite » (valide `[InstallDelete]`). **Livrée et utilisée en réel** chez une utilisatrice Windows (docs/44 §8) : CR Voxtral produit avec une vraie clé API. Embarque un bouton « Exporter les logs (.zip)… » (Préférences › Journalisation, indépendant de l'édition), dont le zip **caviarde les secrets** — un diagnostic réel avait transmis clé Mistral et token BlueMind en clair. Révélé au passage **4 bugs pré-existants** : `tzdata` absent sous Windows (récurrences BlueMind en régression DST silencieuse), 2 hypothèses macOS non gardées dans les tests, et une **tempête de reconnexions micro** (3082 en 65 min sur puce Realtek SST → micro non enregistré), corrigée **sur Windows uniquement**. Reste : chaîne de bout en bout avec du vrai contenu audio, + 4 points mineurs (docs/44 §8.7). cf. docs/44 §6-8 |
 | **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
 
@@ -259,6 +265,6 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
-| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main`** | `docs/42` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15)** | `docs/43` |
 | **Édition lite Windows (enregistrement Opus + transcription/CR Mistral) — 🔄 code+tests faits, build VM à lancer** | `docs/44` |
