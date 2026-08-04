@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from debrief_meet import __version__
 from debrief_meet.core.bluemind.store import StoreCalendrier
+from debrief_meet.core.bluemind.sync import SynchroCalendrier
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import EtatVisuel, MachineEtats
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription, PressePapiers
@@ -60,6 +61,7 @@ class FenetrePrincipale(QMainWindow):
         bluemind_declencher_sync: Callable[[], None] | None = None,
         bluemind_sur_ouverture: Callable[[], None] | None = None,
         bluemind_store: StoreCalendrier | None = None,
+        bluemind_synchro: SynchroCalendrier | None = None,
         gestionnaire_cr_mistral: GestionnaireCRMistral | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -70,7 +72,8 @@ class FenetrePrincipale(QMainWindow):
         self.resize(1000, 660)
 
         self._reunion_view = ReunionView(
-            config, machine, presse_papiers, gestionnaire, bluemind_store, gestionnaire_cr_mistral, self)
+            config, machine, presse_papiers, gestionnaire, bluemind_store, gestionnaire_cr_mistral,
+            bluemind_synchro, self)
         self._dictee_view = DicteeView(config, machine, self) \
             if edition.avec_dictee_journal() else None
         self._journal_view = JournalView(config, machine, presse_papiers, self) \

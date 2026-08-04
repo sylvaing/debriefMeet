@@ -234,6 +234,10 @@ entières exclues du matching. Plusieurs correspondances possibles → l'UI fait
   puis récapitulatif — titre, horaire, et **liste des invités cochables** (tous cochés
   par défaut ; l'utilisateur décoche les absents connus s'il veut). Boutons
   Valider / Annuler.
+- **3ᵉ déclencheur (2026-08-04)** : le flux « Générer le CR (Mistral) » propose ce même
+  dialogue avant l'envoi quand la réunion n'est pas encore associée et qu'un événement
+  correspond — variante `contexte_cr=True` à trois sorties (Associer / Sans association /
+  Annuler), précédée d'une **resync forcée et attendue**. Détail et pièges : docs/42 §4.1.
 
 ### 6.3 À la validation
 
