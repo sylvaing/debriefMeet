@@ -27,7 +27,8 @@ def _flush(vue: PreferencesView) -> None:
 # ── Sections & navigation ────────────────────────────────────────────────────
 
 def test_neuf_sections(qapp, tmp_path):
-    """8 sections historiques + « Remote IA » (interco Mistral, docs/42 §9.1)."""
+    """8 sections historiques + « IA en ligne » (interco Mistral, docs/42 §9.1) ;
+    « Modèle » est devenue « Transcription » (choix du mode, docs/45)."""
     vue = PreferencesView(_config(tmp_path))
     assert vue._pages.count() == 9
     assert vue._nav.count() == 9
@@ -384,18 +385,25 @@ def test_bouton_export_delegue_au_helper_partage(qapp, tmp_path, monkeypatch):
     assert appels == [vue]
 
 
-# ── Mode distant (docs/45) ───────────────────────────────────────────────────
+# ── Section Transcription : choix du mode (docs/45) ──────────────────────────
 
 def _titres_sections(vue) -> list[str]:
     return [vue._nav.item(i).text() for i in range(vue._nav.count())]
 
 
-def test_distant_pas_de_section_modele(qapp, tmp_path, mode_distant):
+def test_ordre_des_sections_pense_utilisateur(qapp, tmp_path):
+    """Du plus structurant (mode de transcription) au plus technique (logs)."""
     vue = PreferencesView(_config(tmp_path))
-    titres = _titres_sections(vue)
-    assert "Modèle" not in titres
-    assert "Remote IA" in titres          # c'est elle qui porte la transcription en distant
-    assert vue._pages.count() == vue._nav.count() == len(titres)
+    assert _titres_sections(vue) == [
+        "Général", "Transcription", "IA en ligne", "Audio", "BlueMind",
+        "Prompts", "Dossiers", "Raccourcis", "Journalisation"]
+
+
+def test_neuf_sections_aussi_en_distant(qapp, tmp_path, mode_distant):
+    """La nav ne varie plus avec le mode : « Sur cet ordinateur » doit rester
+    découvrable depuis le mode distant."""
+    vue = PreferencesView(_config(tmp_path))
+    assert vue._pages.count() == vue._nav.count() == 9
 
 
 def test_sections_derivees_et_index_alignes(qapp, tmp_path):
@@ -406,21 +414,84 @@ def test_sections_derivees_et_index_alignes(qapp, tmp_path):
     assert vue._pages.currentIndex() == vue._nav.count() - 1
 
 
-def test_distant_audio_sans_case_menteuse(qapp, tmp_path, mode_distant):
-    """`transcription_live` et `retention_audio` sont forcés par l'orchestrateur en
-    distant : afficher les cases serait un contrôle qui ment."""
-    vue = PreferencesView(_config(tmp_path))
-    assert not hasattr(vue, "_check_transcription_live")
-    assert not hasattr(vue, "_check_retention")
-    assert vue._check_aec is not None      # l'AEC reste (décision docs/44)
+def test_bloc_local_cache_quand_config_distante(qapp, tmp_path):
+    """Le sous-bloc local (modèle, live, rétention, diarization) suit le RADIO
+    (= la config), pas le mode figé du process."""
+    vue = PreferencesView(_config(tmp_path))          # défaut : distant
+    assert vue._radio_distant.isChecked()
+    assert vue._bloc_local.isHidden()
+    assert not vue._note_mode_distant.isHidden()      # « audio toujours conservé »
+    assert vue._check_aec is not None                 # l'AEC reste dans Audio
 
 
-def test_distant_audio_explique_la_retention_obligatoire(qapp, tmp_path, mode_distant):
-    from PySide6.QtWidgets import QLabel
+def test_bloc_local_visible_quand_config_locale(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("mode_transcription", "local")
+    vue = PreferencesView(cfg)
+    assert vue._radio_local.isChecked()
+    assert not vue._bloc_local.isHidden()
+    assert vue._note_mode_distant.isHidden()
+
+
+def test_changer_de_mode_persiste_et_bascule_le_bloc_a_chaud(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(pv_module.dialogues, "confirmer", lambda *a, **k: False)
     vue = PreferencesView(_config(tmp_path))
-    page = vue._pages.widget(_titres_sections(vue).index("Audio")).widget()
-    textes = "\n".join(l.text() for l in page.findChildren(QLabel))
-    assert "toujours conservé" in textes
+    vue._radio_local.setChecked(True)
+    assert not vue._bloc_local.isHidden()
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("mode_transcription") == "local"
+
+
+def test_accepter_le_dialogue_demande_le_redemarrage(qapp, tmp_path, monkeypatch):
+    from debrief_meet.core import redemarrage
+    monkeypatch.setattr(redemarrage, "_demande", False)
+    monkeypatch.setattr(pv_module.dialogues, "confirmer", lambda *a, **k: True)
+    quits = []
+    monkeypatch.setattr(type(qapp), "quit", lambda self: quits.append(True))
+    vue = PreferencesView(_config(tmp_path))
+    vue._radio_local.setChecked(True)
+    assert redemarrage.est_demande()
+    assert quits == [True]
+
+
+def test_refuser_le_dialogue_garde_le_reglage_sans_redemarrer(qapp, tmp_path, monkeypatch):
+    from debrief_meet.core import redemarrage
+    monkeypatch.setattr(redemarrage, "_demande", False)
+    monkeypatch.setattr(pv_module.dialogues, "confirmer", lambda *a, **k: False)
+    vue = PreferencesView(_config(tmp_path))
+    vue._radio_local.setChecked(True)
+    assert not redemarrage.est_demande()
+    assert vue._config.get("mode_transcription") == "local"
+
+
+def test_avertissement_si_distant_sans_cle_mistral(qapp, tmp_path):
+    vue = PreferencesView(_config(tmp_path))          # distant, clé vide
+    assert not vue._avertissement_mistral.isHidden()
+
+
+def test_pas_d_avertissement_avec_une_cle(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("mistral_cle_api", "sk-test")
+    vue = PreferencesView(cfg)
+    assert vue._avertissement_mistral.isHidden()
+
+
+def test_pas_d_avertissement_en_mode_local(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("mode_transcription", "local")
+    vue = PreferencesView(cfg)
+    assert vue._avertissement_mistral.isHidden()
+
+
+def test_avertissement_recalcule_a_la_navigation(qapp, tmp_path):
+    """La clé peut être saisie dans « IA en ligne » sans reconstruire la vue."""
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    assert not vue._avertissement_mistral.isHidden()
+    cfg.set("mistral_cle_api", "sk-test")
+    vue._nav.setCurrentRow(_titres_sections(vue).index("Transcription"))
+    assert vue._avertissement_mistral.isHidden()
 
 
 def test_distant_un_seul_editeur_de_raccourci(qapp, tmp_path, mode_distant):

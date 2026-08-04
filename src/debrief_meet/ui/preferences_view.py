@@ -2,8 +2,11 @@
 
 Remplace l'ancienne `FenetrePreferences` (QDialog + onglets + OK/Annuler) par un
 widget embarquable : chaque champ persiste immédiatement (pas de bouton Appliquer).
-Porte à l'identique la logique métier (7 sections, validation des raccourcis,
-téléchargement de modèle à chaud, assistant diarization).
+
+Depuis docs/45, les 9 sections sont présentes quel que soit le mode de
+transcription ; c'est la section « Transcription » qui porte le choix du mode
+(distant/local) et les réglages du moteur local, montrés/cachés à chaud. Le mode
+effectif étant figé au démarrage, en changer propose un redémarrage.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ from typing import Callable
 from PySide6.QtCore import QRectF, QSize, Qt, QThread, QTimer, Slot
 from PySide6.QtGui import QFont, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -29,6 +33,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
@@ -38,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debrief_meet.core import mode_transcription
+from debrief_meet.core import mode_transcription, redemarrage
 from debrief_meet.core import raccourcis as raccourcis_core
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
@@ -251,24 +256,24 @@ class PreferencesView(QWidget):
         """(titre, icône Phosphor, constructeur) — source unique de la nav et de la pile.
 
         Méthode et non constante de module : les constructeurs sont des méthodes liées
-        (c'est précisément pourquoi il y avait deux tuples parallèles auparavant). Lue à
-        la construction de la vue, donc le mode est pris en compte sans rebuild.
+        (c'est précisément pourquoi il y avait deux tuples parallèles auparavant).
+
+        Les 9 sections sont inconditionnelles (docs/45) : le mode ne fait varier que le
+        CONTENU de « Transcription » (sous-bloc local montré/caché) — jamais la nav,
+        pour que « Sur cet ordinateur » reste découvrable depuis le mode distant.
+        Ordre pensé utilisateur : du plus structurant (mode) au plus technique (logs).
         """
-        sections: list[tuple[str, str, Callable[[], QWidget]]] = []
-        if mode_transcription.avec_transcription_locale():
-            # Sélecteur de modèle Whisper : sans objet en distant (aucun moteur construit).
-            sections.append(("Modèle", "brain", self._section_modele))
-        sections += [
-            ("Audio", "waveform", self._section_audio),
-            ("Dossiers", "folders", self._section_dossiers),
-            ("Prompts", "chat-text", self._section_prompts),
+        return [
             ("Général", "sliders-horizontal", self._section_general),
-            ("Raccourcis", "keyboard", self._section_raccourcis),
+            ("Transcription", "file-text", self._section_transcription),
+            ("IA en ligne", "brain", self._section_remote_ia),
+            ("Audio", "waveform", self._section_audio),
             ("BlueMind", "list", self._section_bluemind),
-            ("Remote IA", "brain", self._section_remote_ia),
+            ("Prompts", "chat-text", self._section_prompts),
+            ("Dossiers", "folders", self._section_dossiers),
+            ("Raccourcis", "keyboard", self._section_raccourcis),
             ("Journalisation", "bug", self._section_logs),
         ]
-        return sections
 
     def _enrober_scroll(self, contenu: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -281,18 +286,90 @@ class PreferencesView(QWidget):
     def _on_section_change(self, index: int) -> None:
         if index >= 0:
             self._pages.setCurrentIndex(index)
+            # La clé Mistral a pu être saisie dans « IA en ligne » entre-temps —
+            # l'avertissement de la section Transcription se recalcule à chaque
+            # navigation (peu coûteux, toujours juste).
+            if hasattr(self, "_avertissement_mistral"):
+                self._maj_avertissement_mistral()
 
-    # ── Section Modèle ─────────────────────────────────────────────────────────
+    # ── Section Transcription (choix du mode, docs/45) ─────────────────────────
 
-    def _section_modele(self) -> QWidget:
+    def _section_transcription(self) -> QWidget:
+        """Le réglage structurant de l'app : distant (Mistral) ou local (Whisper).
+
+        Le radio reflète et écrit la CONFIG ; le mode effectif du process reste
+        celui figé au démarrage (`mode_transcription`), d'où le dialogue de
+        redémarrage. Le sous-bloc local suit le radio à chaud (découvrabilité),
+        pas le mode figé.
+        """
         w = QWidget()
-        w.setMaximumWidth(540)
+        w.setMaximumWidth(600)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        lay.addWidget(_libelle_champ("Modèle Whisper"))
+        lay.addWidget(_libelle_champ("Comment transcrire vos réunions"))
 
+        self._radio_distant = QRadioButton("Via l'IA en ligne (Mistral)")
+        lay.addWidget(self._radio_distant)
+        note_distant = _note(
+            "L'audio est enregistré, puis transcrit et résumé par l'API Mistral à la "
+            "demande. Aucun téléchargement, fonctionne sur toutes les machines — "
+            "nécessite une clé API (section « IA en ligne »).")
+        note_distant.setContentsMargins(24, 0, 0, 0)
+        lay.addWidget(note_distant)
+
+        lay.addSpacing(6)
+        self._radio_local = QRadioButton("Sur cet ordinateur")
+        lay.addWidget(self._radio_local)
+        note_local = _note(
+            "La transcription tourne en local (modèle Whisper, téléchargé au premier "
+            "usage) : rien ne quitte la machine, et les modes Dictée et Journal "
+            "deviennent disponibles. Demande un ordinateur récent.")
+        note_local.setContentsMargins(24, 0, 0, 0)
+        lay.addWidget(note_local)
+
+        # Garde-fou : en distant sans clé Mistral, l'app enregistre mais ne peut ni
+        # transcrire ni produire de CR — le dire ici, au moment du choix.
+        self._avertissement_mistral = _note(
+            "⚠ Aucune clé API Mistral n'est renseignée : les réunions seront "
+            "enregistrées mais ne pourront pas être transcrites. Renseignez la clé "
+            "dans la section « IA en ligne ».")
+        self._avertissement_mistral.setStyleSheet(
+            f"color: {C.INK700}; background: {C.NEUTRAL_BG}; border-radius: 7px;"
+            "padding: 9px 11px; font-size: 12px;")
+        lay.addSpacing(8)
+        lay.addWidget(self._avertissement_mistral)
+
+        self._note_mode_distant = _note(
+            "L'audio des réunions est toujours conservé : c'est lui qui sert à la "
+            "transcription et au compte-rendu via l'IA en ligne (Historique › "
+            "Générer le CR). Supprimable réunion par réunion depuis l'Historique.")
+        lay.addWidget(self._note_mode_distant)
+
+        lay.addSpacing(10)
+        self._bloc_local = self._construire_bloc_local()
+        lay.addWidget(self._bloc_local)
+
+        # État initial depuis la config, AVANT de connecter : sinon setChecked
+        # déclencherait le dialogue de redémarrage à la construction de la vue.
+        local = self._config.get("mode_transcription") == mode_transcription.LOCAL
+        (self._radio_local if local else self._radio_distant).setChecked(True)
+        self._appliquer_visibilite_mode(local)
+        self._radio_local.toggled.connect(self._sur_mode_choisi)
+
+        lay.addStretch()
+        return w
+
+    def _construire_bloc_local(self) -> QWidget:
+        """Réglages du moteur local : modèle Whisper, transcription live, rétention,
+        diarization — regroupés ici (ex-sections « Modèle » et moitié d'« Audio »)."""
+        bloc = QWidget()
+        lay = QVBoxLayout(bloc)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        lay.addWidget(_libelle_champ("Modèle Whisper"))
         self._combo_modele = QComboBox()
         self._combo_modele.setFont(QFont(MONO, 13.5))
         for nom in NOMS_LOGIQUES:
@@ -310,8 +387,61 @@ class PreferencesView(QWidget):
             "large-v3 : qualité maximale (≈ 3 Go).\n"
             "Le modèle est téléchargé au premier usage."
         ))
-        lay.addStretch()
-        return w
+
+        lay.addSpacing(10)
+        self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
+        self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
+        self._check_transcription_live.setToolTip(
+            "Décoché : la réunion enregistre seulement l'audio ; la transcription se lance "
+            "ensuite à la demande depuis l'Historique (l'audio est alors toujours conservé)."
+        )
+        self._check_transcription_live.toggled.connect(
+            lambda c: self._definir("transcription_live", c))
+        lay.addWidget(self._check_transcription_live)
+
+        lay.addSpacing(2)
+        self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
+        self._check_retention.setChecked(bool(self._config.get("retention_audio")))
+        self._check_retention.setToolTip(
+            "Garde l'audio des 2 pistes à côté du compte-rendu pour pouvoir générer "
+            "« qui a parlé » plus tard depuis l'Historique. Supprimable par réunion."
+        )
+        self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
+        lay.addWidget(self._check_retention)
+
+        lay.addSpacing(6)
+        lay.addWidget(self._construire_ligne_diarization())
+        return bloc
+
+    def _appliquer_visibilite_mode(self, local: bool) -> None:
+        self._bloc_local.setVisible(local)
+        self._note_mode_distant.setVisible(not local)
+        self._maj_avertissement_mistral()
+
+    def _maj_avertissement_mistral(self) -> None:
+        """Relue aussi à chaque retour sur la section (la clé peut avoir été saisie
+        dans « IA en ligne » entre-temps)."""
+        self._avertissement_mistral.setVisible(
+            self._radio_distant.isChecked()
+            and not str(self._config.get("mistral_cle_api") or "").strip())
+
+    def _sur_mode_choisi(self, _local: bool) -> None:
+        nouveau = (mode_transcription.LOCAL if self._radio_local.isChecked()
+                   else mode_transcription.DISTANT)
+        if nouveau == self._config.get("mode_transcription"):
+            return
+        self._definir("mode_transcription", nouveau)
+        self._appliquer_visibilite_mode(nouveau == mode_transcription.LOCAL)
+        if dialogues.confirmer(
+                self, titre="Redémarrage nécessaire",
+                description="Le mode de transcription est enregistré ; il prendra effet "
+                            "au prochain démarrage de debriefMeet (moteur, menus et "
+                            "raccourcis sont mis en place au lancement).\n\n"
+                            "Redémarrer maintenant ?",
+                label_action="Redémarrer maintenant", icone="arrows-clockwise",
+                intention=dialogues.Intention.ACCENT):
+            redemarrage.demander()
+            QApplication.instance().quit()
 
     def _sur_modele_change(self, _index: int) -> None:
         ancien = self._config.get("modele")
@@ -366,22 +496,8 @@ class PreferencesView(QWidget):
         bloc_intervalle.addWidget(self._spin_intervalle)
         lay.addLayout(bloc_intervalle)
 
-        bloc_checks = QVBoxLayout()
-        bloc_checks.setSpacing(11)
-
-        # En mode distant l'orchestrateur force l'audio seul (core/reunion.py) : afficher
-        # la case serait un contrôle menteur.
-        if mode_transcription.avec_transcription_locale():
-            self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
-            self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
-            self._check_transcription_live.setToolTip(
-                "Décoché : la réunion enregistre seulement l'audio ; la transcription se lance "
-                "ensuite à la demande depuis l'Historique (l'audio est alors toujours conservé)."
-            )
-            self._check_transcription_live.toggled.connect(
-                lambda c: self._definir("transcription_live", c))
-            bloc_checks.addWidget(self._check_transcription_live)
-
+        # `transcription_live`, `retention_audio` et la diarization vivent dans la
+        # section Transcription (docs/45) : ici, uniquement le matériel et la capture.
         self._check_aec = QCheckBox("Annuler l'écho des haut-parleurs (sans casque)")
         self._check_aec.setChecked(bool(self._config.get("aec_actif")))
         self._check_aec.setToolTip(
@@ -389,29 +505,8 @@ class PreferencesView(QWidget):
             "la voix des participants. Prend effet à la prochaine réunion."
         )
         self._check_aec.toggled.connect(lambda c: self._definir("aec_actif", c))
-        bloc_checks.addWidget(self._check_aec)
+        lay.addWidget(self._check_aec)
 
-        if mode_transcription.avec_transcription_locale():
-            self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
-            self._check_retention.setChecked(bool(self._config.get("retention_audio")))
-            self._check_retention.setToolTip(
-                "Garde l'audio des 2 pistes à côté du compte-rendu pour pouvoir générer "
-                "« qui a parlé » plus tard depuis l'Historique. Supprimable par réunion."
-            )
-            self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
-            bloc_checks.addWidget(self._check_retention)
-        lay.addLayout(bloc_checks)
-
-        if mode_transcription.avec_transcription_locale():
-            lay.addWidget(self._construire_ligne_diarization())
-        else:
-            # Rétention non négociable en mode distant : c'est l'audio qui est envoyé à
-            # l'IA distante. Le contrôle par réunion reste dans l'Historique (« Supprimer
-            # l'audio (garde le débrief) »).
-            lay.addWidget(_note(
-                "L'audio des réunions est toujours conservé : c'est lui qui sert à la "
-                "transcription et au compte-rendu via l'IA distante (Historique › "
-                "Générer le CR). Supprimable réunion par réunion depuis l'Historique."))
         lay.addStretch()
         return w
 
@@ -737,9 +832,9 @@ class PreferencesView(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
 
-        # Un éditeur par action de l'édition courante (`raccourcis.actions()` — Dictée et
-        # Journal absentes en lite). Dict et non attributs nommés : la réinitialisation et
-        # la détection de doublon en dérivent, sans table codée en dur à re-synchroniser.
+        # Un éditeur par action du mode courant (`raccourcis.actions()` — Dictée et
+        # Journal absentes en distant). Dict et non attributs nommés : la réinitialisation
+        # et la détection de doublon en dérivent, sans table codée en dur à re-synchroniser.
         self._edits_raccourcis: dict[str, QKeySequenceEdit] = {}
         for cle, _defaut, nom in raccourcis_core.actions():
             edit = self._creer_edit_raccourci(cle, nom)
@@ -1020,7 +1115,7 @@ class PreferencesView(QWidget):
         if self._bluemind_reinitialiser_sync is not None:
             self._bluemind_reinitialiser_sync()
 
-    # ── Section Remote IA (interco Mistral, docs/42 §9.1) ───────────────────────
+    # ── Section IA en ligne (interco Mistral, docs/42 §9.1) ─────────────────────
 
     def _section_remote_ia(self) -> QWidget:
         return RemoteIAView(self._config, self)

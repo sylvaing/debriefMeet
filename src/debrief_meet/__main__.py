@@ -430,7 +430,15 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         QTimer.singleShot(100, lambda: _executer_commande(commande_initiale))
 
     logger.info("debriefMeet démarré")
-    sys.exit(app.exec())
+    code = app.exec()
+
+    # Relance après changement de mode (docs/45) — APRÈS le retour d'exec() (les
+    # aboutToQuit ont tourné, threads joints) et jamais avant : mutex Windows et
+    # QLocalServer IPC vivent jusqu'à la mort du process, cf. core/redemarrage.
+    from debrief_meet.core import redemarrage
+    if redemarrage.est_demande():
+        redemarrage.relancer()
+    sys.exit(code)
 
 
 if __name__ == "__main__":
