@@ -174,7 +174,12 @@ def test_terminer_attend_un_worker_occupe_rendu_en_retard():
     ecoule = time.monotonic() - debut
 
     assert worker.termine
-    assert ecoule >= 0.1  # a bien attendu le retour du worker
+    # Marge volontaire : `threading.Timer(0.1)` peut se déclencher très légèrement AVANT
+    # 100 ms selon la résolution d'horloge de l'OS — la gate VM Windows a mesuré
+    # 0,099963 s le 2026-08-04, soit un échec pour 0,04 ms. Ce que le test doit
+    # distinguer, c'est « a attendu » (~0,1 s) de « n'a pas attendu » (~0 s) : 50 ms de
+    # seuil tranchent sans ambiguïté, une comparaison exacte au délai demandé non.
+    assert ecoule >= 0.05, "terminer() n'a pas attendu le retour du worker"
 
 
 # ── Registre des workers + arrêt forcé (docs/26) ─────────────────────────────
