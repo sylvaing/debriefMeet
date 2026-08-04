@@ -378,6 +378,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         orch.etat_visuel_change.connect(fenetre.definir_etat_visuel)
     orch_reunion.micro_perdu.connect(tray.notifier_micro_perdu)
     orch_reunion.micro_retabli.connect(tray.notifier_micro_retabli)
+    orch_reunion.micro_muet.connect(tray.notifier_micro_muet)
     # `rien_entendu` n'existe que sur Dictée et Journal — connexions individuelles, une
     # boucle aveugle sur `orchestrateurs` lèverait sur OrchestrateurReunion.
     if orch_dictee is not None:

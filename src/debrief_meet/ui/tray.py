@@ -279,6 +279,15 @@ class IconeTray(QSystemTrayIcon):
         self._derniere_notif = None
         self.showMessage("Micro perdu", message, icone_wavemark_pour_etat(EtatVisuel.ERREUR), 8000)
 
+    def notifier_micro_muet(self, message: str) -> None:
+        """Réunion enregistrée sans un son de micro (docs/44 §8.7) — le seul canal qui
+        prévienne l'utilisateur avant qu'il ne découvre un compte-rendu vide."""
+        if not self._config.get("notifications"):
+            return
+        self._derniere_notif = None
+        self.showMessage("Aucun son capté", message,
+                         icone_wavemark_pour_etat(EtatVisuel.ERREUR), 12000)
+
     def notifier_micro_retabli(self, message: str) -> None:
         if not self._config.get("notifications"):
             return

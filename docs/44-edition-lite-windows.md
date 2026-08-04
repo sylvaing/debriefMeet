@@ -491,14 +491,27 @@ mais **ce n'était pas le problème** et rien n'est à corriger là.
 
 ### 8.7 Ce qui reste ouvert
 
-- **Sélecteur de micro ambigu** — `ui/preferences_view.py` n'affiche que `d['name']`,
-  donc le même casque apparaît **trois fois à l'identique** (MME, DirectSound, WASAPI),
-  plus deux entrées `Input (@System32\drivers\bthhfenum.sys…)`. C'est ce qui a rendu le
-  contournement impraticable et poussé à modifier Windows à la place. Ajouter l'API audio
-  au libellé (`Headset (casque Bluetooth) — WASAPI`) le rendrait utilisable.
-- **Suivre le périphérique par défaut quand il change** — avec `micro_index=None`, l'app
-  n'a pas suivi la bascule vers le casque. Chantier distinct, et **la question macOS se
-  repose** : `micro_index=None` y fonctionne, donc ne pas généraliser sans données macOS.
+- ✅ **Sélecteur de micro ambigu** — corrigé le 2026-08-04 : le libellé porte l'API audio
+  (`Headset (casque Bluetooth) — Windows WASAPI`), et « Périphérique par défaut »
+  indique ce qu'il résout réellement (`(actuellement : Microphone Array…)`). Avant, le
+  même casque apparaissait **trois fois à l'identique**, ce qui rendait le contournement
+  impraticable et poussait à modifier Windows à la place.
+- ✅ **Avertissement « aucun son capté »** — ajouté le 2026-08-04. À la FIN d'une réunion
+  dont la piste micro était **intégralement** muette, notification + WARNING. Déclencheur
+  volontairement conservateur : jamais sur une tranche isolée (une tranche muette est
+  banale), donc pas de faux positif possible — c'est ce qui le rend sans risque sur macOS.
+- ❌ **« Suivre le périphérique par défaut » — HYPOTHÈSE INFIRMÉE, ne pas la ressortir.**
+  J'avais écrit ici que l'app ne suivait pas la bascule vers le casque. **C'est faux** :
+  `_ouvrir_flux(None)` laisse PortAudio résoudre le défaut à chaque ouverture, donc l'app
+  suit fidèlement le défaut Windows à chaque démarrage de réunion et à chaque
+  reconnexion. Preuve dans les logs : le casque était **déjà dans la liste** à 16:53:37
+  et l'app a ouvert le Realtek à 16:54:22 ; après changement du réglage **Windows**, elle
+  a ouvert le casque à 17:10:24. Le défaut Windows n'était simplement pas le casque —
+  ce n'est pas un défaut de l'app. Seul cas non couvert : un changement de défaut
+  *pendant* une réunion à liste constante, déjà rattrapé en 30 s par le watchdog
+  « tranche muette ». Le coder signifierait toucher le code partagé le plus risqué pour
+  macOS pour un gain marginal : **abandonné au profit de l'avertissement ci-dessus**, qui
+  traite le dommage réel (plusieurs réunions muettes sans que personne ne le sache).
 - **Sync BlueMind cassée** — `'NoneType' object has no attribute 'get'` avalé par le
   `except` silencieux de docs/40 §1.1, alors que l'interco **est** configurée. Rien à voir
   avec le micro ; à traiter séparément.

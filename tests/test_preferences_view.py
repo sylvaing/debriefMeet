@@ -435,3 +435,57 @@ def test_lite_un_seul_editeur_de_raccourci(qapp, tmp_path, edition_lite):
     vue = PreferencesView(_config(tmp_path))
     assert list(vue._edits_raccourcis) == ["raccourci_reunion"]
     vue._reinitialiser_raccourcis()       # ne doit pas lever
+
+
+# ── Sélecteur de micro : libellés distinguables (docs/44 §8.7) ────────────────
+
+def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch):
+    """Le même casque Bluetooth apparaissait 3 fois à l'identique (MME, DirectSound,
+    WASAPI) — choix impossible pour l'utilisatrice, constaté le 2026-08-04."""
+    import sounddevice as sd
+
+    peripheriques = [
+        {"name": "Headset (casque Bluetooth)", "max_input_channels": 1, "hostapi": 0},
+        {"name": "Headset (casque Bluetooth)", "max_input_channels": 2, "hostapi": 1},
+        {"name": "Haut-parleurs", "max_input_channels": 0, "hostapi": 1},   # sortie : exclue
+    ]
+    apis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+    monkeypatch.setattr(sd, "query_devices", lambda i=None: peripheriques[i] if i is not None else peripheriques)
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: apis[i] if i is not None else apis)
+
+    vue = PreferencesView(_config(tmp_path))
+    libelles = [vue._combo_micro.itemText(i) for i in range(vue._combo_micro.count())]
+
+    assert "Headset (casque Bluetooth) — MME" in libelles
+    assert "Headset (casque Bluetooth) — Windows WASAPI" in libelles
+    assert not any("Haut-parleurs" in l for l in libelles), "une sortie ne doit pas être listée"
+    assert len(set(libelles)) == len(libelles), "aucun libellé ne doit être ambigu"
+
+
+def test_selecteur_micro_survit_a_une_api_illisible(qapp, tmp_path, monkeypatch):
+    """Le suffixe est décoratif : son échec ne doit pas vider le sélecteur."""
+    import sounddevice as sd
+
+    monkeypatch.setattr(sd, "query_devices",
+                        lambda i=None: [{"name": "Micro", "max_input_channels": 1, "hostapi": 0}]
+                        if i is None else {"name": "Micro", "max_input_channels": 1, "hostapi": 0})
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: (_ for _ in ()).throw(RuntimeError("boum")))
+
+    vue = PreferencesView(_config(tmp_path))
+    libelles = [vue._combo_micro.itemText(i) for i in range(vue._combo_micro.count())]
+    assert "Micro" in libelles
+
+
+def test_defaut_indique_le_peripherique_resolu(qapp, tmp_path, monkeypatch):
+    """« par défaut » ne disait pas ce qu'il résolvait — c'est ce qui a masqué le fait
+    qu'un micro interne était enregistré alors qu'un casque était branché."""
+    import sounddevice as sd
+
+    monkeypatch.setattr(sd, "query_devices",
+                        lambda i=None: {"name": "Microphone Array (Realtek)", "max_input_channels": 4, "hostapi": 0}
+                        if i is not None else [])
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: {"name": "MME"})
+    monkeypatch.setattr(sd.default, "device", [3, 4], raising=False)
+
+    vue = PreferencesView(_config(tmp_path))
+    assert "Microphone Array (Realtek)" in vue._combo_micro.itemText(0)

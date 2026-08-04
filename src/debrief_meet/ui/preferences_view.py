@@ -74,6 +74,35 @@ def _a_modificateur_suffisant(texte_portable: str) -> bool:
     return bool(set(texte_portable.split("+")) & _MODIFICATEURS_SUFFISANTS)
 
 
+def _suffixe_api(peripherique: dict) -> str:
+    """« — WASAPI », « — MME »… Sans cette précision, un même micro apparaît plusieurs
+    fois avec un libellé IDENTIQUE (constaté chez une utilisatrice le 2026-08-04 : le
+    même casque Bluetooth listé 3 fois via MME, DirectSound et WASAPI). Le choix
+    devenait impossible, alors que ces pilotes ne se comportent pas pareil."""
+    try:
+        import sounddevice as sd
+
+        nom = sd.query_hostapis(peripherique["hostapi"])["name"]
+    except Exception:  # noqa: BLE001 — libellé décoratif, jamais bloquant
+        return ""
+    return f" — {nom}" if nom else ""
+
+
+def _suffixe_defaut_micro() -> str:
+    """« (actuellement : Microphone Array…) » — rend visible ce que « par défaut »
+    résout réellement. C'est ce qui manquait pour comprendre qu'un micro interne était
+    enregistré alors qu'un casque était branché."""
+    try:
+        import sounddevice as sd
+
+        index = sd.default.device[0]
+        if index is None or index < 0:
+            return ""
+        return f" (actuellement : {sd.query_devices(index)['name']})"
+    except Exception:  # noqa: BLE001 — libellé décoratif, jamais bloquant
+        return ""
+
+
 def _note(texte: str) -> QLabel:
     lab = QLabel(texte)
     lab.setWordWrap(True)
@@ -307,12 +336,12 @@ class PreferencesView(QWidget):
         bloc_micro.addWidget(_libelle_champ("Microphone"))
         self._combo_micro = QComboBox()
         self._combo_micro.setMaximumWidth(600)
-        self._combo_micro.addItem("Périphérique par défaut", None)
+        self._combo_micro.addItem(f"Périphérique par défaut{_suffixe_defaut_micro()}", None)
         try:
             import sounddevice as sd
             for i, d in enumerate(sd.query_devices()):
                 if d["max_input_channels"] > 0:
-                    self._combo_micro.addItem(f"{d['name']}", i)
+                    self._combo_micro.addItem(f"{d['name']}{_suffixe_api(d)}", i)
         except Exception:
             pass
         micro_idx = self._config.get("micro_index")

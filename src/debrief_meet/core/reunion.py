@@ -90,6 +90,11 @@ class OrchestrateurReunion(QObject):
     etat_visuel_change = Signal(object)
     micro_perdu = Signal(str)
     micro_retabli = Signal(str)
+    # Émis à la FIN d'une réunion dont la piste micro était intégralement muette
+    # (docs/44 §8.7). Déclencheur volontairement conservateur — jamais sur une tranche
+    # isolée : un enregistrement entièrement silencieux ne peut pas être un faux
+    # positif, alors qu'une tranche muette est banale (personne ne parle).
+    micro_muet = Signal(str)
     reunion_demarree = Signal(object)  # Path du .md créé (docs/40 §8 — démarrage pré-associé)
 
     def __init__(
@@ -164,6 +169,7 @@ class OrchestrateurReunion(QObject):
         self._debut = datetime.now()
         self._avec_micro = False
         self._avec_systeme = False
+        self._micro_a_capte_du_son = False
         evt_pre_associe = self._evenement_pre_associe
         self._evenement_pre_associe = None
         try:
@@ -291,11 +297,13 @@ class OrchestrateurReunion(QObject):
             if self._enregistreur is not None:
                 self._enregistreur.terminer()
                 self._enregistreur = None
+            self._avertir_si_micro_muet()
             self.etat_visuel_change.emit(EtatVisuel.REPOS)
             return
 
         self.etat_visuel_change.emit(EtatVisuel.TRANSCRIPTION)
         audio_micro, audio_systeme, sr_micro = self._capturer_tranche()
+        self._avertir_si_micro_muet()
         offset_s = (datetime.now() - self._debut).total_seconds() if self._debut else 0.0
         self._enregistrer_duree()
 
@@ -305,6 +313,26 @@ class OrchestrateurReunion(QObject):
             self._enregistreur = None
 
         self._lancer_worker(audio_micro, audio_systeme, sr_micro, offset_s, finale=True)
+
+    def _avertir_si_micro_muet(self) -> None:
+        """Réunion terminée sans un seul échantillon micro au-dessus du seuil → on le dit.
+
+        Motivation (docs/44 §8.7) : une utilisatrice a enregistré plusieurs réunions
+        entièrement muettes sans que rien ne l'avertisse — Windows dirigeait l'entrée
+        vers un micro interne inactif pendant qu'elle portait un casque Bluetooth. Le
+        `RMS=0.0000` n'existait que dans les logs, et il a fallu trois jours et un
+        diagnostic pour le voir.
+
+        Ne se déclenche que si le micro était censé fonctionner : ni quand il a été
+        perdu en route (`micro_perdu` a déjà prévenu, et `_avec_micro` est retombé à
+        False), ni quand il n'y en avait pas au démarrage."""
+        if not self._avec_micro or self._micro_a_capte_du_son:
+            return
+        logger.warning("Piste micro entièrement silencieuse sur cette réunion — "
+                       "périphérique d'entrée probablement inactif")
+        self.micro_muet.emit(
+            "Aucun son capté sur le micro — vérifiez le périphérique "
+            "dans Préférences › Audio")
 
     def _enregistrer_duree(self) -> None:
         """Stocke la durée écoulée dans le `.md` (titre/durée de l'Historique, docs/14)."""
@@ -340,6 +368,13 @@ class OrchestrateurReunion(QObject):
             from debrief_meet.core.aec import SR_AEC
             audio_micro = self._aec.pousser(audio_micro, audio_systeme)
             sr_micro = SR_AEC
+
+        # Le jugement porte sur l'audio **tel qu'il part sur le disque** (donc après AEC) :
+        # c'est celui-là que l'utilisateur écoutera et que Voxtral transcrira.
+        if self._avec_micro and len(audio_micro):
+            from debrief_meet.core.audio import SEUIL_RMS_SILENCE, rms
+            if rms(audio_micro) >= SEUIL_RMS_SILENCE:
+                self._micro_a_capte_du_son = True
 
         # Rétention : on streame les 2 pistes en 16 kHz mono (Moi = micro nettoyé).
         if self._enregistreur is not None:

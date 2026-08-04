@@ -841,3 +841,73 @@ def test_lite_sans_moteur_ne_crashe_pas_a_l_arret(qapp, tmp_path, edition_lite):
     machine.toggle_reunion()
     machine.toggle_reunion()
     orch.terminer()
+
+
+# ── Avertissement « micro muet » (docs/44 §8.7) ──────────────────────────────
+
+def _capte(machine, tmp_path, echantillons, **kw):
+    """Lance et arrête une réunion avec un micro fournissant `echantillons`.
+    Retourne les messages `micro_muet` émis."""
+    micro = MicroFake(echantillons=echantillons)
+    orch, *_ = _creer(machine, tmp_path, micro=micro, transcription_live=False, **kw)
+    messages = []
+    orch.micro_muet.connect(messages.append)
+    machine.toggle_reunion()
+    machine.toggle_reunion()
+    return messages
+
+
+def test_micro_muet_avertit_en_fin_de_reunion(qapp, tmp_path):
+    """Le cas réel : plusieurs réunions enregistrées entièrement muettes sans que rien
+    ne prévienne (Windows dirigeait l'entrée vers un micro interne inactif)."""
+    machine = MachineEtats()
+    messages = _capte(machine, tmp_path, np.zeros(16_000, dtype=np.float32))
+    assert len(messages) == 1
+    assert "Préférences" in messages[0]
+
+
+def test_micro_audible_n_avertit_pas(qapp, tmp_path):
+    """Garde-fou contre le faux positif — c'est le risque principal de cet avertissement."""
+    machine = MachineEtats()
+    assert _capte(machine, tmp_path, np.ones(16_000, dtype=np.float32) * 0.2) == []
+
+
+def test_un_seul_passage_audible_suffit(qapp, tmp_path):
+    """Une tranche muette est banale (personne ne parle) : seul un enregistrement
+    INTÉGRALEMENT silencieux doit déclencher l'avertissement."""
+    machine = MachineEtats()
+    audible = np.concatenate([
+        np.zeros(16_000, dtype=np.float32),
+        np.ones(1_600, dtype=np.float32) * 0.2,
+        np.zeros(16_000, dtype=np.float32),
+    ])
+    assert _capte(machine, tmp_path, audible) == []
+
+
+def test_sans_micro_aucun_avertissement(qapp, tmp_path):
+    """Pas de micro au démarrage : `micro_perdu` a déjà prévenu, ne pas doubler."""
+    machine = MachineEtats()
+    micro = MicroFake(lever_au_demarrage=RuntimeError("PortAudioError -9986"))
+    orch, *_ = _creer(machine, tmp_path, micro=micro, transcription_live=False)
+    messages = []
+    orch.micro_muet.connect(messages.append)
+    machine.toggle_reunion()
+    machine.toggle_reunion()
+    assert messages == []
+
+
+def test_micro_muet_avertit_aussi_en_mode_live(qapp, qtbot, tmp_path):
+    """Le mode live a un chemin d'arrêt distinct (état TRANSCRIPTION) — il ne doit pas
+    perdre l'avertissement au passage."""
+    machine = MachineEtats()
+    messages = _capte(machine, tmp_path, np.zeros(16_000, dtype=np.float32))
+    assert len(messages) == 1
+    machine2 = MachineEtats()
+    micro = MicroFake(echantillons=np.zeros(16_000, dtype=np.float32))
+    orch, *_ = _creer(machine2, tmp_path / "live", micro=micro, transcription_live=True,
+                      delai_termine_ms=50)
+    recus = []
+    orch.micro_muet.connect(recus.append)
+    machine2.toggle_reunion()
+    machine2.toggle_reunion()
+    qtbot.waitUntil(lambda: len(recus) == 1, timeout=3000)
