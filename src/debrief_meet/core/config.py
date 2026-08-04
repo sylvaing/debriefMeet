@@ -22,6 +22,16 @@ _WINDOWS = sys.platform == "win32"
 
 _DEFAUTS: dict[str, Any] = {
     "version": VERSION_COURANTE,
+    # Mode de transcription (docs/45) : "distant" (Opus + Mistral/Voxtral, défaut) ou
+    # "local" (Whisper embarqué + Dictée/Journal + diarization). Lu une fois au
+    # démarrage par core/mode_transcription.initialiser() — changer de mode propose
+    # un redémarrage.
+    "mode_transcription": "distant",
+    # L'écran de bienvenue (choix du mode au premier lancement) a-t-il été montré ?
+    # Absent des config.json antérieurs à docs/45 → les installations existantes le
+    # voient une fois après la mise à jour : personne ne perd la transcription locale
+    # sans un choix explicite.
+    "accueil_fait": False,
     "modele": "large-v3-turbo",
     "langue": None,
     "micro_index": None,
