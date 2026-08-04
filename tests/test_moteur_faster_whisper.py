@@ -9,6 +9,7 @@ import threading
 import time
 
 import numpy as np
+import pytest
 
 from debrief_meet.platform.windows.moteur_faster_whisper import (
     MoteurFasterWhisper,
@@ -237,12 +238,18 @@ def test_coeurs_physiques_bornes_au_moins_un(monkeypatch):
 # ── Téléchargement de modèles (download_root forcé, docs/34 §1.3) ───────────
 
 def test_est_telecharge_true_quand_snapshot_present(monkeypatch, tmp_path):
+    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
+    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    pytest.importorskip("huggingface_hub")
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **kw: str(tmp_path))
     assert MoteurFasterWhisper().est_telecharge("large-v3") is True
 
 
 def test_est_telecharge_false_si_absent(monkeypatch):
+    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
+    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    pytest.importorskip("huggingface_hub")
     import huggingface_hub
 
     def _leve(*a, **kw):
@@ -253,6 +260,9 @@ def test_est_telecharge_false_si_absent(monkeypatch):
 
 
 def test_telecharger_modele_force_le_cache_dir_et_relaie_la_progression(monkeypatch, tmp_path):
+    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
+    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    pytest.importorskip("huggingface_hub")
     import huggingface_hub
     import platformdirs
     monkeypatch.setattr(platformdirs, "user_data_dir", lambda *a, **kw: str(tmp_path))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 import respx
 
 from debrief_meet.core.bluemind.client import ClientBlueMind
@@ -244,3 +245,98 @@ def test_terminer_sans_thread_ne_leve_pas(qapp, tmp_path):
     cfg = _config_bluemind(tmp_path, configuree=False)
     sync = SynchroCalendrier(cfg, store=StoreCalendrier(tmp_path / "bm.sqlite3"))
     sync.terminer()  # ne doit pas lever
+
+
+# ── Items à valeur nulle (docs/40 §5.3) ──────────────────────────────────────
+#
+# Diagnostiqué en réel le 2026-08-03 : la synchro de Alix échouait à CHAQUE tentative
+# sur « 'NoneType' object has no attribute 'get' », avalé par le except silencieux.
+# Cause : `dict.get(cle, defaut)` ne substitue le défaut que si la clé est ABSENTE — un
+# `"value": null` renvoyé par BlueMind passait donc None à la ligne suivante.
+
+_ITEMS_NULS = [
+    pytest.param({"uid": "x", "value": None}, id="value-null"),
+    pytest.param({"uid": "x", "value": {"main": None}}, id="main-null"),
+    pytest.param({"uid": "x", "value": {}}, id="value-vide"),
+]
+
+
+@pytest.mark.parametrize("item", _ITEMS_NULS)
+def test_evenement_depuis_json_survit_a_une_valeur_nulle(item):
+    from debrief_meet.core.bluemind.sync import evenement_depuis_json
+
+    assert evenement_depuis_json(item, "calendar:Default:u1", "a@b.c") is None
+
+
+@pytest.mark.parametrize("item", _ITEMS_NULS)
+def test_est_serie_survit_a_une_valeur_nulle(item):
+    """`est_serie` est appelée AVANT la construction de l'événement : c'est elle qui
+    levait en premier et faisait échouer toute la synchro."""
+    from debrief_meet.core.bluemind.recurrence import est_serie
+
+    assert est_serie(item) is False
+
+
+@pytest.mark.parametrize("item", _ITEMS_NULS)
+def test_expanser_serie_survit_a_une_valeur_nulle(item):
+    from datetime import datetime, timezone
+
+    from debrief_meet.core.bluemind.recurrence import expanser_serie
+
+    d = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    f = datetime(2026, 12, 31, tzinfo=timezone.utc)
+    assert expanser_serie(item, "calendar:Default:u1", "a@b.c", d, f) == []
+
+
+def test_un_item_nul_ne_fait_pas_perdre_les_autres():
+    """LE test qui compte : un seul item malformé ne doit pas emporter la synchro
+    entière — c'est ce qui rendait le calendrier de Alix totalement vide."""
+    from debrief_meet.core.bluemind.sync import _evenements_depuis_item
+
+    bon = {
+        "uid": "ok-1",
+        "value": {"main": {
+            "dtstart": {"iso8601": "2026-06-01T10:00:00+02:00", "timezone": "Europe/Paris",
+                        "precision": "DateTime"},
+            "dtend": {"iso8601": "2026-06-01T11:00:00+02:00", "timezone": "Europe/Paris",
+                      "precision": "DateTime"},
+            "summary": "Réunion valide",
+        }},
+    }
+    from datetime import datetime, timezone
+    d = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    f = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
+    obtenus = []
+    for item in [{"uid": "ko", "value": None}, bon, {"uid": "ko2", "value": {"main": None}}]:
+        obtenus.extend(_evenements_depuis_item(item, "calendar:Default:u1", "a@b.c", d, f))
+
+    assert [e.titre for e in obtenus] == ["Réunion valide"]
+
+
+def test_un_item_totalement_malforme_ne_tue_pas_la_synchro(caplog):
+    """Garantie structurelle : la forme exacte du JSON BlueMind est « pressentie »
+    (docs/40 §3), donc on ne peut pas énumérer toutes les malformations. Quelle qu'elle
+    soit, un item fautif doit être IGNORÉ et NOMMÉ, pas emporter le calendrier entier."""
+    import logging
+
+    from debrief_meet.core.bluemind.sync import _evenements_depuis_item
+
+    d = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    f = datetime(2026, 12, 31, tzinfo=timezone.utc)
+
+    # Un invité nul dans `attendees` : autre trou possible, non couvert par le
+    # correctif « value/main » — la garde doit le rattraper quand même.
+    item = {
+        "uid": "casse-1",
+        "value": {"main": {
+            "dtstart": {"iso8601": "2026-06-01T10:00:00+02:00", "timezone": "Europe/Paris",
+                        "precision": "DateTime"},
+            "dtend": {"iso8601": "2026-06-01T11:00:00+02:00", "timezone": "Europe/Paris",
+                      "precision": "DateTime"},
+            "attendees": [None],
+        }},
+    }
+    with caplog.at_level(logging.WARNING, logger="debrief_meet.core.bluemind.sync"):
+        assert _evenements_depuis_item(item, "calendar:Default:u1", "a@b.c", d, f) == []
+    assert "casse-1" in caplog.text, "l'item fautif doit être nommé dans le log"

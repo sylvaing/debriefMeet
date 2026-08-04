@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from debrief_meet.core import edition
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import MachineEtats
 from debrief_meet.platform.interfaces import RaccourcisGlobaux
@@ -29,6 +30,19 @@ _GLYPHES_MAC = {"Ctrl": "⌃", "Alt": "⌥", "Meta": "⌘", "Shift": "⇧"}
 _LIBELLES_AUTRES = {"Ctrl": "Ctrl", "Alt": "Alt", "Meta": "Win", "Shift": "Maj"}
 
 
+def actions() -> tuple[tuple[str, str, str], ...]:
+    """`ACTIONS` filtrées par l'édition — Dictée/Journal absentes en lite (docs/44).
+
+    Point d'étranglement **unique** : alimente à la fois l'enregistrement des raccourcis
+    auprès de l'OS (ci-dessous) et les éditeurs de Préférences › Raccourcis. Ne rien
+    enregistrer pour Dictée/Journal garantit aussi que l'OS ne délivrera jamais ces
+    combinaisons — donc aucun basculement vers un mode sans orchestrateur à l'écoute.
+    """
+    if edition.avec_dictee_journal():
+        return ACTIONS
+    return tuple(a for a in ACTIONS if a[0] == "raccourci_reunion")
+
+
 def libelle_modificateur(nom_portable: str) -> str:
     """Libellé natif d'un modificateur (« Ctrl »/« Alt »/« Meta »/« Shift »)."""
     table = _GLYPHES_MAC if sys.platform == "darwin" else _LIBELLES_AUTRES
@@ -42,8 +56,8 @@ def libelle_modificateurs(noms_portables: tuple[str, ...]) -> str:
 
 
 def appliquer_raccourcis(raccourcis: RaccourcisGlobaux, config: Config, machine: MachineEtats) -> list[str]:
-    """(Ré)enregistre les 3 raccourcis depuis la config. Retourne la liste des
-    combinaisons en échec (déjà prises / invalides) — vide si tout est passé.
+    """(Ré)enregistre les raccourcis de l'édition depuis la config. Retourne la liste
+    des combinaisons en échec (déjà prises / invalides) — vide si tout est passé.
     Une combinaison vide en config ("") = raccourci désactivé, pas une erreur."""
     raccourcis.desactiver_tous()
 
@@ -54,7 +68,7 @@ def appliquer_raccourcis(raccourcis: RaccourcisGlobaux, config: Config, machine:
     }
 
     echecs: list[str] = []
-    for cle, _defaut, nom in ACTIONS:
+    for cle, _defaut, nom in actions():
         combinaison = config.get(cle)
         if not combinaison:
             continue

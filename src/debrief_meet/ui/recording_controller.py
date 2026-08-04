@@ -36,13 +36,16 @@ class RecordingController(QObject):
         self,
         machine: MachineEtats,
         reunion_view: _VueCapture,
-        dictee_view: _VueCapture,
-        journal_view: _VueCapture,
+        dictee_view: _VueCapture | None = None,
+        journal_view: _VueCapture | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._machine = machine
-        self._vues: tuple[_VueCapture, ...] = (reunion_view, dictee_view, journal_view)
+        # Dictée/Journal absentes en édition lite (docs/44) — on ne répercute que sur
+        # les vues réellement construites.
+        self._vues: tuple[_VueCapture, ...] = tuple(
+            v for v in (reunion_view, dictee_view, journal_view) if v is not None)
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)

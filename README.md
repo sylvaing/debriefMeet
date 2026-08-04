@@ -86,6 +86,21 @@ Détails, schéma du rapport et guide d'interprétation : [`docs/08-benchmark.md
 
 ---
 
+## Éditions Windows
+
+Deux installeurs sont produits depuis le même code — un poste en reçoit **un seul**,
+installer l'un remplace l'autre :
+
+| Édition | Setup | Transcription | Taille |
+|---|---|---|---|
+| **Complète** | `debriefMeet-setup-<version>.exe` | locale (Whisper CPU) + diarization ; dictée et journal disponibles | ~159 Mo + ~1,5 Go de modèle téléchargé au 1ᵉʳ lancement |
+| **Lite** | `debriefMeet-lite-setup-<version>.exe` | **API Mistral uniquement** (Voxtral pour la transcription, `mistral-small` pour le CR) ; réunions seulement | ~95-115 Mo, aucun modèle à télécharger |
+
+⚠️ L'édition **Lite** exige une **clé API Mistral** : sans elle elle enregistre l'audio
+mais ne peut jamais le transcrire. Détails : [doc 44](docs/44-edition-lite-windows.md).
+
+---
+
 ## Permissions macOS (une fois par machine)
 
 Deux permissions sont demandées automatiquement au premier usage :

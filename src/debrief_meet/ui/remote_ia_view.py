@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from debrief_meet.core import edition
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
 from debrief_meet.ui.assistant_mistral import AssistantMistral
@@ -137,16 +138,20 @@ class RemoteIAView(QWidget):
         bloc_cr.addWidget(self._combo_modele_cr)
         lay.addLayout(bloc_cr)
 
-        self._check_forcer_voxtral = QCheckBox(
-            "Toujours transcrire via Voxtral (ignorer la transcription locale)")
-        self._check_forcer_voxtral.setChecked(
-            self._config.get("mistral_source_transcription") == "voxtral")
-        self._check_forcer_voxtral.setToolTip(
-            "Décoché (recommandé) : réutilise la transcription locale quand elle existe "
-            "— instantané. Coché : re-transcrit systématiquement via Voxtral (utile en "
-            "enregistrement-seul, ou si la transcription locale est médiocre).")
-        self._check_forcer_voxtral.toggled.connect(self._sur_forcer_voxtral_toggle)
-        lay.addWidget(self._check_forcer_voxtral)
+        # Inerte en édition lite : il n'y a jamais de transcription locale à ignorer, et
+        # `mistral_source_transcription="auto"` y est déjà équivalent à "voxtral"
+        # (`pipeline._lire_transcript_local` rend None sur le placeholder) — docs/44.
+        if edition.avec_transcription_locale():
+            self._check_forcer_voxtral = QCheckBox(
+                "Toujours transcrire via Voxtral (ignorer la transcription locale)")
+            self._check_forcer_voxtral.setChecked(
+                self._config.get("mistral_source_transcription") == "voxtral")
+            self._check_forcer_voxtral.setToolTip(
+                "Décoché (recommandé) : réutilise la transcription locale quand elle existe "
+                "— instantané. Coché : re-transcrit systématiquement via Voxtral (utile en "
+                "enregistrement-seul, ou si la transcription locale est médiocre).")
+            self._check_forcer_voxtral.toggled.connect(self._sur_forcer_voxtral_toggle)
+            lay.addWidget(self._check_forcer_voxtral)
 
         ligne_test = QHBoxLayout()
         ligne_test.setSpacing(12)

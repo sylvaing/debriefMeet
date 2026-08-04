@@ -13,6 +13,8 @@ import platform
 import subprocess
 import sys
 
+from debrief_meet.core import edition
+
 
 def _est_windows() -> bool:
     return sys.platform == "win32"
@@ -112,6 +114,10 @@ def collecter_infos_systeme() -> dict:
 
     return {
         "os": platform.platform(),
+        # Placée haut et avant `faster_whisper` : en lite cette ligne-là dira
+        # « indisponible (No package metadata…) », ce qui est correct et prouve le bundle
+        # allégé — mais incohérent à lire sans savoir l'édition juste au-dessus (docs/44).
+        "edition": edition.edition(),
         "machine": platform.machine(),
         "processeur": platform.processor() or "indisponible",
         "coeurs": str(os.cpu_count() or "indisponible"),

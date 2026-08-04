@@ -116,8 +116,12 @@ def evenement_depuis_json(item: dict, cal_uid: str, email_utilisateur: str) -> E
     Défensif sur la forme exacte du JSON ([pressenti], cf. docs/40 §3) : accepte aussi
     bien `{"uid","value":{"main":...}}` que `{"uid","main":...}`."""
     uid = item.get("uid")
-    valeur = item.get("value", item)
-    main = valeur.get("main", valeur)
+    # `or` et NON `dict.get(cle, defaut)` : le défaut ne s'applique que si la clé est
+    # ABSENTE. BlueMind renvoie des items avec `"value": null` (clé présente, valeur
+    # nulle) → `valeur` valait None et la ligne suivante levait
+    # « 'NoneType' object has no attribute 'get' », tuant toute la synchro (docs/40 §5.3).
+    valeur = item.get("value") or item
+    main = valeur.get("main") or valeur
     dtstart, dtend = main.get("dtstart"), main.get("dtend")
     if not uid or not dtstart or not dtend:
         return None
@@ -193,10 +197,21 @@ def _evenements_depuis_item(
     importe les primitives de parsing d'ici)."""
     from debrief_meet.core.bluemind.recurrence import est_serie, expanser_serie
 
-    if est_serie(item):
-        return expanser_serie(item, cal_uid, email, debut, fin)
-    evt = evenement_depuis_json(item, cal_uid, email)
-    return [evt] if evt is not None else []
+    # Un item malformé ne doit JAMAIS emporter la synchro entière (docs/40 §5.3) : le
+    # calendrier de Alix était totalement vide parce qu'un seul item à `"value": null`
+    # faisait lever `est_serie`, et l'exception remontait jusqu'au worker. Les accès
+    # nuls connus sont corrigés au cas par cas, mais la forme exacte du JSON est
+    # « pressentie » (docs/40 §3) : cette garde tient la promesse au bon niveau, quelle
+    # que soit la malformation, et nomme l'item fautif au lieu de tout perdre en silence.
+    try:
+        if est_serie(item):
+            return expanser_serie(item, cal_uid, email, debut, fin)
+        evt = evenement_depuis_json(item, cal_uid, email)
+        return [evt] if evt is not None else []
+    except Exception as exc:  # noqa: BLE001 — un item ignoré vaut mieux qu'une synchro morte
+        logger.warning("Item de calendrier ignoré (uid=%r) : %s",
+                       (item or {}).get("uid") if isinstance(item, dict) else None, exc)
+        return []
 
 
 def _sync_complete(
@@ -341,7 +356,13 @@ class SynchroCalendrier(QObject):
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:
-        logger.debug("Sync BlueMind échouée (silencieux, docs/40 §1.1) : %s", message)
+        # WARNING et non DEBUG : `synchroniser_si_necessaire` est déjà gardé par
+        # `configuree()`, donc arriver ici signifie TOUJOURS « configurée mais en
+        # échec » — jamais « pas configurée ». La règle « interco invisible » de
+        # docs/40 §1.1 porte sur l'UI (aucun bouton, aucune popup), pas sur le log :
+        # en DEBUG, la panne était invisible sur macOS où `logs_debug` vaut False par
+        # défaut, et il a fallu un diagnostic terrain pour la découvrir (docs/40 §5.3).
+        logger.warning("Sync BlueMind échouée (interco configurée) : %s", message)
         self._en_cours = False
         self.echouee.emit(message)
 

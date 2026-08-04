@@ -71,6 +71,13 @@ def normaliser_asr(audio: np.ndarray, cible_rms: float = 0.03,
     return np.clip(audio * facteur, -1.0, 1.0).astype(np.float32)
 
 
+def rms(audio: np.ndarray) -> float:
+    """Niveau efficace d'un buffer float32. 0.0 pour un buffer vide."""
+    if not len(audio):
+        return 0.0
+    return float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+
+
 def preparer_asr(audio: np.ndarray) -> np.ndarray | None:
     """Prépare un audio 16 kHz pour la transcription : normalise puis applique la
     porte anti-silence. Retourne None si l'audio ne doit pas être transcrit
@@ -81,10 +88,10 @@ def preparer_asr(audio: np.ndarray) -> np.ndarray | None:
     if not len(audio):
         return None
     audio = normaliser_asr(audio)
-    rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-    if rms < SEUIL_RMS_SILENCE:
+    niveau = rms(audio)
+    if niveau < SEUIL_RMS_SILENCE:
         logger.debug("Audio silencieux (RMS=%.4f < %.4f) — transcription ignorée",
-                     rms, SEUIL_RMS_SILENCE)
+                     niveau, SEUIL_RMS_SILENCE)
         return None
     return audio
 

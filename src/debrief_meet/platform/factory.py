@@ -6,6 +6,7 @@ import platform
 import sys
 from dataclasses import dataclass
 
+from debrief_meet.core import edition
 from debrief_meet.platform.interfaces import (
     CaptureMicro,
     CaptureAudioSysteme,
@@ -28,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Adaptateurs:
-    moteur: MoteurTranscription
+    # None en édition lite (docs/44) : pas de moteur local du tout. Volontairement pas
+    # un `MoteurStub` — `GestionnaireDiarization.disponible()` est `moteur is not None`,
+    # un stub rendrait donc « Transcrire la réunion » actif et écrirait sa sortie
+    # « [stub — pas de transcription réelle] » par-dessus une vraie réunion.
+    moteur: MoteurTranscription | None
     micro: CaptureMicro
     systeme: CaptureAudioSysteme
     presse_papiers: PressePapiers
@@ -58,8 +63,11 @@ def creer_adaptateurs() -> Adaptateurs:
 def _macos() -> Adaptateurs:
     import platform as _plat
 
-    moteur: MoteurTranscription
-    if _plat.machine() == "arm64":
+    moteur: MoteurTranscription | None
+    if not edition.avec_transcription_locale():
+        logger.info("Édition lite — aucun moteur de transcription local")
+        moteur = None
+    elif _plat.machine() == "arm64":
         try:
             from debrief_meet.platform.macos.moteur_mlx import MoteurMLX
             moteur = MoteurMLX()
@@ -104,13 +112,22 @@ def _windows() -> Adaptateurs:
     # Sur Windows, un repli stub est un événement grave (docs/34 §0) : loggé en
     # WARNING avec l'exception d'origine — jamais un silence, seul canal de debug
     # une fois livré à Bastien/Alix.
-    moteur: MoteurTranscription
-    try:
-        from debrief_meet.platform.windows.moteur_faster_whisper import MoteurFasterWhisper
-        moteur = MoteurFasterWhisper()
-    except ImportError as exc:
-        logger.warning("Moteur Windows indisponible (%s) — repli stub", exc)
-        moteur = MoteurStub()
+    # Gate sur l'ÉDITION et non sur un `except ImportError` : `moteur_faster_whisper.py`
+    # n'importe `faster_whisper` nulle part au niveau module (c'est le sous-processus
+    # worker qui le fait), donc en bundle lite le moteur se construirait très bien et ne
+    # mourrait qu'à la première transcription (docs/44).
+    moteur: MoteurTranscription | None
+    if not edition.avec_transcription_locale():
+        logger.info("Édition lite — aucun moteur de transcription local "
+                    "(transcription et CR délégués à l'API Mistral)")
+        moteur = None
+    else:
+        try:
+            from debrief_meet.platform.windows.moteur_faster_whisper import MoteurFasterWhisper
+            moteur = MoteurFasterWhisper()
+        except ImportError as exc:
+            logger.warning("Moteur Windows indisponible (%s) — repli stub", exc)
+            moteur = MoteurStub()
 
     try:
         from debrief_meet.platform.commun.micro_sounddevice import CaptureMicroSounddevice
@@ -161,7 +178,7 @@ def _windows() -> Adaptateurs:
 def _linux() -> Adaptateurs:
     # Phase 6 : MoteurFasterWhisper, PipeWire, systemd
     return Adaptateurs(
-        moteur=MoteurStub(),
+        moteur=MoteurStub() if edition.avec_transcription_locale() else None,
         micro=MicroStub(),
         systeme=SystemeStub(),
         presse_papiers=PressePapiersStub(),

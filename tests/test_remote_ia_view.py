@@ -2,11 +2,19 @@
 (un seul bloc en v1). Sans réseau réel pour le test de connexion (respx)."""
 from __future__ import annotations
 
+import pytest
+
 import httpx
 import respx
 
 from debrief_meet.core.config import Config
 from debrief_meet.ui.remote_ia_view import RemoteIAView
+
+
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : dont la case « forcer Voxtral », absente en lite — édition complète épinglée sauf test lite explicite
+    (docs/44)."""
 
 URL = "https://api.mistral.ai"
 
@@ -94,3 +102,15 @@ def test_tester_connexion_echec(qapp, qtbot, tmp_path):
     vue._edit_cle.setText("mauvaise-cle")
     vue._tester_connexion()
     qtbot.waitUntil(lambda: "Échec" in vue._label_statut.text(), timeout=5000)
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def test_lite_pas_de_case_forcer_voxtral(qapp, tmp_path, edition_lite):
+    """Inerte en lite : il n'y a jamais de transcription locale à ignorer, et
+    « auto » y est déjà équivalent à « voxtral »."""
+    cfg = _config(tmp_path)
+    vue = RemoteIAView(cfg)
+    assert not hasattr(vue, "_check_forcer_voxtral")
+    assert cfg.get("mistral_source_transcription") == "auto"
+    assert vue._edit_cle is not None      # la clé API reste configurable, et obligatoire

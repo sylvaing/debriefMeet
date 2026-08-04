@@ -4,12 +4,20 @@ nouvelle vue. L'ancienne fenêtre n'est pas touchée ici (retirée à l'Étape 4
 """
 from __future__ import annotations
 
+import pytest
+
 from PySide6.QtGui import QKeySequence
 
 import debrief_meet.ui.preferences_view as pv_module
 from debrief_meet.core.config import Config
 from debrief_meet.ui.preferences_view import PreferencesView
 from tests.fakes.adapters import MoteurFake
+
+
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : les sections Modèle/Audio/Raccourcis complètes — édition complète épinglée sauf test lite explicite
+    (docs/44)."""
 
 
 def _config(tmp_path):
@@ -89,7 +97,7 @@ def test_dossier_edite_persiste(qapp, tmp_path):
 def test_raccourci_valide_persiste(qapp, tmp_path):
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
-    vue._edit_raccourci_dictee.setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
     assert cfg.get("raccourci_dictee") == "Ctrl+Alt+X"
 
 
@@ -98,7 +106,7 @@ def test_raccourci_doublon_refuse_et_revert(qapp, tmp_path, monkeypatch):
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
     valeur_avant = cfg.get("raccourci_dictee")
-    vue._edit_raccourci_dictee.setKeySequence(
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(
         QKeySequence.fromString(cfg.get("raccourci_reunion")))
     assert cfg.get("raccourci_dictee") == valeur_avant
 
@@ -108,14 +116,14 @@ def test_raccourci_sans_modificateur_refuse(qapp, tmp_path, monkeypatch):
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
     valeur_avant = cfg.get("raccourci_dictee")
-    vue._edit_raccourci_dictee.setKeySequence(QKeySequence.fromString("D"))
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(QKeySequence.fromString("D"))
     assert cfg.get("raccourci_dictee") == valeur_avant
 
 
 def test_raccourci_vide_desactive(qapp, tmp_path):
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
-    vue._edit_raccourci_dictee.setKeySequence(QKeySequence())
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(QKeySequence())
     assert cfg.get("raccourci_dictee") == ""
 
 
@@ -123,7 +131,7 @@ def test_reinitialiser_restaure_les_defauts(qapp, tmp_path):
     from debrief_meet.core.raccourcis import ACTIONS
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)
-    vue._edit_raccourci_dictee.setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
     vue._reinitialiser_raccourcis()
     defauts = {cle: defaut for cle, defaut, _n in ACTIONS}
     assert cfg.get("raccourci_dictee") == defauts["raccourci_dictee"]
@@ -134,7 +142,7 @@ def test_appliquer_avertit_si_raccourci_refuse(qapp, tmp_path, monkeypatch):
     appels = []
     monkeypatch.setattr(pv_module.dialogues, "avertir", lambda *a, **k: appels.append(a))
     vue = PreferencesView(cfg, reappliquer_raccourcis=lambda: ["Ctrl+Alt+X"])
-    vue._edit_raccourci_dictee.setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
+    vue._edits_raccourcis["raccourci_dictee"].setKeySequence(QKeySequence.fromString("Ctrl+Alt+X"))
     assert appels
 
 
@@ -345,3 +353,139 @@ def test_tester_connexion_champs_vides_pas_de_reseau(qapp, tmp_path):
     vue._tester_connexion_bluemind()
     assert vue._thread_test_bm is None
     assert "requis" in vue._label_bm_statut.text()
+
+
+# ── Journalisation : export des logs (docs/44) ───────────────────────────────
+
+def _boutons_logs(vue) -> list[str]:
+    from PySide6.QtWidgets import QPushButton
+    page = vue._pages.widget(vue._nav.count() - 1).widget()   # dernière section
+    return [b.text() for b in page.findChildren(QPushButton)]
+
+
+def test_section_logs_a_les_trois_boutons(qapp, tmp_path):
+    vue = PreferencesView(_config(tmp_path))
+    assert _boutons_logs(vue) == [
+        "Ouvrir le fichier de log", "Exporter les logs (.zip)…", "Vider le log"]
+
+
+def test_emplacement_des_logs_resolu_et_pas_code_en_dur(qapp, tmp_path):
+    """`~/Library/Logs/debriefMeet/` était affiché en dur — faux sur Windows."""
+    from PySide6.QtWidgets import QLabel
+    from debrief_meet.core.logs import chemin_log
+
+    vue = PreferencesView(_config(tmp_path))
+    page = vue._pages.widget(vue._nav.count() - 1).widget()
+    textes = "\n".join(l.text() for l in page.findChildren(QLabel))
+    assert str(chemin_log().parent) in textes
+    assert "~/Library/Logs" not in textes
+
+
+def test_bouton_export_delegue_au_helper_partage(qapp, tmp_path, monkeypatch):
+    appels = []
+    monkeypatch.setattr("debrief_meet.ui.export_diagnostic.exporter_et_informer",
+                        lambda parent: appels.append(parent))
+    vue = PreferencesView(_config(tmp_path))
+    vue._btn_exporter_logs.click()
+    assert appels == [vue]
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def _titres_sections(vue) -> list[str]:
+    return [vue._nav.item(i).text() for i in range(vue._nav.count())]
+
+
+def test_lite_pas_de_section_modele(qapp, tmp_path, edition_lite):
+    vue = PreferencesView(_config(tmp_path))
+    titres = _titres_sections(vue)
+    assert "Modèle" not in titres
+    assert "Remote IA" in titres          # c'est elle qui porte la transcription en lite
+    assert vue._pages.count() == vue._nav.count() == len(titres)
+
+
+def test_sections_derivees_et_index_alignes(qapp, tmp_path):
+    """Nav et pile remplies dans la même boucle : plus de tuples parallèles."""
+    vue = PreferencesView(_config(tmp_path))
+    assert vue._pages.count() == vue._nav.count() == len(vue._sections())
+    vue._nav.setCurrentRow(vue._nav.count() - 1)
+    assert vue._pages.currentIndex() == vue._nav.count() - 1
+
+
+def test_lite_audio_sans_case_menteuse(qapp, tmp_path, edition_lite):
+    """`transcription_live` et `retention_audio` sont forcés par l'orchestrateur en
+    lite : afficher les cases serait un contrôle qui ment."""
+    vue = PreferencesView(_config(tmp_path))
+    assert not hasattr(vue, "_check_transcription_live")
+    assert not hasattr(vue, "_check_retention")
+    assert vue._check_aec is not None      # l'AEC reste (décision docs/44)
+
+
+def test_lite_audio_explique_la_retention_obligatoire(qapp, tmp_path, edition_lite):
+    from PySide6.QtWidgets import QLabel
+    vue = PreferencesView(_config(tmp_path))
+    page = vue._pages.widget(_titres_sections(vue).index("Audio")).widget()
+    textes = "\n".join(l.text() for l in page.findChildren(QLabel))
+    assert "toujours conservé" in textes
+
+
+def test_lite_un_seul_editeur_de_raccourci(qapp, tmp_path, edition_lite):
+    """`_reinitialiser_raccourcis` indexait un dict de 3 éditeurs codé en dur →
+    KeyError en lite."""
+    vue = PreferencesView(_config(tmp_path))
+    assert list(vue._edits_raccourcis) == ["raccourci_reunion"]
+    vue._reinitialiser_raccourcis()       # ne doit pas lever
+
+
+# ── Sélecteur de micro : libellés distinguables (docs/44 §8.7) ────────────────
+
+def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch):
+    """Le même casque Bluetooth apparaissait 3 fois à l'identique (MME, DirectSound,
+    WASAPI) — choix impossible pour l'utilisatrice, constaté le 2026-08-04."""
+    import sounddevice as sd
+
+    peripheriques = [
+        {"name": "Headset (casque Bluetooth)", "max_input_channels": 1, "hostapi": 0},
+        {"name": "Headset (casque Bluetooth)", "max_input_channels": 2, "hostapi": 1},
+        {"name": "Haut-parleurs", "max_input_channels": 0, "hostapi": 1},   # sortie : exclue
+    ]
+    apis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+    monkeypatch.setattr(sd, "query_devices", lambda i=None: peripheriques[i] if i is not None else peripheriques)
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: apis[i] if i is not None else apis)
+
+    vue = PreferencesView(_config(tmp_path))
+    libelles = [vue._combo_micro.itemText(i) for i in range(vue._combo_micro.count())]
+
+    assert "Headset (casque Bluetooth) — MME" in libelles
+    assert "Headset (casque Bluetooth) — Windows WASAPI" in libelles
+    assert not any("Haut-parleurs" in l for l in libelles), "une sortie ne doit pas être listée"
+    assert len(set(libelles)) == len(libelles), "aucun libellé ne doit être ambigu"
+
+
+def test_selecteur_micro_survit_a_une_api_illisible(qapp, tmp_path, monkeypatch):
+    """Le suffixe est décoratif : son échec ne doit pas vider le sélecteur."""
+    import sounddevice as sd
+
+    monkeypatch.setattr(sd, "query_devices",
+                        lambda i=None: [{"name": "Micro", "max_input_channels": 1, "hostapi": 0}]
+                        if i is None else {"name": "Micro", "max_input_channels": 1, "hostapi": 0})
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: (_ for _ in ()).throw(RuntimeError("boum")))
+
+    vue = PreferencesView(_config(tmp_path))
+    libelles = [vue._combo_micro.itemText(i) for i in range(vue._combo_micro.count())]
+    assert "Micro" in libelles
+
+
+def test_defaut_indique_le_peripherique_resolu(qapp, tmp_path, monkeypatch):
+    """« par défaut » ne disait pas ce qu'il résolvait — c'est ce qui a masqué le fait
+    qu'un micro interne était enregistré alors qu'un casque était branché."""
+    import sounddevice as sd
+
+    monkeypatch.setattr(sd, "query_devices",
+                        lambda i=None: {"name": "Microphone Array (Realtek)", "max_input_channels": 4, "hostapi": 0}
+                        if i is not None else [])
+    monkeypatch.setattr(sd, "query_hostapis", lambda i=None: {"name": "MME"})
+    monkeypatch.setattr(sd.default, "device", [3, 4], raising=False)
+
+    vue = PreferencesView(_config(tmp_path))
+    assert "Microphone Array (Realtek)" in vue._combo_micro.itemText(0)

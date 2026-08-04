@@ -191,13 +191,17 @@ class AssistantMistral(CarteFlottante):
 
     @Slot(str)
     def _sur_succes(self, cle: str) -> None:
-        self._succes = True
         self._config.set("mistral_cle_api", cle)
         self._config.sauvegarder()
         self._barre.hide()
         self._label_resultat.setText("✅ Connexion réussie. Vous pouvez fermer cette fenêtre.")
         self._btn_suiv.setText("Terminer")
         self._btn_suiv.setEnabled(True)
+        # Drapeau positionné en DERNIER : il signifie « tout est appliqué » (clé
+        # persistée, libellés à jour), et non « le réseau a répondu ». Le placer en tête
+        # exposait un état intermédiaire — flake constaté sur la gate VM le 2026-07-30,
+        # `_succes` vrai alors que le label affichait encore « Test de la connexion… ».
+        self._succes = True
 
     @Slot(str)
     def _sur_echec(self, message: str) -> None:

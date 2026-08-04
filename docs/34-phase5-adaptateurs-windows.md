@@ -28,6 +28,15 @@ dans un zip diagnostic, un stub silencieux serait indiscernable d'un bug.
 
 ## 1. Moteur — `moteur_faster_whisper.py` + `_fw_worker.py`
 
+> **Mise à jour docs/44 (2026-07-30)** — **absent en édition lite** : la fabrique y
+> renvoie `Adaptateurs.moteur = None`, et `selection_backend.py` n'est pas appelé.
+> Le gate porte sur l'**édition**, jamais sur un `except ImportError` : ce module
+> n'importe `faster_whisper` nulle part au niveau module (c'est le worker qui le fait),
+> donc dans un bundle lite le moteur se construirait sans erreur et ne mourrait qu'à la
+> première transcription, chez l'utilisateur. `None` plutôt que `MoteurStub` :
+> `GestionnaireDiarization.disponible()` étant `moteur is not None`, un stub rendrait
+> « Transcrire la réunion » actif et écrirait sa sortie factice dans un vrai débrief.
+
 ### 1.1 Architecture : worker subprocess (décision docs/30 §4.4)
 
 Miroir structurel de `macos/moteur_mlx.py` + `_mlx_worker.py` : pool de workers

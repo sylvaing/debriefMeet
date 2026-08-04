@@ -38,6 +38,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from debrief_meet.core import edition
+from debrief_meet.core import raccourcis as raccourcis_core
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
 from debrief_meet.core.logs import configurer_logs
@@ -65,24 +67,40 @@ _LANGUES = [
 
 _MODIFICATEURS_SUFFISANTS = {"Ctrl", "Alt", "Meta"}
 
-# (titre section, icône Phosphor)
-_SECTIONS = (
-    ("Modèle", "brain"),
-    ("Audio", "waveform"),
-    ("Dossiers", "folders"),
-    ("Prompts", "chat-text"),
-    ("Général", "sliders-horizontal"),
-    ("Raccourcis", "keyboard"),
-    ("BlueMind", "list"),
-    ("Remote IA", "brain"),
-    ("Journalisation", "bug"),
-)
-
 _DELAI_AUTOSAVE_MS = 400  # débounce des champs texte (titre/contenu prompt)
 
 
 def _a_modificateur_suffisant(texte_portable: str) -> bool:
     return bool(set(texte_portable.split("+")) & _MODIFICATEURS_SUFFISANTS)
+
+
+def _suffixe_api(peripherique: dict) -> str:
+    """« — WASAPI », « — MME »… Sans cette précision, un même micro apparaît plusieurs
+    fois avec un libellé IDENTIQUE (constaté chez une utilisatrice le 2026-08-04 : le
+    même casque Bluetooth listé 3 fois via MME, DirectSound et WASAPI). Le choix
+    devenait impossible, alors que ces pilotes ne se comportent pas pareil."""
+    try:
+        import sounddevice as sd
+
+        nom = sd.query_hostapis(peripherique["hostapi"])["name"]
+    except Exception:  # noqa: BLE001 — libellé décoratif, jamais bloquant
+        return ""
+    return f" — {nom}" if nom else ""
+
+
+def _suffixe_defaut_micro() -> str:
+    """« (actuellement : Microphone Array…) » — rend visible ce que « par défaut »
+    résout réellement. C'est ce qui manquait pour comprendre qu'un micro interne était
+    enregistré alors qu'un casque était branché."""
+    try:
+        import sounddevice as sd
+
+        index = sd.default.device[0]
+        if index is None or index < 0:
+            return ""
+        return f" (actuellement : {sd.query_devices(index)['name']})"
+    except Exception:  # noqa: BLE001 — libellé décoratif, jamais bloquant
+        return ""
 
 
 def _note(texte: str) -> QLabel:
@@ -205,21 +223,20 @@ class PreferencesView(QWidget):
         self._nav.setObjectName("prefNav")
         self._nav.setFixedWidth(M.PREF_NAV_W)
         self._nav.setFont(QFont(SANS, 13))
-        for titre, icone_nom in _SECTIONS:
+        self._pages = QStackedWidget(corps)
+
+        # Nav et pile remplies dans la MÊME boucle : l'index de nav est égal à l'index de
+        # page par construction, il n'y a plus deux tuples parallèles à synchroniser.
+        for titre, icone_nom, construire in self._sections():
             item = QListWidgetItem(titre)
             item.setIcon(QIcon(icone_svg_teintee(icone_phosphor(icone_nom), C.INK500, 16)))
             self._nav.addItem(item)
+            self._pages.addWidget(self._enrober_scroll(construire()))
+
+        # Connecté APRÈS le remplissage : `currentRowChanged` sur une pile encore vide
+        # indexerait dans le vide.
         self._nav.currentRowChanged.connect(self._on_section_change)
         lay_corps.addWidget(self._nav)
-
-        self._pages = QStackedWidget(corps)
-        constructeurs = (
-            self._section_modele, self._section_audio, self._section_dossiers,
-            self._section_prompts, self._section_general, self._section_raccourcis,
-            self._section_bluemind, self._section_remote_ia, self._section_logs,
-        )
-        for construire in constructeurs:
-            self._pages.addWidget(self._enrober_scroll(construire()))
         lay_corps.addWidget(self._pages, 1)
 
         layout.addWidget(corps, 1)
@@ -229,6 +246,29 @@ class PreferencesView(QWidget):
         layout.addWidget(barre)
 
         self._nav.setCurrentRow(0)
+
+    def _sections(self) -> list[tuple[str, str, Callable[[], QWidget]]]:
+        """(titre, icône Phosphor, constructeur) — source unique de la nav et de la pile.
+
+        Méthode et non constante de module : les constructeurs sont des méthodes liées
+        (c'est précisément pourquoi il y avait deux tuples parallèles auparavant). Lue à
+        la construction de la vue, donc l'édition est prise en compte sans rebuild.
+        """
+        sections: list[tuple[str, str, Callable[[], QWidget]]] = []
+        if edition.avec_transcription_locale():
+            # Sélecteur de modèle Whisper : sans objet en lite (aucun moteur embarqué).
+            sections.append(("Modèle", "brain", self._section_modele))
+        sections += [
+            ("Audio", "waveform", self._section_audio),
+            ("Dossiers", "folders", self._section_dossiers),
+            ("Prompts", "chat-text", self._section_prompts),
+            ("Général", "sliders-horizontal", self._section_general),
+            ("Raccourcis", "keyboard", self._section_raccourcis),
+            ("BlueMind", "list", self._section_bluemind),
+            ("Remote IA", "brain", self._section_remote_ia),
+            ("Journalisation", "bug", self._section_logs),
+        ]
+        return sections
 
     def _enrober_scroll(self, contenu: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -296,12 +336,12 @@ class PreferencesView(QWidget):
         bloc_micro.addWidget(_libelle_champ("Microphone"))
         self._combo_micro = QComboBox()
         self._combo_micro.setMaximumWidth(600)
-        self._combo_micro.addItem("Périphérique par défaut", None)
+        self._combo_micro.addItem(f"Périphérique par défaut{_suffixe_defaut_micro()}", None)
         try:
             import sounddevice as sd
             for i, d in enumerate(sd.query_devices()):
                 if d["max_input_channels"] > 0:
-                    self._combo_micro.addItem(f"{d['name']}", i)
+                    self._combo_micro.addItem(f"{d['name']}{_suffixe_api(d)}", i)
         except Exception:
             pass
         micro_idx = self._config.get("micro_index")
@@ -329,15 +369,18 @@ class PreferencesView(QWidget):
         bloc_checks = QVBoxLayout()
         bloc_checks.setSpacing(11)
 
-        self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
-        self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
-        self._check_transcription_live.setToolTip(
-            "Décoché : la réunion enregistre seulement l'audio ; la transcription se lance "
-            "ensuite à la demande depuis l'Historique (l'audio est alors toujours conservé)."
-        )
-        self._check_transcription_live.toggled.connect(
-            lambda c: self._definir("transcription_live", c))
-        bloc_checks.addWidget(self._check_transcription_live)
+        # En lite l'orchestrateur force l'audio seul (core/reunion.py) : afficher la case
+        # serait un contrôle menteur.
+        if edition.avec_transcription_locale():
+            self._check_transcription_live = QCheckBox("Transcrire pendant l'enregistrement")
+            self._check_transcription_live.setChecked(bool(self._config.get("transcription_live")))
+            self._check_transcription_live.setToolTip(
+                "Décoché : la réunion enregistre seulement l'audio ; la transcription se lance "
+                "ensuite à la demande depuis l'Historique (l'audio est alors toujours conservé)."
+            )
+            self._check_transcription_live.toggled.connect(
+                lambda c: self._definir("transcription_live", c))
+            bloc_checks.addWidget(self._check_transcription_live)
 
         self._check_aec = QCheckBox("Annuler l'écho des haut-parleurs (sans casque)")
         self._check_aec.setChecked(bool(self._config.get("aec_actif")))
@@ -348,17 +391,27 @@ class PreferencesView(QWidget):
         self._check_aec.toggled.connect(lambda c: self._definir("aec_actif", c))
         bloc_checks.addWidget(self._check_aec)
 
-        self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
-        self._check_retention.setChecked(bool(self._config.get("retention_audio")))
-        self._check_retention.setToolTip(
-            "Garde l'audio des 2 pistes à côté du compte-rendu pour pouvoir générer "
-            "« qui a parlé » plus tard depuis l'Historique. Supprimable par réunion."
-        )
-        self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
-        bloc_checks.addWidget(self._check_retention)
+        if edition.avec_transcription_locale():
+            self._check_retention = QCheckBox("Conserver l'audio des réunions (diarization)")
+            self._check_retention.setChecked(bool(self._config.get("retention_audio")))
+            self._check_retention.setToolTip(
+                "Garde l'audio des 2 pistes à côté du compte-rendu pour pouvoir générer "
+                "« qui a parlé » plus tard depuis l'Historique. Supprimable par réunion."
+            )
+            self._check_retention.toggled.connect(lambda c: self._definir("retention_audio", c))
+            bloc_checks.addWidget(self._check_retention)
         lay.addLayout(bloc_checks)
 
-        lay.addWidget(self._construire_ligne_diarization())
+        if edition.avec_transcription_locale():
+            lay.addWidget(self._construire_ligne_diarization())
+        else:
+            # Rétention non négociable en lite : c'est l'audio qui est envoyé à l'IA
+            # distante. Le contrôle par réunion reste dans l'Historique (« Supprimer
+            # l'audio (garde le débrief) »).
+            lay.addWidget(_note(
+                "L'audio des réunions est toujours conservé : c'est lui qui sert à la "
+                "transcription et au compte-rendu via l'IA distante (Historique › "
+                "Générer le CR). Supprimable réunion par réunion depuis l'Historique."))
         lay.addStretch()
         return w
 
@@ -684,12 +737,14 @@ class PreferencesView(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
 
-        self._edit_raccourci_dictee = self._creer_edit_raccourci("raccourci_dictee", "Dictée")
-        lay.addLayout(self._ligne_raccourci("Dictée", self._edit_raccourci_dictee))
-        self._edit_raccourci_reunion = self._creer_edit_raccourci("raccourci_reunion", "Réunion")
-        lay.addLayout(self._ligne_raccourci("Réunion", self._edit_raccourci_reunion))
-        self._edit_raccourci_journal = self._creer_edit_raccourci("raccourci_journal", "Journal")
-        lay.addLayout(self._ligne_raccourci("Journal", self._edit_raccourci_journal))
+        # Un éditeur par action de l'édition courante (`raccourcis.actions()` — Dictée et
+        # Journal absentes en lite). Dict et non attributs nommés : la réinitialisation et
+        # la détection de doublon en dérivent, sans table codée en dur à re-synchroniser.
+        self._edits_raccourcis: dict[str, QKeySequenceEdit] = {}
+        for cle, _defaut, nom in raccourcis_core.actions():
+            edit = self._creer_edit_raccourci(cle, nom)
+            self._edits_raccourcis[cle] = edit
+            lay.addLayout(self._ligne_raccourci(nom, edit))
 
         pied = QVBoxLayout()
         pied.setContentsMargins(98, 0, 0, 0)
@@ -721,10 +776,9 @@ class PreferencesView(QWidget):
         return ligne
 
     def _champs_raccourcis(self) -> tuple[tuple[str, QKeySequenceEdit, str], ...]:
-        return (
-            ("raccourci_dictee", self._edit_raccourci_dictee, "Dictée"),
-            ("raccourci_reunion", self._edit_raccourci_reunion, "Réunion"),
-            ("raccourci_journal", self._edit_raccourci_journal, "Journal"),
+        return tuple(
+            (cle, self._edits_raccourcis[cle], nom)
+            for cle, _defaut, nom in raccourcis_core.actions()
         )
 
     def _creer_edit_raccourci(self, cle: str, nom: str) -> QKeySequenceEdit:
@@ -789,12 +843,9 @@ class PreferencesView(QWidget):
                     + "\n".join(echecs))
 
     def _reinitialiser_raccourcis(self) -> None:
-        from debrief_meet.core.raccourcis import ACTIONS
-        for cle, defaut, _nom in ACTIONS:
-            edit = {"raccourci_dictee": self._edit_raccourci_dictee,
-                    "raccourci_reunion": self._edit_raccourci_reunion,
-                    "raccourci_journal": self._edit_raccourci_journal}[cle]
-            edit.setKeySequence(QKeySequence.fromString(defaut))
+        """Défauts relus dans `raccourcis.ACTIONS` — jamais re-déclarés ici."""
+        for cle, defaut, _nom in raccourcis_core.actions():
+            self._edits_raccourcis[cle].setKeySequence(QKeySequence.fromString(defaut))
             self._appliquer_raccourci(cle, defaut)
 
     # ── Section BlueMind (interco calendrier, docs/40 §4) ───────────────────────
@@ -990,21 +1041,30 @@ class PreferencesView(QWidget):
         self._check_debug.toggled.connect(self._sur_logs_toggle)
         layout.addWidget(self._check_debug)
 
-        layout.addWidget(_note(
-            "Les logs ne contiennent jamais de transcriptions ni d'audio.\n"
-            "Emplacement : ~/Library/Logs/debriefMeet/"))
-
         from debrief_meet.core.logs import chemin_log
         chemin = chemin_log()
+
+        # Emplacement résolu, jamais codé en dur : `~/Library/Logs/debriefMeet/` était
+        # faux sur Windows (%LOCALAPPDATA%\debriefMeet\Logs).
+        layout.addWidget(_note(
+            "Les logs ne contiennent jamais de transcriptions ni d'audio.\n"
+            f"Emplacement : {chemin.parent}"))
 
         row = QHBoxLayout()
         btn_ouvrir = QPushButton("Ouvrir le fichier de log")
         btn_ouvrir.setObjectName("secondary")
         btn_ouvrir.clicked.connect(lambda: self._ouvrir_log(chemin))
+        self._btn_exporter_logs = QPushButton("Exporter les logs (.zip)…")
+        self._btn_exporter_logs.setObjectName("secondary")
+        self._btn_exporter_logs.setToolTip(
+            "Crée une archive sur le Bureau à envoyer pour diagnostic : logs, "
+            "configuration et infos machine — jamais de transcription ni d'audio.")
+        self._btn_exporter_logs.clicked.connect(self._exporter_logs)
         btn_vider = QPushButton("Vider le log")
         btn_vider.setObjectName("destructive")
         btn_vider.clicked.connect(lambda: self._vider_log(chemin))
         row.addWidget(btn_ouvrir)
+        row.addWidget(self._btn_exporter_logs)
         row.addWidget(btn_vider)
         row.addStretch()
         layout.addLayout(row)
@@ -1034,6 +1094,11 @@ class PreferencesView(QWidget):
     def _vider_log(self, chemin: Path) -> None:
         if chemin.exists():
             chemin.write_text("", encoding="utf-8")
+
+    def _exporter_logs(self) -> None:
+        """Même chemin de code que l'item « Exporter le diagnostic… » du tray."""
+        from debrief_meet.ui.export_diagnostic import exporter_et_informer
+        exporter_et_informer(self)
 
     # ── Changement de modèle à chaud ─────────────────────────────────────────────
 

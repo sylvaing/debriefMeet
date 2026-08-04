@@ -58,8 +58,11 @@ _BY = (
 def est_serie(item: dict) -> bool:
     """Vrai si l'item `_search` porte une récurrence à développer (`rrule`), ou des
     exceptions (`occurrences`/`exdate`) même sans `rrule` restante."""
-    valeur = item.get("value", item)
-    main = valeur.get("main", valeur)
+    # `or` et NON `dict.get(cle, defaut)` : cf. `sync.evenement_depuis_json` — un
+    # `"value": null` rendait `valeur` None et faisait lever ici, avant même la
+    # construction de l'événement (docs/40 §5.3).
+    valeur = item.get("value") or item
+    main = valeur.get("main") or valeur
     return bool(main.get("rrule") or valeur.get("occurrences") or main.get("exdate"))
 
 
@@ -152,8 +155,8 @@ def expanser_serie(
 
     Ne lève jamais : un item malformé renvoie `[]` (Voxtral/matching ne verra rien,
     plutôt que de planter la synchro)."""
-    valeur = item.get("value", item)
-    main = valeur.get("main", valeur)
+    valeur = item.get("value") or item          # `or` : cf. `est_serie` (docs/40 §5.3)
+    main = valeur.get("main") or valeur
     uid = item.get("uid")
     dtstart_bm, dtend_bm = main.get("dtstart"), main.get("dtend")
     if not uid or not dtstart_bm or not dtend_bm:

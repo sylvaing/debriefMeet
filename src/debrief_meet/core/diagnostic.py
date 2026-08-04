@@ -6,6 +6,11 @@ module ne touche à rien d'OS-spécifique et reste dans `core/`.
 
 Règle vie privée (docs/31 §3.7.1) : jamais de texte transcrit dans le zip — seuls les
 logs (déjà nettoyés de tout texte transcrit), les infos système et la config.
+
+Règle secrets (ajoutée le 2026-07-31) : le zip est **fait pour être envoyé**, donc la
+config y est caviardée. Un diagnostic réel reçu de Alix contenait sa clé API Mistral et
+son token BlueMind en clair — les deux ont dû être révoqués. La valeur d'un secret n'a
+jamais aidé à diagnostiquer quoi que ce soit ; savoir s'il est **renseigné** si.
 """
 from __future__ import annotations
 
@@ -20,6 +25,34 @@ from debrief_meet.core.config import Config
 from debrief_meet.core.logs import chemin_log, chemin_log_crash
 
 logger = logging.getLogger(__name__)
+
+
+# Fragments de nom de clé trahissant un secret. Heuristique volontairement large, et
+# non une liste figée de clés : le jour où un `xxx_token` ou un `yyy_cle_api` sera
+# ajouté à `_DEFAUTS` pour un nouveau fournisseur, il sera caviardé d'office. Une liste
+# nominative, elle, aurait laissé fuir la nouvelle clé en silence.
+_FRAGMENTS_SECRETS = ("cle_api", "token", "secret", "password", "mot_de_passe")
+
+
+def _est_secret(cle: str) -> bool:
+    return any(f in cle.lower() for f in _FRAGMENTS_SECRETS)
+
+
+def caviarder(donnees: dict) -> dict:
+    """Remplace la valeur des secrets par un marqueur, sans perdre l'information utile.
+
+    Une clé **vide reste vide** : la distinction « configuré / pas configuré » est
+    précisément ce qu'on vient diagnostiquer (une édition lite sans clé Mistral
+    enregistre mais ne transcrira jamais). La longueur est conservée — elle ne révèle
+    rien d'exploitable et permet de repérer une clé collée tronquée.
+    """
+    propre = {}
+    for cle, valeur in donnees.items():
+        if _est_secret(cle) and isinstance(valeur, str) and valeur:
+            propre[cle] = f"<masqué — {len(valeur)} caractères>"
+        else:
+            propre[cle] = valeur
+    return propre
 
 
 def dossier_diagnostic_par_defaut() -> Path:
@@ -54,7 +87,10 @@ def exporter_diagnostic(dossier_cible: Path, infos_systeme: dict) -> Path:
 
         config = Config()
         config.charger()
-        zf.writestr("config.json", json.dumps(config.donnees(), ensure_ascii=False, indent=2))
+        zf.writestr(
+            "config.json",
+            json.dumps(caviarder(config.donnees()), ensure_ascii=False, indent=2),
+        )
 
     logger.info("Diagnostic exporté : %s", chemin_zip)
     return chemin_zip

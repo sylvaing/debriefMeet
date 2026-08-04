@@ -8,6 +8,12 @@ from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.core.raccourcis import ACTIONS, appliquer_raccourcis, libelle_modificateurs
 from tests.fakes.adapters import RaccourcisFake
 
+
+@pytest.fixture(autouse=True)
+def _edition(edition_complete_sauf_si_lite):
+    """Sujet du module : les 3 raccourcis globaux (Dictée/Journal absentes en lite) — édition complète épinglée sauf test lite explicite
+    (docs/44)."""
+
 # Défauts dépendants de l'OS (décision D3, docs/31 §3.1) : Ctrl+Alt+D/R/J sur
 # Windows, Meta+Alt+Ctrl+D/R/J ailleurs — ces tests tournent aussi sur la VM
 # Windows (build gate docs/32).
@@ -101,3 +107,24 @@ def test_libelle_modificateurs_ne_code_jamais_en_dur_hors_plateforme(monkeypatch
 
     monkeypatch.setattr(sys, "platform", "win32")
     assert libelle_modificateurs(("Meta", "Ctrl", "Alt")) == "Win/Ctrl/Alt"
+
+
+# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+
+def test_lite_n_enregistre_que_la_reunion(machine, raccourcis_fake, tmp_path, edition_lite):
+    """Ne rien enregistrer pour Dictée/Journal garantit que l'OS ne délivrera jamais ces
+    combinaisons — donc aucun basculement vers un mode sans orchestrateur à l'écoute."""
+    cfg = _config(tmp_path)
+    echecs = appliquer_raccourcis(raccourcis_fake, cfg, machine)
+    assert set(raccourcis_fake.enregistres) == {_R}
+    assert echecs == []
+
+
+def test_lite_actions_filtrees(edition_lite):
+    from debrief_meet.core.raccourcis import actions
+    assert [cle for cle, _d, _n in actions()] == ["raccourci_reunion"]
+
+
+def test_complete_actions_non_filtrees(edition_complete):
+    from debrief_meet.core.raccourcis import actions
+    assert actions() == ACTIONS

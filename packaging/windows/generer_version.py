@@ -9,7 +9,14 @@ rsyncé en même temps que les sources.
 Format : VERSION_COMPLETE = "<__version__>+<AAAAMMJJ>.<hash-git-court>"
 (ex. "0.2.0+20260703.a1b2c3d") — un log reçu ↔ un exécutable livré ↔ un commit git.
 
+Écrit aussi l'**édition compilée** (docs/44) dans les deux fichiers : source UNIQUE de
+vérité, lue par `core/edition.py` à l'exécution ET par `debriefMeet.spec` (regex) pour
+ses `excludes` → le contenu du bundle et le comportement de l'app ne peuvent pas se
+contredire. L'édition n'est jamais collée à VERSION_COMPLETE : la chaîne de version
+reste unique (cf. la garantie ci-dessus), l'édition est un champ à part.
+
 Usage : python packaging/windows/generer_version.py [--build-info CHEMIN]
+                                                    [--edition complete|lite]
 """
 from __future__ import annotations
 
@@ -22,6 +29,9 @@ INIT_PY = RACINE / "src" / "debrief_meet" / "__init__.py"
 VERSION_PY = RACINE / "src" / "debrief_meet" / "_version.py"
 VERSION_ISS = Path(__file__).resolve().parent / "version.iss"
 BUILD_INFO_DEFAUT = RACINE / "BUILD_INFO"
+
+EDITIONS = ("complete", "lite")
+EDITION_DEFAUT = "complete"
 
 
 def lire_version() -> str:
@@ -50,16 +60,27 @@ def version_numerique(version: str) -> str:
     return ".".join(parties[:4])
 
 
-def generer(build_info: Path = BUILD_INFO_DEFAUT) -> str:
+def generer(build_info: Path = BUILD_INFO_DEFAUT, edition: str = EDITION_DEFAUT) -> str:
     """Écrit `_version.py` et `version.iss`, retourne `VERSION_COMPLETE`."""
+    if edition not in EDITIONS:
+        raise SystemExit(f"edition inconnue : {edition!r} (attendu : {', '.join(EDITIONS)})")
     version = lire_version()
     date, hash_git = lire_build_info(build_info)
     version_complete = f"{version}+{date}.{hash_git}"
 
-    VERSION_PY.write_text(f'VERSION_COMPLETE = "{version_complete}"\n', encoding="utf-8")
+    # `EDITION_COMPILEE` / `MonAppEdition` sont TOUJOURS écrits, y compris en édition
+    # complète : la sync tar de build_app_windows_vm.sh écrase les fichiers mais n'en
+    # supprime AUCUN — un `_version.py` « lite » laissé par le build précédent
+    # contaminerait silencieusement le build complet suivant (spec ET module embarqué).
+    VERSION_PY.write_text(
+        f'VERSION_COMPLETE = "{version_complete}"\n'
+        f'EDITION_COMPILEE = "{edition}"\n',
+        encoding="utf-8",
+    )
     VERSION_ISS.write_text(
         f'#define MonAppVersion "{version_complete}"\n'
-        f'#define MonAppVersionNum "{version_numerique(version)}"\n',
+        f'#define MonAppVersionNum "{version_numerique(version)}"\n'
+        f'#define MonAppEdition "{edition}"\n',
         encoding="utf-8",
     )
     return version_complete
@@ -68,12 +89,15 @@ def generer(build_info: Path = BUILD_INFO_DEFAUT) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-info", type=Path, default=BUILD_INFO_DEFAUT)
+    parser.add_argument("--edition", choices=EDITIONS, default=EDITION_DEFAUT,
+                        help="edition compilee (lite = sans transcription locale)")
     args = parser.parse_args()
-    version_complete = generer(args.build_info)
+    version_complete = generer(args.build_info, args.edition)
     # ASCII strict : la console Windows par défaut (cp1252) ne sait pas encoder
     # les caractères comme "→" — cassé une première fois lors du build réel sur
     # la VM (docs/32, 2026-07-03).
     print(f"VERSION_COMPLETE = {version_complete}")
+    print(f"EDITION = {args.edition}")
     print(f"-> {VERSION_PY}")
     print(f"-> {VERSION_ISS}")
 

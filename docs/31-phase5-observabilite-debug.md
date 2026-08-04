@@ -160,6 +160,14 @@ immédiatement après `configurer_logs` :
 
 ### 3.6 Export diagnostic — tray + `core/diagnostic.py`
 
+> **Mise à jour docs/44 (2026-07-30)** — l'export est désormais atteignable depuis
+> **deux** points d'entrée : l'item « Exporter le diagnostic… » du tray et le bouton
+> « Exporter les logs (.zip)… » de Préférences › Journalisation. Les deux appellent le
+> même helper `ui/export_diagnostic.exporter_et_informer(parent)` (plutôt que l'un de
+> déléguer à l'autre : le tray doit continuer à fonctionner fenêtre principale cassée).
+> Le zip et son contenu sont inchangés. L'en-tête de session et `infos_systeme.json`
+> portent en plus une ligne `edition` (`complete`/`lite`).
+
 Nouveau module `core/diagnostic.py` :
 
 ```python

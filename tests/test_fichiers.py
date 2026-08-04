@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -101,10 +102,15 @@ def test_chemin_ffmpeg_dev_repli_shutil_which(monkeypatch):
 
 
 def test_chemin_ffmpeg_figee_resout_le_binaire_embarque(monkeypatch, tmp_path):
+    """La disposition embarquée diffère selon l'OS (`core/fichiers.chemin_ffmpeg`) :
+    `ffmpeg\\ffmpeg.exe` sur Windows (docs/41), `vendor/ffmpeg` ailleurs. Le test suit
+    la branche de la plateforme courante plutôt que de coder en dur celle de macOS —
+    il échouait sur la gate VM en assertant `vendor/ffmpeg` sous Windows."""
     from debrief_meet.core import ressources
 
-    binaire = tmp_path / "vendor" / "ffmpeg"
-    binaire.parent.mkdir()
+    parties = ("ffmpeg", "ffmpeg.exe") if sys.platform == "win32" else ("vendor", "ffmpeg")
+    binaire = Path(tmp_path, *parties)
+    binaire.parent.mkdir(parents=True)
     binaire.write_bytes(b"\x00")
     monkeypatch.setattr(ressources, "est_figee", lambda: True)
     monkeypatch.setattr(ressources, "chemin_ressource", lambda *p: Path(tmp_path, *p))

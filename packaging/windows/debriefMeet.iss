@@ -8,18 +8,41 @@
 ; ISCC (MonAppVersion/MonAppVersionNum) — ne pas le committer (cf. .gitignore).
 #include "version.iss"
 
+; ── Édition compilée (docs/44) ──────────────────────────────────────────────────
+;
+; `#define MonAppEdition` est écrit par generer_version.py en même temps que la
+; version. Le #ifndef tolère un version.iss produit par un générateur antérieur :
+; on compile alors l'édition complète (comportement historique).
+#ifndef MonAppEdition
+  #define MonAppEdition "complete"
+#endif
+
+; SEULS le nom affiché et le nom de fichier du setup changent. AppId, DefaultDirName,
+; AppMutex et [UninstallDelete] restent IDENTIQUES : les deux éditions sont
+; MUTUELLEMENT EXCLUSIVES — installer lite remplace la complète et inversement, une
+; seule entrée dans « Applications installées », mêmes %LOCALAPPDATA%\debriefMeet et
+; Documents\debriefMeet. ISPP compare les chaînes sans tenir compte de la casse, et
+; generer_version.py n'émet que des minuscules : pas d'ambiguïté.
+#if MonAppEdition == "lite"
+  #define MonAppNom "debriefMeet Lite"
+  #define MonAppFichier "debriefMeet-lite-setup"
+#else
+  #define MonAppNom "debriefMeet"
+  #define MonAppFichier "debriefMeet-setup"
+#endif
+
 [Setup]
 ; GUID figé une fois pour toutes (2026-07-03) — équivalent du bundle id macOS
 ; com.sylvaingarcia.debriefmeet. NE JAMAIS LE CHANGER : c'est lui qui fait qu'une
 ; réinstallation est traitée comme une mise à jour.
 AppId={{C18F22B8-EBDF-46FD-8E97-2F4334DA3182}
-AppName=debriefMeet
+AppName={#MonAppNom}
 AppVersion={#MonAppVersion}
 VersionInfoVersion={#MonAppVersionNum}
 DefaultDirName={localappdata}\Programs\debriefMeet
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputBaseFilename=debriefMeet-setup-{#MonAppVersion}
+OutputBaseFilename={#MonAppFichier}-{#MonAppVersion}
 OutputDir=..\..\dist
 ; Mutex créé par l'app au démarrage (platform/windows/instance_unique.py, docs/34 §6) —
 ; nom strictement identique des deux côtés : Inno détecte l'app en cours et propose
@@ -33,14 +56,35 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 
+; ── Éditions mutuellement exclusives : nettoyage AVANT copie (docs/44) ──────────
+;
+; [Files] COPIE par-dessus, il ne fait jamais de miroir : les fichiers présents dans
+; l'ancienne installation et absents de la nouvelle SURVIVENT (Inno ne les retire
+; qu'au désinstall, depuis son log — or une MAJ ne rejoue pas l'ancien désinstalleur).
+; Sans cette section, installer lite par-dessus la complète laisserait ~150-200 Mo de
+; DLL mortes (ctranslate2, av, onnxruntime) dans {app}\_internal : inertes, mais tout
+; le gain de taille de l'édition lite disparaîtrait sur le chemin de mise à jour.
+; `_internal` appartient à 100 % à l'installeur (PyInstaller >= 6 y met TOUT sauf
+; debriefMeet.exe) → le vider est sûr et idempotent. Coût : la totalité du bundle est
+; recopiée à chaque MAJ (c'était déjà le cas en pratique). Une install interrompue
+; APRÈS ce nettoyage laisse l'app inutilisable jusqu'au prochain run — acceptable,
+; identique à toute MAJ interrompue. Cette section tourne après AppMutex/
+; CloseApplications (app déjà fermée) et avant [Files].
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+; Raccourci de l'AUTRE édition (le nôtre est recréé juste après par [Icons]) — le
+; désinstalleur ne retire que les raccourcis de SON log, jamais ceux de l'autre.
+Type: files; Name: "{userstartmenu}\debriefMeet.lnk"
+Type: files; Name: "{userstartmenu}\debriefMeet Lite.lnk"
+
 [Files]
 Source: "..\..\dist\debriefMeet\*"; DestDir: "{app}"; Flags: recursesubdirs replacesameversion
 
 [Icons]
-Name: "{userstartmenu}\debriefMeet"; Filename: "{app}\debriefMeet.exe"
+Name: "{userstartmenu}\{#MonAppNom}"; Filename: "{app}\debriefMeet.exe"
 
 [Run]
-Filename: "{app}\debriefMeet.exe"; Description: "Lancer debriefMeet"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\debriefMeet.exe"; Description: "Lancer {#MonAppNom}"; Flags: postinstall nowait skipifsilent
 
 ; ── Désinstallation complète sauf données utilisateur (D4, docs/32 §4) ──────────
 ;

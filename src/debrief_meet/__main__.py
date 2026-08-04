@@ -152,6 +152,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
 
     from PySide6.QtWidgets import QSystemTrayIcon
 
+    from debrief_meet.core import edition
     from debrief_meet.core.config import Config
     from debrief_meet.core.logs import configurer_logs, installer_traces_crash, journaliser_entete_session
     from debrief_meet.core.modes import MachineEtats, Mode
@@ -220,17 +221,26 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     adaptateurs = creer_adaptateurs()
     # Préchargement du modèle déplacé après l'affichage du tray (cf. plus bas) : au 1er
     # lancement, on télécharge avec une fenêtre de progression au lieu d'un gel silencieux.
+    # Dictée et Journal n'existent pas en édition lite (docs/44) : aucun moteur local.
     orch_dictee = OrchestrateurDictee(
         machine=machine,
         micro=adaptateurs.micro,
         moteur=adaptateurs.moteur,
         presse_papiers=adaptateurs.presse_papiers,
         config=config,
-    )
+    ) if edition.avec_dictee_journal() else None
 
     # Câblage commandes IPC
     def _executer_commande(cmd: str) -> None:
-        if cmd == "toggle":
+        # Le garde d'édition est une question de justesse, pas de rangement : `--toggle`
+        # peut encore arriver d'un raccourci bureau survivant à une MAJ complète → lite
+        # (AppId identique). Sans lui, `MachineEtats` basculerait en Mode.DICTEE sans
+        # orchestrateur à l'écoute — rien n'enregistre, le tray ne rougit pas, et le mode
+        # Réunion reste ensuite refusé : verrouillage silencieux de la seule
+        # fonctionnalité de l'app.
+        if cmd in ("toggle", "toggle-journal") and not edition.avec_dictee_journal():
+            logger.warning("Commande IPC %r indisponible dans cette édition — ignorée", cmd)
+        elif cmd == "toggle":
             machine.toggle_dictee()
         elif cmd == "toggle-reunion":
             machine.toggle_reunion()
@@ -287,7 +297,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         moteur=adaptateurs.moteur,
         dossier_journal=Path(config.get("dossier_journal")),
         config=config,
-    )
+    ) if edition.avec_dictee_journal() else None
 
     # Gestionnaire de diarization persistant (survit à l'ouverture/fermeture de l'Historique).
     from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
@@ -362,21 +372,29 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     if echecs_raccourcis:
         logger.warning("Raccourcis non enregistrés (déjà pris ?) : %s", ", ".join(echecs_raccourcis))
 
-    orch_dictee.etat_visuel_change.connect(tray.definir_etat_visuel)
-    orch_reunion.etat_visuel_change.connect(tray.definir_etat_visuel)
-    orch_journal.etat_visuel_change.connect(tray.definir_etat_visuel)
-    orch_dictee.etat_visuel_change.connect(fenetre.definir_etat_visuel)
-    orch_reunion.etat_visuel_change.connect(fenetre.definir_etat_visuel)
-    orch_journal.etat_visuel_change.connect(fenetre.definir_etat_visuel)
+    orchestrateurs = [o for o in (orch_dictee, orch_reunion, orch_journal) if o is not None]
+    for orch in orchestrateurs:
+        orch.etat_visuel_change.connect(tray.definir_etat_visuel)
+        orch.etat_visuel_change.connect(fenetre.definir_etat_visuel)
     orch_reunion.micro_perdu.connect(tray.notifier_micro_perdu)
     orch_reunion.micro_retabli.connect(tray.notifier_micro_retabli)
-    orch_dictee.rien_entendu.connect(tray.notifier_rien_entendu)
-    orch_journal.rien_entendu.connect(tray.notifier_rien_entendu)
+    orch_reunion.micro_muet.connect(tray.notifier_micro_muet)
+    # `rien_entendu` n'existe que sur Dictée et Journal — connexions individuelles, une
+    # boucle aveugle sur `orchestrateurs` lèverait sur OrchestrateurReunion.
+    if orch_dictee is not None:
+        orch_dictee.rien_entendu.connect(tray.notifier_rien_entendu)
+    if orch_journal is not None:
+        orch_journal.rien_entendu.connect(tray.notifier_rien_entendu)
 
     # Tray affiché → on (télé)charge le modèle : fenêtre de progression si absent du
     # cache (1er lancement), sinon préchargement silencieux des workers.
-    from debrief_meet.ui.chargeur_modele import precharger_au_demarrage
-    precharger_au_demarrage(adaptateurs.moteur, config)
+    if adaptateurs.moteur is not None:
+        from debrief_meet.ui.chargeur_modele import precharger_au_demarrage
+        precharger_au_demarrage(adaptateurs.moteur, config)
+    else:
+        # Gain le plus visible de l'édition lite : aucun modèle (~1,5 Go) téléchargé au
+        # premier lancement, l'app est utilisable immédiatement (docs/44).
+        logger.info("Aucun moteur local — pas de préchargement de modèle")
 
     # Arrêt propre à la fermeture — l'ordre est important :
     # 0. couper les raccourcis globaux en premier (plus aucun toggle ne doit arriver
@@ -385,15 +403,18 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     # 2. puis terminer le moteur (tue les sous-processus Metal seulement quand ils sont libres)
     app.aboutToQuit.connect(adaptateurs.raccourcis.desactiver_tous)
     app.aboutToQuit.connect(orch_reunion.terminer)
-    app.aboutToQuit.connect(orch_journal.terminer)
-    app.aboutToQuit.connect(orch_dictee.terminer)
+    if orch_journal is not None:
+        app.aboutToQuit.connect(orch_journal.terminer)
+    if orch_dictee is not None:
+        app.aboutToQuit.connect(orch_dictee.terminer)
     app.aboutToQuit.connect(gestionnaire_diar.terminer)  # attend le job avant de tuer le moteur
     app.aboutToQuit.connect(gestionnaire_cr_mistral.terminer)  # attend son éventuel job réseau
     app.aboutToQuit.connect(synchro_bluemind.terminer)
     app.aboutToQuit.connect(planificateur_bluemind.arreter)
     app.aboutToQuit.connect(adaptateurs.micro.terminer)
     app.aboutToQuit.connect(adaptateurs.systeme.terminer)
-    app.aboutToQuit.connect(adaptateurs.moteur.terminer)
+    if adaptateurs.moteur is not None:
+        app.aboutToQuit.connect(adaptateurs.moteur.terminer)
 
     # Commande initiale (ex: --toggle sans instance existante)
     if commande_initiale:

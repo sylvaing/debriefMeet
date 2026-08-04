@@ -4,8 +4,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from debrief_meet.core import ressources
 from debrief_meet.platform.macos.demarrage_auto import DemarrageAutoMacOS
+
+# Adaptateur macOS : les assertions comparent des chemins POSIX au contenu du plist, ce
+# qui échoue sur Windows (antislashes) alors que rien de macOS n'y est livré. Constaté
+# sur la gate VM le 2026-07-30 — antérieur à docs/44, simplement jamais exercé depuis.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin", reason="LaunchAgent macOS uniquement")
 
 
 def test_active_desactive(tmp_path):
