@@ -46,29 +46,36 @@ exclusion elle s'affiche **deux fois** (bug pré-existant, constaté en test man
 `OrchestrateurReunion.reunion_demarree`) pose le chemin actif à la fois sur le watcher
 (§9) et sur `CaptureModel.definir_chemin_actif` ; le retour à `Mode.IDLE` le remet à None.
 
-## Éditions Windows (docs/44) — deux pièges à connaître
+## Mode de transcription (docs/45) — remplace les éditions de docs/44
 
-Deux éditions sont compilées depuis **le même code source** : `complete` (transcription
-locale + diarization + Dictée/Journal) et `lite` (enregistrement Opus seul,
-transcription et CR délégués à l'API Mistral). L'édition est figée au build dans
-`EDITION_COMPILEE` (`src/debrief_meet/_version.py`, généré) et interrogée via
-`core/edition.py` — **jamais `edition()` directement dans le code métier, toujours les
-prédicats `avec_transcription_locale()` / `avec_diarization()` / `avec_dictee_journal()`**.
+**Un seul build** ; le comportement est piloté par la clé de config
+`mode_transcription` : `distant` (défaut — Opus seul, transcription + CR via l'API
+Mistral) ou `local` (Whisper embarqué + diarization + Dictée/Journal). Le mode est
+**figé au démarrage** par `core/mode_transcription.initialiser(config)` (appelé dans
+`__main__` après l'écran de bienvenue, AVANT `configurer_logs` et toute construction
+gatée) ; en changer dans Préférences › Transcription propose un redémarrage
+(`core/redemarrage.py` — relance détachée avec délai APRÈS `app.exec()`, jamais
+avant : mutex Windows + QLocalServer IPC vivent jusqu'à la mort du process).
+**Jamais `mode()` directement dans le code métier, toujours les prédicats
+`avec_transcription_locale()` / `avec_diarization()` / `avec_dictee_journal()`**.
 
-1. **`AppId` identique ⇒ éditions mutuellement exclusives et `config.json` partagé.**
-   Installer lite remplace la complète et inversement. **Aucune clé de `_DEFAUTS` ne
-   doit varier selon l'édition** : `Config.charger()` jette les clés inconnues et
-   `set()` lève dessus, donc une forme propre au lite détruirait silencieusement les
-   réglages de l'autre édition. Toute garantie s'applique **au point d'usage**, jamais
-   par un défaut (un `transcription_live: true` hérité doit être neutralisé par
-   `core/reunion.py`, pas par `_DEFAUTS`).
-2. **Gater sur l'édition, jamais sur `ImportError`.** `moteur_faster_whisper.py`
+1. **Toute garantie s'applique au point d'usage, jamais par un défaut** : un
+   `transcription_live: true` hérité d'un passage en local est neutralisé par
+   `core/reunion.py::_demarrer` (SEUL site à gater), pas par `_DEFAUTS`. De même la
+   garde IPC de `__main__` ignore `--toggle`/`--toggle-journal` en mode distant (un
+   raccourci bureau créé en mode local survit à la bascule).
+2. **Gater sur le mode, jamais sur `ImportError`.** `moteur_faster_whisper.py`
    n'importe `faster_whisper` nulle part au niveau module (c'est le worker qui le
-   fait) : dans un bundle lite le moteur se construirait sans erreur et ne mourrait
-   qu'à la première transcription, chez l'utilisateur.
+   fait) : un moteur construit à tort ne mourrait qu'à la première transcription,
+   chez l'utilisateur.
+3. **Premier lancement** : `accueil_fait` absent/faux ⇒ écran de bienvenue
+   (`ui/premier_lancement.py`) — joue aussi une fois sur les installations
+   antérieures, c'est ce qui rend le défaut « distant pour tous » acceptable.
 
-En dev : `DEBRIEFMEET_EDITION=lite make run` (l'env peut *restreindre* vers lite,
-jamais élargir vers complete).
+En dev : `DEBRIEFMEET_MODE=local|distant make run` (bidirectionnel — le bundle
+unifié contient toute la pile). Les tests, eux, sont déterministes quel que soit
+l'env : autouse global « local » dans `tests/conftest.py`, fixtures
+`mode_local`/`mode_distant`.
 
 ## Commandes essentielles
 
@@ -117,6 +124,14 @@ dont `test_attente_sync_bluemind.py` (nouveau) et les 3 sorties du dialogue F1 e
 variante `contexte_cr`. Mesuré à **1215 passed** en clone partiel, en édition complète
 *et* lite.
 
+Après le mode de transcription unifié (docs/45, 2026-08-04) : **1228 passed** en
+clone partiel (2 échecs d'environnement habituels). La double passe complète/lite et
+la gate « lite sans huggingface_hub » disparaissent par construction (un seul bundle) ;
+le comportement distant est couvert par les tests `mode_distant` explicites.
+Nouveaux : `test_mode_transcription.py`, `test_redemarrage.py`,
+`test_premier_lancement.py` ; supprimés : `test_edition.py`,
+`TestSpecWindowsEditions` (→ `TestSpecWindows`).
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -156,7 +171,8 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco BlueMind — calendrier, invités, notifications (docs/40)** | 🔄 code + tests unitaires ✅ TERMINÉS (2026-07-09, 889 passed sans réseau) — reste : tests d'intégration (`BM_TEST_URL/TOKEN/EMAIL`) et validation manuelle avec Sylvain sur serveur réel (docs/40 §10). **Fix 2026-07-27** : réunions **récurrentes** invisibles à l'association — `_search` renvoie la série maître, pas les occurrences ; ajout de `core/bluemind/recurrence.py` (expansion `rrule`/`exdate`/exceptions, DST-safe, dép. `python-dateutil`), synchro passée en resync complète (incrémental retiré). Validé en réel (clé API temporaire) sur « point commerce Bastien ». cf. docs/40 §5.2 |
 | **ffmpeg embarqué Windows — rétention Opus garantie (docs/41)** | ✅ TERMINÉ (2026-07-12, 938 passed Mac + 780 passed VM) — build+fumée réels validés, setup 159 Mo |
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK. **Complété le 2026-08-04** : le flux « Générer le CR (Mistral) » **propose l'association BlueMind avant l'envoi** quand un événement correspond (le CR n'étant jamais régénéré, c'est le dernier moment pour enrichir sujet/date/participants + `context_bias` Voxtral) — resync forcée et **attendue**, dialogue F1 à 3 sorties (Associer / Sans association / Annuler), association **avant** la confirmation de confidentialité. ⚠️ « Associer » applique le titre donc **renomme le dossier** : le job doit partir sur `dlg.chemin_md`. Fusionné (`56a4462`), validé manuellement, 1222 passed. cf. docs/42 §4.1 |
-| **Édition lite Windows — enregistrement Opus + IA distante (docs/44)** | 🔄 code + tests + **builds réels + fumée** ✅ (2026-07-30) — `debriefMeet-lite-setup-0.2.0+20260730.59fa002.exe` **116 Mo** contre 159 Mo pour la complète (−27 %), **aucun modèle téléchargé** au 1ᵉʳ lancement. Gates VM : **982 passed/5 skipped** (complète) et **971/16** (lite) — l'écart de 11 dans les 2 sens = les `importorskip("huggingface_hub")`. Fumée **0 échec** sur les 2 setups, dont l'assertion décisive « ctranslate2 retiré par le passage à lite » (valide `[InstallDelete]`). **Livrée et utilisée en réel** chez une utilisatrice Windows (docs/44 §8) : CR Voxtral produit avec une vraie clé API. Embarque un bouton « Exporter les logs (.zip)… » (Préférences › Journalisation, indépendant de l'édition), dont le zip **caviarde les secrets** — un diagnostic réel avait transmis clé Mistral et token BlueMind en clair. Révélé au passage **4 bugs pré-existants** : `tzdata` absent sous Windows (récurrences BlueMind en régression DST silencieuse), 2 hypothèses macOS non gardées dans les tests, et une **tempête de reconnexions micro** (3082 en 65 min sur puce Realtek SST → micro non enregistré), corrigée **sur Windows uniquement**. Reste : chaîne de bout en bout avec du vrai contenu audio, + 4 points mineurs (docs/44 §8.7). cf. docs/44 §6-8 |
+| **Édition lite Windows — enregistrement Opus + IA distante (docs/44)** | 🔄 code + tests + **builds réels + fumée** ✅ (2026-07-30) — `debriefMeet-lite-setup-0.2.0+20260730.59fa002.exe` **116 Mo** contre 159 Mo pour la complète (−27 %), **aucun modèle téléchargé** au 1ᵉʳ lancement. Gates VM : **982 passed/5 skipped** (complète) et **971/16** (lite) — l'écart de 11 dans les 2 sens = les `importorskip("huggingface_hub")`. Fumée **0 échec** sur les 2 setups, dont l'assertion décisive « ctranslate2 retiré par le passage à lite » (valide `[InstallDelete]`). **Livrée et utilisée en réel** chez une utilisatrice Windows (docs/44 §8) : CR Voxtral produit avec une vraie clé API. Embarque un bouton « Exporter les logs (.zip)… » (Préférences › Journalisation, indépendant de l'édition), dont le zip **caviarde les secrets** — un diagnostic réel avait transmis clé Mistral et token BlueMind en clair. Révélé au passage **4 bugs pré-existants** : `tzdata` absent sous Windows (récurrences BlueMind en régression DST silencieuse), 2 hypothèses macOS non gardées dans les tests, et une **tempête de reconnexions micro** (3082 en 65 min sur puce Realtek SST → micro non enregistré), corrigée **sur Windows uniquement**. Reste : chaîne de bout en bout avec du vrai contenu audio, + 4 points mineurs (docs/44 §8.7). **⚠️ Remplacée par le mode de transcription unifié (docs/45, 2026-08-04) — plus de build lite.** cf. docs/44 §6-8 |
+| **Mode de transcription unifié — un seul build, réglage Préférences (docs/45)** | 🔄 code + tests ✅ (2026-08-04, **1228 passed** clone partiel) — remplace les éditions complete/lite : clé `mode_transcription` (défaut **distant** pour tous), figée au démarrage par `core/mode_transcription.initialiser()`, prédicats `avec_*` inchangés sur les 17 sites. Préférences réorganisées (9 sections inconditionnelles, section « Transcription » = choix du mode + réglages locaux, « IA en ligne » = ex-Remote IA), écran de bienvenue au 1ᵉʳ lancement (`accueil_fait`, joue aussi sur les installations existantes), redémarrage proposé au changement de mode (`core/redemarrage.py`, relance détachée après `app.exec()`). Chaîne de build lite supprimée (spec, `.iss`, `--lite`, extra `windows-lite`) ; `[InstallDelete]` conservé pour la transition depuis un poste lite. Reste : build VM + fumée du setup unifié, validation manuelle de la relance (3 environnements), transition réelle chez Alix. cf. docs/45 §5 |
 | **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
 
 ## Packaging macOS (Phase 4) — pièges
@@ -177,17 +193,15 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - VM : `192.168.1.29`, SSH `sylvaing` (mot de passe hors dépôt)
 - Script benchmark : `scripts/build_windows_vm.sh`
 - Script spike backends : `scripts/build_spike_backends_vm.sh` ← Phase 5
-- **Script app (setup installeur) : `scripts/build_app_windows_vm.sh [--lite]`** ← Phase 5
+- **Script app (setup installeur) : `scripts/build_app_windows_vm.sh`** ← Phase 5
   (docs/32) — rsync sources + `BUILD_INFO` (date+hash git), pytest bloquant sur la VM,
   PyInstaller onedir (`packaging/windows/debriefMeet.spec`), Inno Setup
   (`packaging/windows/debriefMeet.iss`), rapatrie
-  `dist/debriefMeet-setup-<version>.exe` — ou `dist/debriefMeet-lite-setup-<version>.exe`
-  avec `--lite` (édition lite, docs/44). L'édition traverse toute la chaîne :
-  extra pip `windows-lite`, `generer_version.py --edition`, excludes du spec, `#define`
-  du `.iss`. `scripts/fumee_setup_vm.sh` déduit l'édition du **nom** du setup.
-  Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6 (`ISCC.exe`,
-  souvent installé per-user par winget sous `%LOCALAPPDATA%\Programs\Inno Setup 6\`,
-  pas forcément `Program Files (x86)`).
+  `dist/debriefMeet-setup-<version>.exe`. **Un seul setup depuis docs/45** (plus de
+  `--lite` ni d'extra `windows-lite` — le mode distant/local est un réglage
+  utilisateur). Prérequis VM à installer une fois : Python 3.13 x64, Inno Setup 6
+  (`ISCC.exe`, souvent installé per-user par winget sous
+  `%LOCALAPPDATA%\Programs\Inno Setup 6\`, pas forcément `Program Files (x86)`).
 - **Script fumée (installer/MAJ/désinstaller) : `scripts/fumee_setup_vm.sh`** ← Phase 5
   (docs/37) — via SSH, sans interface graphique : install `/VERYSILENT`, `--version`,
   réinstall par-dessus, désinstallation (docs/32 §4). Rejouable (nettoie avant/après).
@@ -267,4 +281,5 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
 | **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15)** | `docs/43` |
-| **Édition lite Windows (enregistrement Opus + transcription/CR Mistral) — 🔄 code+tests faits, build VM à lancer** | `docs/44` |
+| Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
+| **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |

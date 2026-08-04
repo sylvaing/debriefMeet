@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core.bluemind import association as bluemind_association
 from debrief_meet.core.bluemind.matching import evenements_correspondants
 from debrief_meet.core.bluemind.store import Evenement, StoreCalendrier
@@ -237,7 +237,7 @@ class ReunionView(QWidget):
         # `actif` et l'infobulle — donc CHAQUE ligne afficherait une icône morte
         # « Moteur de transcription indisponible », et l'autre renverrait vers une
         # ligne de Préférences › Audio qui n'existe plus.
-        if ligne.en_attente and edition.avec_transcription_locale():
+        if ligne.en_attente and mode_transcription.avec_transcription_locale():
             if en_cours and type_job == "transcription":
                 actions.append(ActionSpec(_ICONE_EN_COURS, "Transcription en cours…", False, lambda: None))
             else:
@@ -252,7 +252,7 @@ class ReunionView(QWidget):
                     tooltip = "Une tâche est déjà en cours"
                 actions.append(ActionSpec(_ICONE_TRANSCRIRE, tooltip, actif,
                                           lambda c=chemin: self._transcrire(c)))
-        elif not ligne.en_attente and edition.avec_diarization():
+        elif not ligne.en_attente and mode_transcription.avec_diarization():
             if en_cours and type_job == "diarization":
                 actions.append(
                     ActionSpec(_ICONE_EN_COURS, "Génération des locuteurs en cours…", False, lambda: None))

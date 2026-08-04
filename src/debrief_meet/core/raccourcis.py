@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import MachineEtats
 from debrief_meet.platform.interfaces import RaccourcisGlobaux
@@ -31,14 +31,14 @@ _LIBELLES_AUTRES = {"Ctrl": "Ctrl", "Alt": "Alt", "Meta": "Win", "Shift": "Maj"}
 
 
 def actions() -> tuple[tuple[str, str, str], ...]:
-    """`ACTIONS` filtrées par l'édition — Dictée/Journal absentes en lite (docs/44).
+    """`ACTIONS` filtrées par le mode — Dictée/Journal absentes en distant (docs/45).
 
     Point d'étranglement **unique** : alimente à la fois l'enregistrement des raccourcis
     auprès de l'OS (ci-dessous) et les éditeurs de Préférences › Raccourcis. Ne rien
     enregistrer pour Dictée/Journal garantit aussi que l'OS ne délivrera jamais ces
     combinaisons — donc aucun basculement vers un mode sans orchestrateur à l'écoute.
     """
-    if edition.avec_dictee_journal():
+    if mode_transcription.avec_dictee_journal():
         return ACTIONS
     return tuple(a for a in ACTIONS if a[0] == "raccourci_reunion")
 

@@ -7,32 +7,8 @@ cd /d %VM_DIR%
 if errorlevel 1 ( echo ERREUR : impossible de cd vers %VM_DIR% & goto :error )
 echo [build_app.cmd] Repertoire : %CD%
 
-REM Argument 1 (optionnel) : edition compilee -- "complete" (defaut) ou "lite".
-REM lite = sans transcription locale, extra pip windows-lite (docs/44). Passe en
-REM argument et non par variable d'environnement : un `set` dans un `cmd /c` ne
-REM survit pas au `cmd /c` suivant a travers ssh, et l'argument apparait dans le log.
-REM PIEGE (diagnostique le 2026-07-30) : `%~1` ne retire que des guillemets APPARIES.
-REM Via ssh, Windows OpenSSH enveloppe la commande recue dans un SECOND `cmd /c` et son
-REM guillemet fermant fuit dans le dernier argument -> %1 vaut `lite"`, et le
-REM `if "%EDITION%"==""` suivant devient `if "lite"""==""` : "La syntaxe de la commande
-REM n'est pas correcte". D'ou le retrait explicite de tout guillemet.
-REM `if defined` plutot que `if "%VAR%"==""` : insensible aux guillemets parasites.
-REM La substitution %VAR:"=% n'est PAS expansee sur une variable non definie (cmd laisse
-REM le texte litteral, ce qui casse la ligne suivante) -> toujours la garder derriere
-REM `if defined`.
-set EDITION=%~1
-if defined EDITION set EDITION=%EDITION:"=%
-if not defined EDITION set EDITION=complete
-REM Ifs plats (pas de chaine if/else if/else) : meme style que le reste du fichier,
-REM et un seul bloc parenthese, plus robuste a lire comme a parser.
-set EXTRA=
-if /i "%EDITION%"=="complete" set EXTRA=windows
-if /i "%EDITION%"=="lite" set EXTRA=windows-lite
-if not defined EXTRA (
-    echo ERREUR : edition inconnue "%EDITION%" ^(attendu : complete ou lite^)
-    goto :error
-)
-echo [build_app.cmd] Edition : %EDITION% ^(extra pip : %EXTRA%^)
+REM Un seul build depuis docs/45 (plus d'argument edition — les editions complete/lite
+REM de docs/44 ont disparu, le mode distant/local est un reglage utilisateur).
 
 echo [1/6] Creation du venv Python 3.13...
 if exist .venv-build ( rmdir /s /q .venv-build )
@@ -43,7 +19,7 @@ python -m pip install --upgrade pip
 if errorlevel 1 goto :error
 REM Crochets non quotes : `[` et `]` ne sont pas speciaux pour cmd.exe (ils le
 REM seraient en PowerShell/zsh) -- ne pas "corriger" en ajoutant des quotes.
-python -m pip install -e .[%EXTRA%,dev]
+python -m pip install -e .[windows,dev]
 if errorlevel 1 goto :error
 python -m pip install pyinstaller
 if errorlevel 1 goto :error
@@ -52,10 +28,9 @@ echo [2/6] Telechargement/verification ffmpeg (lgpl, cache VM)...
 call packaging\windows\telecharger_ffmpeg.cmd
 if errorlevel 1 goto :error
 
-echo [3/6] Generation de la version + edition (_version.py + version.iss)...
-REM Doit passer AVANT pytest [4/6] : le spec, le .iss et core/edition.py lisent tous
-REM les fichiers generes ici -- la gate de tests tourne donc dans l'edition construite.
-python packaging\windows\generer_version.py --build-info BUILD_INFO --edition %EDITION%
+echo [3/6] Generation de la version (_version.py + version.iss)...
+REM Avant pytest [4/6] : le spec et le .iss lisent les fichiers generes ici.
+python packaging\windows\generer_version.py --build-info BUILD_INFO
 if errorlevel 1 goto :error
 
 echo [4/6] Suite de tests (bloquant - build refuse si rouge, docs/32)...

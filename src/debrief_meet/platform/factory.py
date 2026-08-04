@@ -6,7 +6,7 @@ import platform
 import sys
 from dataclasses import dataclass
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.platform.interfaces import (
     CaptureMicro,
     CaptureAudioSysteme,
@@ -64,8 +64,8 @@ def _macos() -> Adaptateurs:
     import platform as _plat
 
     moteur: MoteurTranscription | None
-    if not edition.avec_transcription_locale():
-        logger.info("Édition lite — aucun moteur de transcription local")
+    if not mode_transcription.avec_transcription_locale():
+        logger.info("Mode distant — aucun moteur de transcription local")
         moteur = None
     elif _plat.machine() == "arm64":
         try:
@@ -112,13 +112,13 @@ def _windows() -> Adaptateurs:
     # Sur Windows, un repli stub est un événement grave (docs/34 §0) : loggé en
     # WARNING avec l'exception d'origine — jamais un silence, seul canal de debug
     # une fois livré à Bastien/Alix.
-    # Gate sur l'ÉDITION et non sur un `except ImportError` : `moteur_faster_whisper.py`
+    # Gate sur le MODE et non sur un `except ImportError` : `moteur_faster_whisper.py`
     # n'importe `faster_whisper` nulle part au niveau module (c'est le sous-processus
-    # worker qui le fait), donc en bundle lite le moteur se construirait très bien et ne
-    # mourrait qu'à la première transcription (docs/44).
+    # worker qui le fait), donc un moteur construit à tort ne mourrait qu'à la première
+    # transcription (docs/45).
     moteur: MoteurTranscription | None
-    if not edition.avec_transcription_locale():
-        logger.info("Édition lite — aucun moteur de transcription local "
+    if not mode_transcription.avec_transcription_locale():
+        logger.info("Mode distant — aucun moteur de transcription local "
                     "(transcription et CR délégués à l'API Mistral)")
         moteur = None
     else:
@@ -178,7 +178,7 @@ def _windows() -> Adaptateurs:
 def _linux() -> Adaptateurs:
     # Phase 6 : MoteurFasterWhisper, PipeWire, systemd
     return Adaptateurs(
-        moteur=MoteurStub() if edition.avec_transcription_locale() else None,
+        moteur=MoteurStub() if mode_transcription.avec_transcription_locale() else None,
         micro=MicroStub(),
         systeme=SystemeStub(),
         presse_papiers=PressePapiersStub(),

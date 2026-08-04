@@ -8,28 +8,12 @@
 ; ISCC (MonAppVersion/MonAppVersionNum) — ne pas le committer (cf. .gitignore).
 #include "version.iss"
 
-; ── Édition compilée (docs/44) ──────────────────────────────────────────────────
-;
-; `#define MonAppEdition` est écrit par generer_version.py en même temps que la
-; version. Le #ifndef tolère un version.iss produit par un générateur antérieur :
-; on compile alors l'édition complète (comportement historique).
-#ifndef MonAppEdition
-  #define MonAppEdition "complete"
-#endif
-
-; SEULS le nom affiché et le nom de fichier du setup changent. AppId, DefaultDirName,
-; AppMutex et [UninstallDelete] restent IDENTIQUES : les deux éditions sont
-; MUTUELLEMENT EXCLUSIVES — installer lite remplace la complète et inversement, une
-; seule entrée dans « Applications installées », mêmes %LOCALAPPDATA%\debriefMeet et
-; Documents\debriefMeet. ISPP compare les chaînes sans tenir compte de la casse, et
-; generer_version.py n'émet que des minuscules : pas d'ambiguïté.
-#if MonAppEdition == "lite"
-  #define MonAppNom "debriefMeet Lite"
-  #define MonAppFichier "debriefMeet-lite-setup"
-#else
-  #define MonAppNom "debriefMeet"
-  #define MonAppFichier "debriefMeet-setup"
-#endif
+; Un seul setup depuis docs/45 (les éditions complete/lite de docs/44 ont disparu —
+; le mode distant/local est un réglage utilisateur dans les Préférences). AppId
+; identique à l'époque des deux éditions : le setup unifié remplace proprement une
+; installation « debriefMeet Lite » existante (traitée comme une mise à jour).
+#define MonAppNom "debriefMeet"
+#define MonAppFichier "debriefMeet-setup"
 
 [Setup]
 ; GUID figé une fois pour toutes (2026-07-03) — équivalent du bundle id macOS
@@ -56,24 +40,23 @@ Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 
-; ── Éditions mutuellement exclusives : nettoyage AVANT copie (docs/44) ──────────
+; ── Nettoyage AVANT copie (hérité de docs/44, toujours nécessaire) ──────────────
 ;
 ; [Files] COPIE par-dessus, il ne fait jamais de miroir : les fichiers présents dans
 ; l'ancienne installation et absents de la nouvelle SURVIVENT (Inno ne les retire
 ; qu'au désinstall, depuis son log — or une MAJ ne rejoue pas l'ancien désinstalleur).
-; Sans cette section, installer lite par-dessus la complète laisserait ~150-200 Mo de
-; DLL mortes (ctranslate2, av, onnxruntime) dans {app}\_internal : inertes, mais tout
-; le gain de taille de l'édition lite disparaîtrait sur le chemin de mise à jour.
 ; `_internal` appartient à 100 % à l'installeur (PyInstaller >= 6 y met TOUT sauf
-; debriefMeet.exe) → le vider est sûr et idempotent. Coût : la totalité du bundle est
-; recopiée à chaque MAJ (c'était déjà le cas en pratique). Une install interrompue
-; APRÈS ce nettoyage laisse l'app inutilisable jusqu'au prochain run — acceptable,
-; identique à toute MAJ interrompue. Cette section tourne après AppMutex/
-; CloseApplications (app déjà fermée) et avant [Files].
+; debriefMeet.exe) → le vider est sûr et idempotent, et garantit qu'aucune DLL d'un
+; ancien bundle ne survit à une MAJ. Coût : la totalité du bundle est recopiée à
+; chaque MAJ (c'était déjà le cas en pratique). Une install interrompue APRÈS ce
+; nettoyage laisse l'app inutilisable jusqu'au prochain run — acceptable, identique
+; à toute MAJ interrompue. Cette section tourne après AppMutex/CloseApplications
+; (app déjà fermée) et avant [Files].
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
-; Raccourci de l'AUTRE édition (le nôtre est recréé juste après par [Icons]) — le
-; désinstalleur ne retire que les raccourcis de SON log, jamais ceux de l'autre.
+; Les DEUX raccourcis historiques (le nôtre est recréé juste après par [Icons]) :
+; « debriefMeet Lite.lnk » reste listé pour la transition depuis une installation
+; lite d'avant docs/45 — le désinstalleur ne retire que les raccourcis de SON log.
 Type: files; Name: "{userstartmenu}\debriefMeet.lnk"
 Type: files; Name: "{userstartmenu}\debriefMeet Lite.lnk"
 

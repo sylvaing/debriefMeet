@@ -338,19 +338,20 @@ class TestBuildAppVersion:
 
 # ── Packaging Windows : éditions complète / lite (docs/44) ────────────────────
 
-class TestSpecWindowsEditions:
-    """Hygiène du spec PyInstaller et du .iss Windows — jusqu'ici non couverts.
+class TestSpecWindows:
+    """Hygiène du spec PyInstaller et du .iss Windows.
 
-    Lecture **structurelle** (`ast`) des listes d'excludes plutôt que textuelle : un
-    commentaire citant « ctranslate2 » ne doit pas pouvoir faire passer le test. Aucun
-    lancement de PyInstaller ni d'ISCC : ces vérifications tournent partout, en ms.
+    Lecture **structurelle** (`ast`) des listes plutôt que textuelle : un commentaire
+    citant « ctranslate2 » ne doit pas pouvoir faire passer le test. Aucun lancement
+    de PyInstaller ni d'ISCC : ces vérifications tournent partout, en ms.
     """
 
     SPEC = ROOT / "packaging" / "windows" / "debriefMeet.spec"
     ISS = ROOT / "packaging" / "windows" / "debriefMeet.iss"
 
-    # GUID figé le 2026-07-03 — c'est lui qui rend une réinstallation (et un changement
-    # d'édition) équivalente à une mise à jour. Ne jamais le changer (docs/32 §3.3).
+    # GUID figé le 2026-07-03 — c'est lui qui rend une réinstallation (y compris
+    # par-dessus une ancienne édition lite de docs/44) équivalente à une mise à
+    # jour. Ne jamais le changer (docs/32 §3.3).
     APP_ID = "{{C18F22B8-EBDF-46FD-8E97-2F4334DA3182}"
 
     def _liste(self, nom: str) -> list[str]:
@@ -376,59 +377,42 @@ class TestSpecWindowsEditions:
         directives = self._directives()
         return directives[directives.index(debut):directives.index(fin)]
 
-    # ── Spec : excludes par édition ───────────────────────────────────────────
+    # ── Spec : bundle unifié (docs/45) ────────────────────────────────────────
 
-    def test_lite_exclut_toute_la_pile_de_transcription_locale(self):
-        exclus = set(self._liste("EXCLUDES_LITE"))
-        # `av` et `onnxruntime` ont un hook _pyinstaller_hooks_contrib dédié : sans
-        # exclusion NOMMÉE ils restent dans le bundle (~41 Mo de wheel à eux deux).
-        for paquet in ("faster_whisper", "ctranslate2", "tokenizers",
-                       "huggingface_hub", "onnxruntime", "av"):
-            assert paquet in exclus, f"{paquet} devrait sortir du bundle lite"
-
-    def test_lite_garde_le_loopback_et_l_aec(self):
-        """Décision docs/44 : soundcard (loopback WASAPI, sans quoi l'autre partie
-        n'est pas enregistrée) et livekit (AEC3) restent dans l'édition lite."""
-        exclus = set(self._liste("EXCLUDES_LITE"))
-        assert "soundcard" not in exclus
-        assert "livekit" not in exclus
+    def test_pile_locale_toujours_collectee(self):
+        """Bundle unique : la pile de transcription locale est embarquée
+        inconditionnellement — c'est le réglage `mode_transcription` qui décide à
+        l'exécution si le moteur est construit."""
+        paquets = set(self._liste("PAQUETS_MOTEUR_LOCAL"))
+        for paquet in ("faster_whisper", "ctranslate2", "huggingface_hub", "tokenizers"):
+            assert paquet in paquets
 
     def test_excludes_communs_conservent_macos_et_diarization(self):
         exclus = set(self._liste("EXCLUDES"))
         for paquet in ("mlx", "mlx_whisper", "pyannote", "torch"):
             assert paquet in exclus
 
-    def test_spec_lit_l_edition_dans_le_fichier_genere(self):
-        """Et non dans une variable d'environnement : le module core/edition.py
-        embarqué lit le MÊME fichier, les deux ne peuvent donc pas se contredire."""
-        contenu = self.SPEC.read_text(encoding="utf-8")
-        assert "EDITION_COMPILEE" in contenu
-        assert "DEBRIEFMEET_EDITION" not in contenu
+    def test_aucun_residu_de_la_chaine_editions(self):
+        """docs/44 retiré : plus d'EDITION_COMPILEE, de MonAppEdition ni de branche
+        lite nulle part dans la chaîne de build."""
+        spec = self.SPEC.read_text(encoding="utf-8")
+        iss = self.ISS.read_text(encoding="utf-8")
+        for marqueur in ("EDITION_COMPILEE", "DEBRIEFMEET_EDITION", "EXCLUDES_LITE"):
+            assert marqueur not in spec, f"résidu d'édition dans le spec : {marqueur}"
+        assert "MonAppEdition" not in iss
 
-    def test_worker_faster_whisper_seulement_hors_lite(self):
-        contenu = self.SPEC.read_text(encoding="utf-8")
-        assert "_fw_worker" in contenu
-        i_garde = contenu.index("if not LITE:")
-        assert i_garde < contenu.index("_fw_worker"), \
-            "_fw_worker doit être ajouté sous la garde `if not LITE:`"
+    def test_worker_faster_whisper_en_hiddenimport(self):
+        """Relancé via --fw-worker (import dynamique) : invisible à l'analyse
+        statique de PyInstaller sans hiddenimport explicite."""
+        assert "debrief_meet.platform.windows._fw_worker" in self._liste("hiddenimports")
 
-    # ── .iss : ce qui doit rester gelé entre les deux éditions ────────────────
+    # ── .iss : ce qui doit rester gelé ────────────────────────────────────────
 
     def test_app_id_unique_et_inchange(self):
         lignes = [l for l in self._directives().splitlines()
                   if l.strip().startswith("AppId=")]
         assert lignes == [f"AppId={self.APP_ID}"], \
-            "AppId doit être unique et identique dans les deux éditions"
-
-    def test_app_id_et_dossier_hors_conditionnelle(self):
-        """Un AppId ou un DefaultDirName sous #if casserait l'exclusivité mutuelle."""
-        directives = self._directives()
-        for directive in ("AppId=", "DefaultDirName="):
-            avant = directives[:directives.index(directive)]
-            # `#ifndef` contient « #if » : les deux compteurs s'équilibrent tant que
-            # chaque bloc ouvert est refermé avant la directive.
-            assert avant.count("#if") == avant.count("#endif"), \
-                f"{directive} se trouve dans un bloc #if"
+            "AppId doit rester unique et inchangé (MAJ depuis toute installation antérieure)"
 
     def test_app_mutex_egal_au_mutex_de_l_app(self):
         """Invariant inter-fichiers tenu jusqu'ici par un simple commentaire : si les
@@ -445,23 +429,19 @@ class TestSpecWindowsEditions:
         assert "#if" not in section, "la racine de données est partagée, jamais conditionnelle"
 
     def test_install_delete_vide_le_bundle_precedent(self):
-        """Sans ça, installer lite par-dessus la complète laisse les DLL Whisper sur
-        le disque et annule tout le gain de taille (docs/44)."""
+        """[Files] copie sans miroir : sans ce nettoyage, les fichiers d'un ancien
+        bundle survivent aux MAJ. Les deux .lnk restent listés pour la transition
+        depuis une installation lite d'avant docs/45."""
         section = self._section("[InstallDelete]", "[Files]")
         assert r"{app}\_internal" in section
+        assert r"debriefMeet.lnk" in section
+        assert r"debriefMeet Lite.lnk" in section
 
-    # ── .iss : ce qui doit varier ─────────────────────────────────────────────
-
-    def test_nom_et_fichier_setup_derives_de_l_edition(self):
+    def test_nom_et_fichier_setup_uniques(self):
         contenu = self.ISS.read_text(encoding="utf-8")
-        assert "AppName={#MonAppNom}" in contenu
+        assert '#define MonAppNom "debriefMeet"' in contenu
+        assert '#define MonAppFichier "debriefMeet-setup"' in contenu
         assert "OutputBaseFilename={#MonAppFichier}-{#MonAppVersion}" in contenu
-        assert '#define MonAppNom "debriefMeet Lite"' in contenu
-
-    def test_edition_absente_retombe_sur_complete(self):
-        """Tolère un version.iss produit par un générateur antérieur."""
-        contenu = self.ISS.read_text(encoding="utf-8")
-        assert "#ifndef MonAppEdition" in contenu
 
 
 # ── Benchmark : assemblage du bundle portable ─────────────────────────────────

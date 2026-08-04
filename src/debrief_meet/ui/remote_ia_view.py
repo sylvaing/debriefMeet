@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
 from debrief_meet.ui.assistant_mistral import AssistantMistral
@@ -138,10 +138,10 @@ class RemoteIAView(QWidget):
         bloc_cr.addWidget(self._combo_modele_cr)
         lay.addLayout(bloc_cr)
 
-        # Inerte en édition lite : il n'y a jamais de transcription locale à ignorer, et
+        # Inerte en mode distant : il n'y a jamais de transcription locale à ignorer, et
         # `mistral_source_transcription="auto"` y est déjà équivalent à "voxtral"
-        # (`pipeline._lire_transcript_local` rend None sur le placeholder) — docs/44.
-        if edition.avec_transcription_locale():
+        # (`pipeline._lire_transcript_local` rend None sur le placeholder) — docs/45.
+        if mode_transcription.avec_transcription_locale():
             self._check_forcer_voxtral = QCheckBox(
                 "Toujours transcrire via Voxtral (ignorer la transcription locale)")
             self._check_forcer_voxtral.setChecked(

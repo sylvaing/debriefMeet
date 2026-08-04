@@ -13,12 +13,6 @@ from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 from tests.fakes.adapters import MicroFake, MoteurFake, SystemeFake
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : la transcription en direct, absente en lite — édition complète épinglée sauf test lite explicite
-    (docs/44)."""
-
-
 class _FauxSurveillant(QObject):
     """Émet `change` à la demande pour simuler un changement de périphérique."""
     change = Signal()
@@ -806,11 +800,11 @@ def test_terminer_joint_le_thread_meme_apres_isRunning_faux(qapp, qtbot, monkeyp
     assert appels[0][0] is orch._thread
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
-def test_lite_force_l_audio_seul_malgre_la_config(qapp, tmp_path, edition_lite):
-    """Le config.json d'une install complète survit à la MAJ vers lite (AppId
-    identique) : `transcription_live: true` ne doit pas y ressusciter la transcription."""
+def test_distant_force_l_audio_seul_malgre_la_config(qapp, tmp_path, mode_distant):
+    """`transcription_live: true` (hérité d'un passage en mode local) ne doit pas
+    ressusciter la transcription en direct une fois le mode distant choisi."""
     machine = MachineEtats()
     orch, *_ = _creer(machine, tmp_path, transcription_live=True, retention_audio=False)
 
@@ -821,7 +815,7 @@ def test_lite_force_l_audio_seul_malgre_la_config(qapp, tmp_path, edition_lite):
     assert machine.mode is Mode.IDLE           # jamais d'état TRANSCRIPTION
 
 
-def test_lite_ecrit_un_placeholder_transcriptible_plus_tard(qapp, tmp_path, edition_lite):
+def test_distant_ecrit_un_placeholder_transcriptible_plus_tard(qapp, tmp_path, mode_distant):
     from debrief_meet.core.fichiers import transcription_en_attente
 
     machine = MachineEtats()
@@ -834,7 +828,7 @@ def test_lite_ecrit_un_placeholder_transcriptible_plus_tard(qapp, tmp_path, edit
         "le .md doit porter le marqueur « en attente » pour que Mistral le reprenne"
 
 
-def test_lite_sans_moteur_ne_crashe_pas_a_l_arret(qapp, tmp_path, edition_lite):
+def test_distant_sans_moteur_ne_crashe_pas_a_l_arret(qapp, tmp_path, mode_distant):
     """`moteur=None` : `terminer()` passait `debloquer=self._moteur.terminer`."""
     machine = MachineEtats()
     orch, *_ = _creer(machine, tmp_path, moteur=None, transcription_live=True)

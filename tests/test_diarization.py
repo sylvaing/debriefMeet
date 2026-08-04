@@ -156,8 +156,8 @@ def test_token_hf_depuis_env(monkeypatch):
 def test_token_hf_repli_cache(monkeypatch):
     # Sans HF_TOKEN, on retombe sur le cache huggingface_hub.get_token().
     monkeypatch.delenv("HF_TOKEN", raising=False)
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "get_token", lambda: "hf_cache")
@@ -298,8 +298,8 @@ def test_generer_locuteurs_aucune_piste(tmp_path):
 # ── Onboarding : détection cache (modele_telecharge / configuree) ───────────────
 
 def test_modele_telecharge_vrai(monkeypatch):
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache",
@@ -309,8 +309,8 @@ def test_modele_telecharge_vrai(monkeypatch):
 
 
 def test_modele_telecharge_faux(monkeypatch):
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache",
@@ -327,12 +327,12 @@ def test_telecharger_token_vide_leve_erreur_token():
 
 
 def test_verifier_acces_gated_leve_erreur_licence(monkeypatch):
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     from huggingface_hub.utils import GatedRepoError
 
@@ -344,12 +344,12 @@ def test_verifier_acces_gated_leve_erreur_licence(monkeypatch):
 
 
 def test_verifier_acces_repo_introuvable_leve_erreur_token(monkeypatch):
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     from huggingface_hub.utils import RepositoryNotFoundError
 
@@ -361,8 +361,8 @@ def test_verifier_acces_repo_introuvable_leve_erreur_token(monkeypatch):
 
 
 def test_verifier_acces_reseau_leve_erreur_reseau(monkeypatch):
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     import huggingface_hub
 
@@ -386,8 +386,8 @@ def test_charger_force_offline_sans_token(monkeypatch):
     """_charger() lit le cache local en forçant HF_HUB_OFFLINE, sans token ni
     `local_files_only` (supprimé en pyannote 4.x — cf. docs/29)."""
     import sys, types
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     from huggingface_hub import constants
 
@@ -448,8 +448,8 @@ def test_generer_locuteurs_remonte_erreur_de_chargement_avant_la_boucle(tmp_path
 
 
 def test_mode_offline_hf_restaure_meme_si_exception():
-    # `huggingface_hub` sort du bundle en édition lite (docs/44) : ce test porte
-    # sur du code qui en dépend, il se saute plutôt que de casser la gate lite.
+    # `huggingface_hub` peut manquer dans l'environnement (clone partiel, docs/44) :
+    # ce test porte sur du code qui en dépend, il se saute plutôt que de casser.
     pytest.importorskip("huggingface_hub")
     from huggingface_hub import constants
 

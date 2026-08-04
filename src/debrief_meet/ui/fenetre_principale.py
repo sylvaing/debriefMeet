@@ -36,7 +36,7 @@ from debrief_meet.ui.icones import icone_bascule
 from debrief_meet.ui.journal_view import JournalView
 from debrief_meet.ui.preferences_view import PreferencesView
 from debrief_meet.ui.recording_controller import RecordingController
-from debrief_meet.core import edition
+from debrief_meet.core import mode_transcription
 from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.theme import C, M, MONO, SANS
 from debrief_meet.ui.wavemark import wavemark_icon
@@ -75,9 +75,9 @@ class FenetrePrincipale(QMainWindow):
             config, machine, presse_papiers, gestionnaire, bluemind_store, gestionnaire_cr_mistral,
             bluemind_synchro, self)
         self._dictee_view = DicteeView(config, machine, self) \
-            if edition.avec_dictee_journal() else None
+            if mode_transcription.avec_dictee_journal() else None
         self._journal_view = JournalView(config, machine, presse_papiers, self) \
-            if edition.avec_dictee_journal() else None
+            if mode_transcription.avec_dictee_journal() else None
         self._preferences_view = PreferencesView(
             config, demarrage_auto, moteur, reappliquer_raccourcis,
             bluemind_reinitialiser_sync, bluemind_declencher_sync, self)

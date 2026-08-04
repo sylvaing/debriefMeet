@@ -18,12 +18,6 @@ from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.status_pill import HistoryState
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : les actions Transcrire / Générer les locuteurs — édition complète épinglée sauf test lite explicite
-    (docs/44)."""
-
-
 @pytest.fixture
 def machine(qapp):
     return MachineEtats()
@@ -975,24 +969,24 @@ def test_bulk_ignorer_audio_sur_selection(qapp, machine, tmp_path, monkeypatch):
     assert not b.with_name("moi.wav").exists()
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
 def _icones(actions) -> list[str]:
     return [a.icone for a in actions]
 
 
-def test_lite_pas_d_action_locuteurs_sur_une_reunion_transcrite(
-        qapp, machine, tmp_path, edition_lite):
+def test_distant_pas_d_action_locuteurs_sur_une_reunion_transcrite(
+        qapp, machine, tmp_path, mode_distant):
     _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert "users" not in _icones(_actions(vue))
 
 
-def test_lite_pas_d_action_transcrire_sur_une_reunion_en_attente(
-        qapp, machine, tmp_path, edition_lite):
+def test_distant_pas_d_action_transcrire_sur_une_reunion_en_attente(
+        qapp, machine, tmp_path, mode_distant):
     """Sans ce gate, CHAQUE ligne afficherait une icône grisée « Moteur de
-    transcription indisponible » : en lite toute réunion est « en attente » jusqu'à ce
-    que Mistral écrive le transcript."""
+    transcription indisponible » : en distant toute réunion est « en attente » jusqu'à
+    ce que Mistral écrive le transcript."""
     _reunion_en_attente(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     icones = _icones(_actions(vue))
@@ -1000,7 +994,7 @@ def test_lite_pas_d_action_transcrire_sur_une_reunion_en_attente(
     assert "users" not in icones
 
 
-def test_lite_conserve_les_actions_communes(qapp, machine, tmp_path, edition_lite):
+def test_distant_conserve_les_actions_communes(qapp, machine, tmp_path, mode_distant):
     """Le gate ne doit toucher que ces deux actions."""
     _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())

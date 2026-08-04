@@ -11,11 +11,6 @@ from debrief_meet.core.config import Config
 from debrief_meet.ui.remote_ia_view import RemoteIAView
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : dont la case « forcer Voxtral », absente en lite — édition complète épinglée sauf test lite explicite
-    (docs/44)."""
-
 URL = "https://api.mistral.ai"
 
 
@@ -104,10 +99,10 @@ def test_tester_connexion_echec(qapp, qtbot, tmp_path):
     qtbot.waitUntil(lambda: "Échec" in vue._label_statut.text(), timeout=5000)
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
-def test_lite_pas_de_case_forcer_voxtral(qapp, tmp_path, edition_lite):
-    """Inerte en lite : il n'y a jamais de transcription locale à ignorer, et
+def test_distant_pas_de_case_forcer_voxtral(qapp, tmp_path, mode_distant):
+    """Inerte en distant : il n'y a jamais de transcription locale à ignorer, et
     « auto » y est déjà équivalent à « voxtral »."""
     cfg = _config(tmp_path)
     vue = RemoteIAView(cfg)

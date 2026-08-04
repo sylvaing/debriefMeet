@@ -12,10 +12,10 @@ Variante debug (console visible — utile pour déboguer à distance sans machin
 Windows de dev) : définir DEBRIEFMEET_CONSOLE=1 dans l'environnement avant de
 lancer pyinstaller. v1 livrée en console=False.
 
-Édition compilée : lue dans `src/debrief_meet/_version.py` (généré par
-generer_version.py --edition, étape 3/6 de build_app.cmd) — source UNIQUE de vérité,
-partagée avec le module `core/edition.py` embarqué. En lite, toute la pile de
-transcription locale sort du bundle (docs/44).
+Bundle unique (docs/45) : les éditions complete/lite de docs/44 ont disparu, le
+bundle embarque toujours la pile de transcription locale — c'est le réglage
+utilisateur `mode_transcription` qui décide à l'exécution si le moteur est
+construit.
 """
 import os
 import re
@@ -37,37 +37,13 @@ ICONE = os.path.join(SPECPATH, "debriefMeet.ico")
 
 CONSOLE = os.environ.get("DEBRIEFMEET_CONSOLE") == "1"
 
-
-def _edition_compilee():
-    """Édition lue dans `_version.py` (généré juste avant ce spec, build_app.cmd 3/6).
-
-    Pas de variable d'environnement : le module `core/edition.py` embarqué lit le MÊME
-    fichier, donc les `excludes` ci-dessous et le comportement à l'exécution ne peuvent
-    pas se contredire — un bundle privé de ctranslate2 mais dont l'app se croit complète
-    proposerait une transcription locale qui meurt au premier usage. Fichier absent
-    (pyinstaller lancé à la main) → édition complète.
-    """
-    try:
-        contenu = open(os.path.join(SRC, "debrief_meet", "_version.py"), encoding="utf-8").read()
-    except OSError:
-        return "complete"
-    m = re.search(r'EDITION_COMPILEE\s*=\s*"([^"]+)"', contenu)
-    return m.group(1) if m else "complete"
-
-
-EDITION = _edition_compilee()
-LITE = EDITION == "lite"
-print(f"[spec] edition = {EDITION}")
-
 # ── Ressources embarquées ─────────────────────────────────────────────────────
 datas = [
     (ASSETS, os.path.join("debrief_meet", "ui", "assets")),
 ]
 binaries = []
-hiddenimports = []
-if not LITE:
-    # Relancé via --fw-worker ; aucun moteur local en lite → aucun worker à relancer.
-    hiddenimports.append("debrief_meet.platform.windows._fw_worker")
+# Relancé via --fw-worker : import dynamique, invisible à l'analyse statique.
+hiddenimports = ["debrief_meet.platform.windows._fw_worker"]
 
 # ffmpeg embarqué (lgpl BtbN, rétention Opus — docs/41) : téléchargé par
 # telecharger_ffmpeg.cmd, jamais commité. Échec dur si absent : le spec ne
@@ -87,9 +63,9 @@ datas.append((FFMPEG_LICENCE, "ffmpeg"))
 PAQUETS_MOTEUR_LOCAL = ("faster_whisper", "ctranslate2", "huggingface_hub", "tokenizers")
 # soundcard = loopback WASAPI, livekit = AEC3, tzdata = base de fuseaux (absente de
 # Windows, sans quoi `zoneinfo` retombe en silence sur un offset figé et les récurrences
-# BlueMind refont le bug DST de docs/40 §5.2) — les DEUX éditions.
+# BlueMind refont le bug DST de docs/40 §5.2).
 PAQUETS_COMMUNS = ("soundcard", "livekit", "tzdata")
-for paquet in (PAQUETS_COMMUNS if LITE else PAQUETS_MOTEUR_LOCAL + PAQUETS_COMMUNS):
+for paquet in PAQUETS_MOTEUR_LOCAL + PAQUETS_COMMUNS:
     try:
         d, b, h = collect_all(paquet)
         datas += d
@@ -100,14 +76,6 @@ for paquet in (PAQUETS_COMMUNS if LITE else PAQUETS_MOTEUR_LOCAL + PAQUETS_COMMU
 
 # Rien de macOS/diarization dans le bundle Windows (docs/33 §2.7, docs/30 §8).
 EXCLUDES = ["tkinter", "pytest", "matplotlib", "mlx", "mlx_whisper", "pyannote", "torch"]
-# Lite : toute la pile de transcription locale sort (docs/44). `av` et `onnxruntime` ne
-# sont JAMAIS importés par notre code (zéro occurrence dans src/) — ils n'entrent que
-# via faster_whisper, mais _pyinstaller_hooks_contrib fournit un hook dédié pour chacun
-# (hook-av.py, hook-onnxruntime.py) : il faut donc les exclure NOMMÉMENT, sinon ils
-# restent dans le bundle (~41 Mo de wheel à eux deux, le plus gros du gain).
-# `hf_xet` est tiré par huggingface_hub 1.x (ceinture + bretelles).
-EXCLUDES_LITE = ["faster_whisper", "ctranslate2", "tokenizers", "huggingface_hub",
-                 "hf_xet", "onnxruntime", "av"]
 
 block_cipher = None
 
@@ -119,7 +87,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=(EXCLUDES + EXCLUDES_LITE) if LITE else EXCLUDES,
+    excludes=EXCLUDES,
     cipher=block_cipher,
     noarchive=False,
 )

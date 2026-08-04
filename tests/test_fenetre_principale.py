@@ -13,12 +13,6 @@ from debrief_meet.ui.fenetre_principale import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : les 4 pages, dont Dictée et Journal — édition complète
-    épinglée sauf test lite explicite (docs/44)."""
-
-
 def _config(tmp_path):
     cfg = Config(chemin=tmp_path / "config.json")
     cfg.set("dossier_reunions", str(tmp_path / "r"))
@@ -102,9 +96,9 @@ def test_onglets_navigables_pendant_enregistrement(fen, machine):
     assert machine.mode == Mode.REUNION
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
-def test_lite_deux_pages_sans_dictee_ni_journal(qapp, machine, tmp_path, edition_lite):
+def test_distant_deux_pages_sans_dictee_ni_journal(qapp, machine, tmp_path, mode_distant):
     fenetre = FenetrePrincipale(machine, _config(tmp_path))
     try:
         assert fenetre._pages.count() == 2          # Réunion + Préférences
@@ -116,9 +110,9 @@ def test_lite_deux_pages_sans_dictee_ni_journal(qapp, machine, tmp_path, edition
         fenetre._recording_controller._timer.stop()
 
 
-def test_lite_les_pages_restantes_restent_atteignables(qapp, machine, tmp_path, edition_lite):
+def test_distant_les_pages_restantes_restent_atteignables(qapp, machine, tmp_path, mode_distant):
     """Les constantes PAGE_* ne sont plus des index de pile : Préférences est en
-    position 1 en lite, et `afficher_preferences()` doit quand même y aller."""
+    position 1 en distant, et `afficher_preferences()` doit quand même y aller."""
     fenetre = FenetrePrincipale(machine, _config(tmp_path))
     try:
         fenetre.afficher_preferences()

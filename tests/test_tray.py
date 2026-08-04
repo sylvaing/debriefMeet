@@ -10,12 +10,6 @@ from debrief_meet.ui.fenetre_principale import PAGE_PREFERENCES, PAGE_REUNION, F
 from debrief_meet.ui.tray import IconeTray
 
 
-@pytest.fixture(autouse=True)
-def _edition(edition_complete_sauf_si_lite):
-    """Sujet du module : les 3 items de mode du menu — édition complète épinglée sauf test lite explicite
-    (docs/44)."""
-
-
 def _config(tmp_path):
     cfg = Config(chemin=tmp_path / "config.json")
     cfg.set("dossier_reunions", str(tmp_path / "r"))
@@ -198,9 +192,9 @@ def test_clic_droit_affiche_le_menu(qapp, tmp_path, monkeypatch):
     assert len(appels) == 1
 
 
-# ── Édition lite (docs/44) ───────────────────────────────────────────────────
+# ── Mode distant (docs/45) ───────────────────────────────────────────────────
 
-def test_lite_menu_sans_dictee_ni_journal(qapp, tmp_path, edition_lite):
+def test_distant_menu_sans_dictee_ni_journal(qapp, tmp_path, mode_distant):
     machine = MachineEtats()
     cfg = _config(tmp_path)
     fenetre = FenetrePrincipale(machine, cfg)
@@ -216,7 +210,7 @@ def test_lite_menu_sans_dictee_ni_journal(qapp, tmp_path, edition_lite):
         fenetre._recording_controller._timer.stop()
 
 
-def test_lite_actualiser_libelles_survit_a_un_mode_absent(qapp, tmp_path, edition_lite):
+def test_distant_actualiser_libelles_survit_a_un_mode_absent(qapp, tmp_path, mode_distant):
     """Un `--toggle` d'un raccourci bureau resté d'une install complète amène
     Mode.DICTEE : la table 4×6 d'origine lèverait KeyError ici."""
     machine = MachineEtats()

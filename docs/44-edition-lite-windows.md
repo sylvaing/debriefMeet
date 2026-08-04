@@ -1,5 +1,11 @@
 # Édition « lite » Windows — enregistrement Opus + IA distante Mistral
 
+> **⚠️ OBSOLÈTE (2026-08-04)** — les éditions compilées ont été remplacées par le
+> **mode de transcription unifié** (un seul build, réglage `mode_transcription`
+> dans les Préférences, défaut = distant) : voir **docs/45**. Ce document reste
+> comme historique : les décisions D1-D7, les pièges (§5) et le retour de terrain
+> (§8) ont directement façonné docs/45.
+
 **Statut : ✅ code, tests, builds réels et fumée terminés (2026-07-30) — livré et utilisé
 en réel (§8). Setup lite 116 Mo contre 159 Mo pour la complète (−27 %). Reste : chaîne
 de bout en bout avec du vrai contenu audio, et 4 points mineurs listés en §8.7.**
