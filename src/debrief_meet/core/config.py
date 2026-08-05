@@ -14,7 +14,7 @@ from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
 
-VERSION_COURANTE = 1
+VERSION_COURANTE = 2
 
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
@@ -105,10 +105,12 @@ class Config:
         try:
             with self._chemin.open(encoding="utf-8") as f:
                 sur_disque = json.load(f)
-            self._migrer(sur_disque)
+            migre = self._migrer(sur_disque)
             for cle, valeur in sur_disque.items():
                 if cle in _DEFAUTS:
                     self._donnees[cle] = valeur
+            if migre:
+                self.sauvegarder()
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Config illisible (%s) — valeurs par défaut utilisées", exc)
 
@@ -129,8 +131,37 @@ class Config:
             raise KeyError(f"Clé de configuration inconnue : {cle!r}")
         self._donnees[cle] = valeur
 
-    def _migrer(self, donnees: dict[str, Any]) -> None:
+    def _migrer(self, donnees: dict[str, Any]) -> bool:
+        """Migre `donnees` (le contenu du fichier) en place. Renvoie True si une
+        migration a eu lieu — la config est alors resauvegardée après la fusion."""
         version = donnees.get("version", 0)
-        if version < VERSION_COURANTE:
-            logger.info("Migration config v%d → v%d", version, VERSION_COURANTE)
-            donnees["version"] = VERSION_COURANTE
+        if version >= VERSION_COURANTE:
+            return False
+        logger.info("Migration config v%d → v%d", version, VERSION_COURANTE)
+        if version < 2:
+            self._migrer_v2_prompts(donnees)
+        donnees["version"] = VERSION_COURANTE
+        return True
+
+    @staticmethod
+    def _migrer_v2_prompts(donnees: dict[str, Any]) -> None:
+        """v2 : rafraîchit les prompts par défaut sans toucher aux prompts édités.
+
+        - « CR simple » : contenu mis à jour uniquement s'il est resté identique à
+          l'ancien défaut (CR_SIMPLE_CONTENU_V1) — un prompt retouché est laissé tel quel.
+        - « CR Pipedrive » et « CR full .md » : ajoutés en fin de liste s'ils n'existent
+          pas déjà (comparaison par titre). `prompt_actif` reste valide : on n'insère
+          qu'en fin.
+        """
+        prompts = donnees.get("prompts")
+        if not isinstance(prompts, list):
+            return
+        for p in prompts:
+            if (isinstance(p, dict) and p.get("titre") == _prompts.CR_SIMPLE_TITRE
+                    and p.get("contenu") == _prompts.CR_SIMPLE_CONTENU_V1):
+                p["contenu"] = _prompts.CR_SIMPLE_CONTENU
+        titres = {p.get("titre") for p in prompts if isinstance(p, dict)}
+        for titre, contenu in ((_prompts.CR_PIPEDRIVE_TITRE, _prompts.CR_PIPEDRIVE_CONTENU),
+                               (_prompts.CR_FULL_MD_TITRE, _prompts.CR_FULL_MD_CONTENU)):
+            if titre not in titres:
+                prompts.append({"titre": titre, "contenu": contenu})

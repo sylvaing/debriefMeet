@@ -6,9 +6,19 @@ from debrief_meet.core import prompts
 
 def test_prompts_par_defaut_contient_cr_simple():
     defauts = prompts.prompts_par_defaut()
-    assert len(defauts) == 1
-    assert defauts[0]["titre"] == "CR simple"
-    assert "transcription" in defauts[0]["contenu"].lower()
+    assert len(defauts) == 3
+    assert [p["titre"] for p in defauts] == ["CR simple", "CR Pipedrive", "CR full .md"]
+    for prompt in defauts:
+        assert "transcription" in prompt["contenu"].lower()
+
+
+def test_cr_pipedrive_et_full_md_ne_different_que_par_la_sortie():
+    pipedrive, full_md = prompts.CR_PIPEDRIVE_CONTENU, prompts.CR_FULL_MD_CONTENU
+    assert "note Pipedrive" in pipedrive and "<b>" in pipedrive
+    assert "fichier markdown" in full_md and "<b>" not in full_md.split("5. Format de sortie")[1]
+    # corps commun identique (tout ce qui précède la section 5)
+    assert pipedrive.split("\n\n5. Format de sortie")[0].split("\n\n", 1)[1] \
+        == full_md.split("\n\n5. Format de sortie")[0].split("\n\n", 1)[1]
 
 
 def test_prompts_par_defaut_renvoie_une_copie_fraiche():
