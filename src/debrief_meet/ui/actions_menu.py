@@ -85,9 +85,10 @@ class _LigneMenuAction(QWidget):
 
 
 def construire_menu_actions(specs: list[ActionSpec], parent: QWidget | None = None) -> QMenu:
-    """Construit le popover pour `specs` (déjà privées de l'action Copier, portée
-    par le bouton dédié — cf. `ActionsDelegate`). `spec.separateur_avant` insère
-    un filet avant l'item ; `spec.danger` le rend rouge (Tout supprimer)."""
+    """Construit le popover pour `specs` — le menu ⋯ **exhaustif** d'une ligne,
+    ou le menu déroulant d'un split button (cf. `ActionsDelegate`).
+    `spec.separateur_avant` insère un filet avant l'item ; `spec.danger` le
+    rend rouge (Tout supprimer)."""
     menu = QMenu(parent)
     menu.setObjectName("actionsMenu")
     # Largeur = max(238, plus long libellé) pour ne jamais tronquer un item

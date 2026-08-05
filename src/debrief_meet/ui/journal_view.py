@@ -24,7 +24,13 @@ from debrief_meet.core.config import Config
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui import dialogues
-from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
+from debrief_meet.ui.actions_delegate import (
+    ActionsDelegate,
+    ActionsLigne,
+    ActionSpec,
+    BoutonSpec,
+    largeur_colonne,
+)
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
 from debrief_meet.ui.capture_model import COL_ACTIONS_JOURNAL, COL_FICHIER_JOURNAL, CaptureModel
 from debrief_meet.ui.icon_delegate import IconeColonneDelegate
@@ -88,7 +94,8 @@ class JournalView(QWidget):
         table.setColumnWidth(0, 40)
         table.setColumnWidth(1, 200)
         entete.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table.setColumnWidth(3, 82)  # marge 20 + Copier 30 + gap 2 + ⋯ 30 (§8.6.1) — cf. ActionsDelegate.sizeHint
+        # Bouton Copier + ⋯ (§8.6.1) — cf. ActionsDelegate.sizeHint
+        table.setColumnWidth(3, largeur_colonne(1))
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -133,20 +140,24 @@ class JournalView(QWidget):
 
     # ── Actions par ligne (fournisseur du délégué) ──────────────────────────────
 
-    def _actions_pour_index(self, index: QModelIndex) -> list[ActionSpec]:
+    def _actions_pour_index(self, index: QModelIndex) -> ActionsLigne:
         proxy = index.model()
         source = proxy.mapToSource(index)
         info = self._modele.info_ligne(source.row())
         if info is None:
-            return []
+            return ActionsLigne()
         chemin = info.chemin
-        return [
-            ActionSpec(_ICONE_COPIER, "Copier", True, lambda c=chemin: self._copier(c)),
-            ActionSpec(_ICONE_OUVRIR, "Ouvrir", True, lambda c=chemin: self._ouvrir(c)),
-            ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True, lambda c=chemin: self._reveler(c)),
-            ActionSpec(_ICONE_TOUT_SUPPR, "Supprimer", True, lambda c=chemin: self._tout_supprimer_un(c),
-                      danger=True, separateur_avant=True),
-        ]
+        return ActionsLigne(
+            boutons=[BoutonSpec(_ICONE_COPIER, "Copier", True, lambda c=chemin: self._copier(c))],
+            menu=[
+                ActionSpec(_ICONE_COPIER, "Copier", True, lambda c=chemin: self._copier(c)),
+                ActionSpec(_ICONE_OUVRIR, "Ouvrir", True, lambda c=chemin: self._ouvrir(c)),
+                ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True,
+                           lambda c=chemin: self._reveler(c)),
+                ActionSpec(_ICONE_TOUT_SUPPR, "Supprimer", True,
+                           lambda c=chemin: self._tout_supprimer_un(c),
+                           danger=True, separateur_avant=True),
+            ])
 
     # ── Sélection ──────────────────────────────────────────────────────────────
 

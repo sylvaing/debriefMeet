@@ -85,6 +85,7 @@ class FauxGestionnaireCRMistral(QObject):
         self._dispo = dispo
         self._job = job
         self.lances: list = []
+        self.prompts: list = []
 
     def disponible(self):
         return self._dispo
@@ -92,8 +93,9 @@ class FauxGestionnaireCRMistral(QObject):
     def job_en_cours(self):
         return self._job
 
-    def lancer(self, chemin_md):
+    def lancer(self, chemin_md, prompt=None):
         self.lances.append(chemin_md)
+        self.prompts.append(prompt)
         if self._job is not None:
             return False
         self._job = chemin_md
@@ -131,9 +133,19 @@ def _reunion_en_attente(tmp_path, nom="2026-03-03_09-00-00", avec_audio=True):
     return md
 
 
-def _actions(vue: ReunionView, row: int = 0):
+def _ligne_actions(vue: ReunionView, row: int = 0):
     index = vue._proxy.mapFromSource(vue._modele.index(row, 5))
     return vue._actions_pour_index(index)
+
+
+def _actions(vue: ReunionView, row: int = 0):
+    """Items du menu ⋯ (exhaustif — contient toutes les actions de la ligne)."""
+    return _ligne_actions(vue, row).menu
+
+
+def _boutons(vue: ReunionView, row: int = 0):
+    """Boutons dédiés de la colonne actions (Générer le CR ▾ + Copier le CR)."""
+    return _ligne_actions(vue, row).boutons
 
 
 def _spec(actions, icone):
@@ -383,12 +395,18 @@ def test_cr_mistral_absent_sans_gestionnaire(qapp, machine, tmp_path):
     assert not any(a.icone == "notebook" for a in actions)
 
 
-def test_cr_mistral_absent_si_indisponible(qapp, machine, tmp_path):
+def test_cr_mistral_grise_si_indisponible(qapp, machine, tmp_path):
+    # Grisé (et non masqué) : la fonction reste découvrable, l'infobulle renvoie
+    # vers les Préférences — même état sur le bouton dédié et dans le menu ⋯.
     _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral(dispo=False))
-    actions = _actions(vue)
-    assert not any(a.icone == "notebook" for a in actions)
+    cr = _spec(_actions(vue), "notebook")
+    assert cr.actif is False
+    assert "non configuré" in cr.tooltip.lower()
+    bouton = _spec(_boutons(vue), "notebook")
+    assert bouton.actif is False
+    assert bouton.tooltip == cr.tooltip
 
 
 def test_cr_mistral_actif_avec_transcript_local(qapp, machine, tmp_path):
@@ -474,6 +492,161 @@ def test_generer_cr_mistral_refuse_si_indisponible(qapp, machine, tmp_path):
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
     vue._generer_cr_mistral(md)
     assert g.lances == []
+
+
+# ── Boutons dédiés : Générer le CR ▾ + Copier le CR ──────────────────────────────
+
+def test_boutons_dedies_generer_cr_et_copier_cr(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    boutons = _boutons(vue)
+    assert [b.icone for b in boutons] == ["notebook", "copy"]
+    generer, copier = boutons
+    assert generer.actif is True
+    assert copier.actif is False                    # pas de CR généré → grisé
+    assert "aucun cr" in copier.tooltip.lower()
+
+
+def test_boutons_sans_gestionnaire_cr_seul_copier_reste(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert [b.icone for b in _boutons(vue)] == ["copy"]
+
+
+def test_bouton_copier_cr_actif_avec_cr(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("# CR", encoding="utf-8")
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    copier = _spec(_boutons(vue), "copy")
+    assert copier.actif is True
+    assert copier.tooltip == "Copier le CR"
+
+
+def test_menu_contient_copier_le_cr_quand_disponible(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert not any(a.tooltip == "Copier le CR" for a in _actions(vue))
+    chemin_cr_mistral(md).write_text("# CR", encoding="utf-8")
+    vue.recharger()
+    assert any(a.tooltip == "Copier le CR" for a in _actions(vue))
+
+
+def test_menu_commence_par_copier_la_transcription(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    assert _actions(vue)[0].tooltip == "Copier la transcription"
+
+
+def test_copier_cr_copie_le_contenu_brut_sans_prefixe(qapp, machine, tmp_path):
+    from tests.fakes.adapters import PressePapiersFake
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("# CR — Point\n\ncontenu", encoding="utf-8")
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "P", "contenu": "Fais un CR."}])
+    cfg.set("prompt_actif", 0)                       # le prompt actif ne doit PAS préfixer
+    pp = PressePapiersFake()
+    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
+    vue._copier_cr(md)
+    assert pp.dernier == "# CR — Point\n\ncontenu"
+
+
+# ── Flèche du bouton Générer le CR : choix ponctuel du prompt ─────────────────────
+
+def test_fleche_absente_avec_un_seul_prompt(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    generer = _spec(_boutons(vue), "notebook")
+    assert generer.menu_deroulant is None            # 1 seul prompt (défaut) → pas de flèche
+
+
+def test_fleche_liste_les_prompts_et_lance_avec_le_prompt_choisi(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "CR simple", "contenu": "Simple."},
+                        {"titre": "CR détaillé", "contenu": "Détaillé."}])
+    cfg.set("prompt_actif", 0)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    generer = _spec(_boutons(vue), "notebook")
+    assert [a.tooltip for a in generer.menu_deroulant] == ["CR simple", "CR détaillé"]
+
+    generer.menu_deroulant[1].on_click()
+    assert g.lances == [md]
+    assert g.prompts == ["Détaillé."]                # contenu du prompt choisi, ponctuel
+    assert cfg.get("prompt_actif") == 0              # le prompt actif ne change pas
+
+
+def test_fleche_ignore_les_prompts_vides(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "P1", "contenu": "Un."},
+                        {"titre": "Vide", "contenu": "   "}])
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    generer = _spec(_boutons(vue), "notebook")
+    assert generer.menu_deroulant is None            # 1 seul prompt exploitable → pas de flèche
+
+
+def test_clic_principal_lance_avec_le_prompt_actif(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    _spec(_boutons(vue), "notebook").on_click()
+    assert g.lances == [md]
+    assert g.prompts == [None]                       # None → prompt actif (pipeline)
+
+
+# ── Régénération : confirmation de remplacement quand un CR existe ────────────────
+
+def test_regenerer_cr_existant_demande_confirmation(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("# CR", encoding="utf-8")
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    titres = []
+
+    def _confirmer(*_a, **k):
+        titres.append(k.get("titre", ""))
+        return True
+
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", _confirmer)
+    vue._generer_cr_mistral(md)
+    assert any("remplacer" in t.lower() for t in titres)
+    assert g.lances == [md]
+
+
+def test_regenerer_cr_refuse_ne_lance_rien(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("# CR", encoding="utf-8")
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *a, **k: False)
+    vue._generer_cr_mistral(md)
+    assert g.lances == []
+
+
+def test_pas_de_confirmation_de_remplacement_sans_cr(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral()
+    cfg = _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    appels = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *a, **k: appels.append(k) or True)
+    vue._generer_cr_mistral(md)
+    assert appels == []                              # ni remplacement ni confidentialité (acceptée)
+    assert g.lances == [md]
 
 
 def test_cr_mistral_termine_propose_ouvrir(qapp, machine, tmp_path, monkeypatch):
@@ -880,6 +1053,22 @@ def test_action_associer_presente_si_correspondance(qapp, machine, tmp_path):
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
     spec = _spec(_actions(vue), rv_module._ICONE_BLUEMIND_ASSOCIER)
     assert spec.actif is True
+
+
+def test_colonne_calendrier_cliquable_tant_que_non_associee(qapp, machine, tmp_path):
+    """Tant que la réunion n'est pas associée, l'icône calendrier reste un raccourci
+    cliquable vers l'association — en plus de l'item du menu ⋯ (exhaustif)."""
+    from datetime import datetime
+    nom = "2026-01-01_10-00-00"
+    _reunion_avec_audio(tmp_path, nom=nom)
+    debut = datetime(2026, 1, 1, 10, 0)
+    store = _store_avec_evenement(tmp_path, int(debut.timestamp() * 1000), int(debut.timestamp() * 1000) + 1800_000)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    index = vue._proxy.mapFromSource(vue._modele.index(0, 5))
+    spec = vue._calendrier_pour_index(index)
+    assert spec.icone == "calendar-plus"
+    assert spec.cliquable is True
+    assert spec.on_click is not None
 
 
 def test_action_absente_sans_correspondance(qapp, machine, tmp_path):

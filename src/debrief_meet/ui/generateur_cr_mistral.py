@@ -27,17 +27,18 @@ class _WorkerCRMistral(QObject):
     terminee = Signal(object)   # Path du <stem>_CR.md
     erreur = Signal(str)
 
-    def __init__(self, chemin_md: Path, config: "Config") -> None:
+    def __init__(self, chemin_md: Path, config: "Config", prompt: str | None = None) -> None:
         super().__init__()
         self._md = chemin_md
         self._config = config
+        self._prompt = prompt
 
     @Slot()
     def executer(self) -> None:
         try:
             from debrief_meet.core.mistral import pipeline
 
-            sortie = pipeline.generer_cr_reunion(self._md, self._config)
+            sortie = pipeline.generer_cr_reunion(self._md, self._config, prompt=self._prompt)
             self.terminee.emit(sortie)
         except Exception as exc:  # noqa: BLE001 — remonté à l'UI, jamais de crash
             self.erreur.emit(str(exc))
@@ -73,13 +74,17 @@ class GestionnaireCRMistral(QObject):
 
     # ── Lancement ──────────────────────────────────────────────────────────────
 
-    def lancer(self, chemin_md: Path) -> bool:
-        """Démarre une génération de CR. False si indisponible ou job déjà en cours."""
+    def lancer(self, chemin_md: Path, prompt: str | None = None) -> bool:
+        """Démarre une génération de CR. False si indisponible ou job déjà en cours.
+
+        `prompt` : contenu de prompt **ponctuel** (choisi via la flèche du bouton
+        « Générer le CR ») — n'affecte que ce job, le prompt actif de la config
+        reste inchangé. None → prompt actif (comportement par défaut)."""
         if not self.disponible() or self._job_en_cours is not None:
             return False
 
         thread = QThread(self)
-        worker = _WorkerCRMistral(chemin_md, self._config)
+        worker = _WorkerCRMistral(chemin_md, self._config, prompt)
         worker.moveToThread(thread)
         thread.started.connect(worker.executer)
         worker.terminee.connect(self._sur_terminee)
