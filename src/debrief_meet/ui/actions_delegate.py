@@ -1,15 +1,18 @@
-"""Délégué de la colonne « actions » (Historique, DESIGN.md §8.6.1) — deux
-emplacements fixes alignés à droite, identiques sur toutes les lignes :
-**Copier** (bouton dédié) + **⋯** (ouvre le popover d'actions libellées,
-§8.6.3, cf. `actions_menu.py`). Remplace l'ancienne rangée d'icônes à nombre
-variable, qui rendait la colonne irrégulière et illisible.
+"""Délégué de la colonne « actions » (Historique, DESIGN.md §8.6.1) — des
+boutons dédiés alignés à droite + **⋯** (ouvre le popover d'actions libellées,
+§8.6.3, cf. `actions_menu.py`), identiques sur toutes les lignes d'une vue.
 
-La liste des actions (icône, tooltip, actif, callback) est toujours fournie à
-la volée par la vue via `fournisseur(index)` — elle dépend de l'état du
-gestionnaire de job (transcription/diarization en cours), pas seulement du
-fichier lui-même. `specs[0]` est toujours l'action Copier (peinte en bouton
-dédié, masquée mais l'emplacement reste réservé si `actif=False`) ; `specs[1:]`
-alimentent le menu ⋯.
+La vue fournit à la volée un `ActionsLigne` via `fournisseur(index)` — il
+dépend de l'état du gestionnaire de job (transcription/diarization/CR en
+cours), pas seulement du fichier lui-même :
+
+- `boutons` : les boutons dédiés, peints même inactifs (grisés, l'infobulle
+  explique pourquoi) pour garder la colonne régulière. Un bouton peut porter
+  un `menu_deroulant` : il est alors peint en *split button* — zone principale
+  + flèche accolée (caret-down) qui ouvre un popover secondaire (ex. choisir
+  le prompt du CR Mistral).
+- `menu` : la liste **complète** des actions du popover ⋯ (les actions des
+  boutons dédiés y figurent aussi — le menu est exhaustif).
 
 Survol/pressé (CHANGELOG_v2 correctif #7) : le délégué suit la position de la
 souris via `editorEvent` (appelé pour les MouseMove tant que
@@ -19,7 +22,7 @@ sur le dernier bouton visité en quittant la colonne.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QModelIndex, QPersistentModelIndex, QPoint, QRectF, QSize
@@ -31,14 +34,14 @@ from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.theme import C, color
 
 TAILLE_BOUTON = 30
+LARGEUR_FLECHE = 16
 TAILLE_ICONE = 16
+TAILLE_ICONE_FLECHE = 10
 ESPACEMENT = 2
 MARGE_DROITE = 20  # CHANGELOG_v2 correctif #3 — colonne actions s'arrête à 20px du bord
 RAYON_BOUTON = 7
 _ICONE_MENU = "dots-three-vertical"
-
-_NUM_COPIER = 0
-_NUM_MENU = 1
+_ICONE_FLECHE = "caret-down"
 
 
 @dataclass(frozen=True)
@@ -51,12 +54,54 @@ class ActionSpec:
     separateur_avant: bool = False  # filet avant cet item dans le menu ⋯
 
 
-class ActionsDelegate(QStyledItemDelegate):
-    """Peint 2 boutons fixes (Copier + ⋯) ; `fournisseur` calcule la liste
-    complète par ligne (dépend du fichier ET de l'état du job en cours) — seul
-    `specs[0]` (Copier) est peint directement, `specs[1:]` alimentent le menu."""
+@dataclass(frozen=True)
+class BoutonSpec:
+    """Bouton dédié de la colonne actions. Peint grisé quand `actif=False`
+    (l'infobulle reste consultable). `menu_deroulant` en fait un split button :
+    une flèche accolée ouvre un popover secondaire avec ces items."""
 
-    def __init__(self, fournisseur: Callable[[QModelIndex], list[ActionSpec]], parent=None) -> None:
+    icone: str  # nom logique Phosphor
+    tooltip: str
+    actif: bool
+    on_click: Callable[[], None]
+    menu_deroulant: list[ActionSpec] | None = None
+    tooltip_fleche: str = ""
+
+
+@dataclass(frozen=True)
+class ActionsLigne:
+    """Actions d'une ligne : boutons dédiés + contenu (exhaustif) du menu ⋯."""
+
+    boutons: list[BoutonSpec] = field(default_factory=list)
+    menu: list[ActionSpec] = field(default_factory=list)
+
+    @property
+    def vide(self) -> bool:
+        return not self.boutons and not self.menu
+
+
+def largeur_colonne(nb_boutons: int, nb_fleches: int = 0) -> int:
+    """Largeur de colonne pour `nb_boutons` dédiés (dont `nb_fleches` split
+    buttons) + le bouton ⋯. La colonne doit être dimensionnée là-dessus, sinon
+    les boutons débordent à gauche (chevauchement avec la colonne voisine)."""
+    return (MARGE_DROITE + (nb_boutons + 1) * TAILLE_BOUTON
+            + nb_fleches * LARGEUR_FLECHE + nb_boutons * ESPACEMENT)
+
+
+@dataclass(frozen=True)
+class _Zone:
+    """Zone cliquable d'une ligne (bouton, flèche de split button, ou ⋯)."""
+
+    rect: QRectF
+    genre: str  # "bouton" | "fleche" | "menu"
+    bouton: BoutonSpec | None = None
+
+
+class ActionsDelegate(QStyledItemDelegate):
+    """Peint les boutons dédiés + ⋯ ; `fournisseur` calcule l'`ActionsLigne`
+    par ligne (dépend du fichier ET de l'état des jobs en cours)."""
+
+    def __init__(self, fournisseur: Callable[[QModelIndex], ActionsLigne], parent=None) -> None:
         super().__init__(parent)
         self._fournisseur = fournisseur
         self._table = parent
@@ -68,88 +113,116 @@ class ActionsDelegate(QStyledItemDelegate):
             parent.viewport().setMouseTracking(True)
             parent.viewport().installEventFilter(self)
 
-    def _rect_copier(self, option: QStyleOptionViewItem) -> QRectF:
-        # NB : `option.rect.left() + width()`, pas `.right()` (inclusif = left+width-1,
-        # qui décalerait les boutons d'1px et les ferait déborder de la colonne).
-        bord_droit = option.rect.left() + option.rect.width()
-        x = bord_droit - MARGE_DROITE - 2 * TAILLE_BOUTON - ESPACEMENT
-        y = option.rect.top() + (option.rect.height() - TAILLE_BOUTON) / 2
-        return QRectF(x, y, TAILLE_BOUTON, TAILLE_BOUTON)
+    # ── Géométrie ───────────────────────────────────────────────────────────────
 
-    def _rect_menu(self, option: QStyleOptionViewItem) -> QRectF:
-        bord_droit = option.rect.left() + option.rect.width()
-        x = bord_droit - MARGE_DROITE - TAILLE_BOUTON
+    def _zones(self, option: QStyleOptionViewItem, ligne: ActionsLigne) -> list[_Zone]:
+        """Zones cliquables, de gauche à droite. Construites depuis le bord droit
+        (NB : `option.rect.left() + width()`, pas `.right()` qui est inclusif =
+        left+width-1 et décalerait tout d'1px hors de la colonne)."""
+        zones: list[_Zone] = []
+        x = option.rect.left() + option.rect.width() - MARGE_DROITE
         y = option.rect.top() + (option.rect.height() - TAILLE_BOUTON) / 2
-        return QRectF(x, y, TAILLE_BOUTON, TAILLE_BOUTON)
+        if ligne.menu:
+            x -= TAILLE_BOUTON
+            zones.append(_Zone(QRectF(x, y, TAILLE_BOUTON, TAILLE_BOUTON), "menu"))
+            x -= ESPACEMENT
+        for bouton in reversed(ligne.boutons):
+            if bouton.menu_deroulant:
+                x -= LARGEUR_FLECHE
+                zones.append(_Zone(QRectF(x, y, LARGEUR_FLECHE, TAILLE_BOUTON), "fleche", bouton))
+            x -= TAILLE_BOUTON
+            zones.append(_Zone(QRectF(x, y, TAILLE_BOUTON, TAILLE_BOUTON), "bouton", bouton))
+            x -= ESPACEMENT
+        zones.reverse()
+        return zones
+
+    @staticmethod
+    def _zone_active(zone: _Zone) -> bool:
+        return zone.genre == "menu" or (zone.bouton is not None and zone.bouton.actif)
+
+    # ── Peinture ────────────────────────────────────────────────────────────────
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         peindre_fond_ligne(painter, option, index)
-        specs = self._fournisseur(index)
-        if not specs:
+        ligne = self._fournisseur(index)
+        if ligne is None or ligne.vide:
             return
         survole = self._survol_index == index
         pos = self._survol_pos if survole else None
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if specs[0].actif:
-            self._peindre_bouton(painter, self._rect_copier(option), specs[0].icone, pos, _NUM_COPIER, index)
-        if len(specs) > 1:
-            self._peindre_bouton(painter, self._rect_menu(option), _ICONE_MENU, pos, _NUM_MENU, index)
+        for num, zone in enumerate(self._zones(option, ligne)):
+            self._peindre_zone(painter, zone, pos, num, index)
         painter.restore()
 
-    def _peindre_bouton(self, painter: QPainter, rect: QRectF, icone_nom: str, pos, num: int, index: QModelIndex) -> None:
-        hover = pos is not None and rect.toRect().contains(pos)
+    def _peindre_zone(self, painter: QPainter, zone: _Zone, pos, num: int, index: QModelIndex) -> None:
+        actif = self._zone_active(zone)
+        hover = actif and pos is not None and zone.rect.toRect().contains(pos)
         presse = hover and self._presse_index == index and self._presse_num == num
         if hover:
             fond = QPainterPath()
-            fond.addRoundedRect(rect, RAYON_BOUTON, RAYON_BOUTON)
+            fond.addRoundedRect(zone.rect, RAYON_BOUTON, RAYON_BOUTON)
             painter.fillPath(fond, color("#E9EBEF" if presse else "#FFFFFF"))
-        teinte = C.ACCENT_INK if hover else C.INK300
-        icone = icone_svg_teintee(icone_phosphor(icone_nom), teinte, TAILLE_ICONE)
-        cx = rect.center().x() - TAILLE_ICONE / 2
-        cy = rect.center().y() - TAILLE_ICONE / 2
-        icone.paint(painter, int(cx), int(cy), TAILLE_ICONE, TAILLE_ICONE)
+        if not actif:
+            teinte = C.INK200
+        else:
+            teinte = C.ACCENT_INK if hover else C.INK300
+        if zone.genre == "menu":
+            nom, taille = _ICONE_MENU, TAILLE_ICONE
+        elif zone.genre == "fleche":
+            nom, taille = _ICONE_FLECHE, TAILLE_ICONE_FLECHE
+        else:
+            nom, taille = zone.bouton.icone, TAILLE_ICONE
+        icone = icone_svg_teintee(icone_phosphor(nom), teinte, taille)
+        cx = zone.rect.center().x() - taille / 2
+        cy = zone.rect.center().y() - taille / 2
+        icone.paint(painter, int(cx), int(cy), taille, taille)
+
+    # ── Interaction ─────────────────────────────────────────────────────────────
 
     def editorEvent(self, event, model, option: QStyleOptionViewItem, index: QModelIndex) -> bool:
         # NB : le survol (MouseMove sans bouton) n'est PAS routé vers editorEvent par
         # Qt — seuls Press/Release/DblClick le sont. Le hover est donc géré dans
         # eventFilter (viewport, mouse tracking actif), comme TableAvecSurvolLigne.
         vue = option.widget
-        specs = self._fournisseur(index)
-        if not specs:
+        ligne = self._fournisseur(index)
+        if ligne is None or ligne.vide:
             return False
         pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        zones = self._zones(option, ligne)
         if event.type() == QEvent.Type.MouseButtonPress:
-            if specs[0].actif and self._rect_copier(option).toRect().contains(pos):
-                self._presse_index = QPersistentModelIndex(index)
-                self._presse_num = _NUM_COPIER
-                if vue is not None:
-                    vue.update()
-            elif len(specs) > 1 and self._rect_menu(option).toRect().contains(pos):
-                self._presse_index = QPersistentModelIndex(index)
-                self._presse_num = _NUM_MENU
-                if vue is not None:
-                    vue.update()
+            for num, zone in enumerate(zones):
+                if self._zone_active(zone) and zone.rect.toRect().contains(pos):
+                    self._presse_index = QPersistentModelIndex(index)
+                    self._presse_num = num
+                    if vue is not None:
+                        vue.update()
+                    break
             return False
         if event.type() == QEvent.Type.MouseButtonRelease:
             self._presse_index = QPersistentModelIndex()
             self._presse_num = -1
-            if specs[0].actif and self._rect_copier(option).toRect().contains(pos):
-                specs[0].on_click()
-                return True
-            if len(specs) > 1 and self._rect_menu(option).toRect().contains(pos):
-                self._ouvrir_menu(specs[1:], option, vue)
+            for zone in zones:
+                if not zone.rect.toRect().contains(pos):
+                    continue
+                if not self._zone_active(zone):
+                    break
+                if zone.genre == "menu":
+                    self._ouvrir_menu(ligne.menu, zone.rect, vue)
+                elif zone.genre == "fleche":
+                    self._ouvrir_menu(zone.bouton.menu_deroulant, zone.rect, vue)
+                else:
+                    zone.bouton.on_click()
                 return True
             if vue is not None:
                 vue.update()
         return False
 
-    def _ouvrir_menu(self, specs: list[ActionSpec], option: QStyleOptionViewItem, vue) -> None:
+    def _ouvrir_menu(self, specs: list[ActionSpec], rect: QRectF, vue) -> None:
         from debrief_meet.ui.actions_menu import construire_menu_actions
 
         menu = construire_menu_actions(specs, vue)
-        rect = self._rect_menu(option)
         point_bas = QPoint(int(rect.left()), int(rect.bottom()))
         point_global = vue.viewport().mapToGlobal(point_bas) if vue is not None else point_bas
         menu.popup(point_global)  # Qt replie déjà le popup vers le haut s'il dépasse l'écran
@@ -181,17 +254,25 @@ class ActionsDelegate(QStyledItemDelegate):
     def helpEvent(self, event, view, option: QStyleOptionViewItem, index: QModelIndex) -> bool:
         if event.type() != QEvent.Type.ToolTip:
             return super().helpEvent(event, view, option, index)
-        specs = self._fournisseur(index)
-        if specs:
-            if specs[0].actif and self._rect_copier(option).toRect().contains(event.pos()):
-                QToolTip.showText(event.globalPos(), specs[0].tooltip, view)
-                return True
-            if len(specs) > 1 and self._rect_menu(option).toRect().contains(event.pos()):
-                QToolTip.showText(event.globalPos(), "Actions", view)
+        ligne = self._fournisseur(index)
+        if ligne is not None and not ligne.vide:
+            for zone in self._zones(option, ligne):
+                if not zone.rect.toRect().contains(event.pos()):
+                    continue
+                if zone.genre == "menu":
+                    texte = "Actions"
+                elif zone.genre == "fleche":
+                    texte = zone.bouton.tooltip_fleche or zone.bouton.tooltip
+                else:
+                    texte = zone.bouton.tooltip
+                QToolTip.showText(event.globalPos(), texte, view)
                 return True
         QToolTip.hideText()
         return True
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        largeur = MARGE_DROITE + 2 * TAILLE_BOUTON + ESPACEMENT
-        return QSize(largeur, TAILLE_BOUTON + 16)
+        ligne = self._fournisseur(index)
+        if ligne is None or ligne.vide:
+            return QSize(largeur_colonne(0), TAILLE_BOUTON + 16)
+        nb_fleches = sum(1 for b in ligne.boutons if b.menu_deroulant)
+        return QSize(largeur_colonne(len(ligne.boutons), nb_fleches), TAILLE_BOUTON + 16)

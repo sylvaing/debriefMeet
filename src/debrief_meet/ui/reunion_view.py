@@ -44,7 +44,13 @@ from debrief_meet.core.fichiers import (
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui import dialogues
-from debrief_meet.ui.actions_delegate import ActionSpec, ActionsDelegate
+from debrief_meet.ui.actions_delegate import (
+    ActionsDelegate,
+    ActionsLigne,
+    ActionSpec,
+    BoutonSpec,
+    largeur_colonne,
+)
 from debrief_meet.ui.attente_sync_bluemind import attendre_sync
 from debrief_meet.ui.calendrier_delegate import CalendrierColonneDelegate, CalendrierSpec
 from debrief_meet.ui.capture_action_bar import CaptureActionBar
@@ -87,6 +93,16 @@ class _EtatBluemind:
     etat: str  # "linked" | "match" | "none"
     titre_evenement: str = ""
     on_associer: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True)
+class _EtatCRMistral:
+    """État CR Mistral d'une ligne — partagé entre l'item du menu ⋯ et le bouton
+    dédié « Générer le CR » (mêmes disponibilité et infobulle aux deux endroits)."""
+
+    actif: bool
+    tooltip: str
+    en_cours: bool = False
 
 
 
@@ -163,10 +179,10 @@ class ReunionView(QWidget):
         table.setColumnWidth(3, 74)
         table.setColumnWidth(4, 116)
         table.setColumnWidth(COL_CALENDRIER_REUNION, 34)  # icône 28×28 + marge (§8.6.2)
-        # 82 = marge droite 20 + Copier 30 + gap 2 + ⋯ 30 : la colonne doit contenir
-        # les 2 boutons (= sizeHint d'ActionsDelegate). Sous-dimensionner ferait déborder
-        # le bouton Copier à gauche → chevauchement avec la colonne « lien calendrier ».
-        table.setColumnWidth(COL_ACTIONS_REUNION, 82)
+        # 2 boutons dédiés (Générer le CR ▾ + Copier le CR) + ⋯ : la colonne doit les
+        # contenir (= sizeHint d'ActionsDelegate). Sous-dimensionner ferait déborder les
+        # boutons à gauche → chevauchement avec la colonne « lien calendrier ».
+        table.setColumnWidth(COL_ACTIONS_REUNION, largeur_colonne(2, nb_fleches=1))
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -214,20 +230,23 @@ class ReunionView(QWidget):
 
     # ── Actions par ligne (fournisseur du délégué) ──────────────────────────────
 
-    def _actions_pour_index(self, index: QModelIndex) -> list[ActionSpec]:
+    def _actions_pour_index(self, index: QModelIndex) -> ActionsLigne:
         proxy = index.model()
         source = proxy.mapToSource(index)
         info = self._modele.info_ligne(source.row())
         if info is None or info.en_cours:
-            return []
+            return ActionsLigne()
         return self._actions_reunion(info)
 
-    def _actions_reunion(self, ligne) -> list[ActionSpec]:
+    def _actions_reunion(self, ligne) -> ActionsLigne:
+        """Menu ⋯ **exhaustif** (toutes les actions de la ligne) + 2 boutons dédiés :
+        « Générer le CR ▾ » (flèche = choix ponctuel du prompt) et « Copier le CR »."""
         chemin = ligne.chemin
         job = self._gestionnaire.job_en_cours() if self._gestionnaire else None
         type_job = self._gestionnaire.type_job_en_cours() if self._gestionnaire else None
         en_cours = chemin == job
         un_job_tourne = job is not None
+        etat_cr = self._etat_cr_mistral(ligne, un_job_tourne)
 
         actions = [ActionSpec(_ICONE_COPIER, "Copier la transcription", not ligne.en_attente,
                               lambda c=chemin: self._copier(c))]
@@ -276,28 +295,18 @@ class ReunionView(QWidget):
                 _ICONE_NOMMER_LOCUTEURS, "Nommer les locuteurs", True,
                 lambda c=chemin: self._nommer_locuteurs(c)))
 
-        if self._gestionnaire_cr_mistral is not None and self._gestionnaire_cr_mistral.disponible():
-            job_mistral = self._gestionnaire_cr_mistral.job_en_cours()
-            if chemin == job_mistral:
-                actions.append(ActionSpec(
-                    _ICONE_EN_COURS, "Génération du CR en cours…", False, lambda: None))
-            else:
-                a_de_quoi_generer = (not ligne.en_attente) or bool(ligne.audio)
-                un_autre_job_tourne = un_job_tourne or job_mistral is not None
-                actif = a_de_quoi_generer and not un_autre_job_tourne
-                tooltip = "Générer le CR (Mistral)"
-                if not a_de_quoi_generer:
-                    tooltip = "Aucune transcription ni audio disponible"
-                elif un_autre_job_tourne:
-                    tooltip = "Une tâche est déjà en cours"
-                actions.append(ActionSpec(_ICONE_CR_MISTRAL, tooltip, actif,
-                                          lambda c=chemin: self._generer_cr_mistral(c)))
+        if etat_cr is not None:
+            icone = _ICONE_EN_COURS if etat_cr.en_cours else _ICONE_CR_MISTRAL
+            actions.append(ActionSpec(icone, etat_cr.tooltip, etat_cr.actif,
+                                      lambda c=chemin: self._generer_cr_mistral(c)))
 
         actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir la transcription", True,
                                   lambda c=chemin: self._ouvrir(c)))
         if ligne.cr_disponible:
             actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir le CR", True,
                                       lambda c=chemin: self._ouvrir(chemin_cr_mistral(c))))
+            actions.append(ActionSpec(_ICONE_COPIER, "Copier le CR", True,
+                                      lambda c=chemin: self._copier_cr(c)))
         actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True,
                                   lambda c=chemin: self._reveler(c)))
 
@@ -311,7 +320,53 @@ class ReunionView(QWidget):
         actions.append(ActionSpec(
             _ICONE_TOUT_SUPPR, "Tout supprimer", True,
             lambda c=chemin: self._tout_supprimer_un(c), danger=True))
-        return actions
+        return ActionsLigne(boutons=self._boutons_reunion(ligne, etat_cr), menu=actions)
+
+    def _etat_cr_mistral(self, ligne, un_job_tourne: bool) -> _EtatCRMistral | None:
+        """None si aucun gestionnaire n'est câblé (l'interco n'existe pas). Sinon
+        toujours un état — indisponible/grisé compris — pour que le bouton dédié
+        reste présent sur toutes les lignes (colonne régulière, fonction découvrable)."""
+        if self._gestionnaire_cr_mistral is None:
+            return None
+        job_mistral = self._gestionnaire_cr_mistral.job_en_cours()
+        if ligne.chemin == job_mistral:
+            return _EtatCRMistral(False, "Génération du CR en cours…", en_cours=True)
+        if not self._gestionnaire_cr_mistral.disponible():
+            return _EtatCRMistral(False, "Mistral non configuré — Préférences › IA distante")
+        a_de_quoi_generer = (not ligne.en_attente) or bool(ligne.audio)
+        un_autre_job_tourne = un_job_tourne or job_mistral is not None
+        if not a_de_quoi_generer:
+            return _EtatCRMistral(False, "Aucune transcription ni audio disponible")
+        if un_autre_job_tourne:
+            return _EtatCRMistral(False, "Une tâche est déjà en cours")
+        return _EtatCRMistral(True, "Générer le CR (Mistral)")
+
+    def _boutons_reunion(self, ligne, etat_cr) -> list[BoutonSpec]:
+        chemin = ligne.chemin
+        boutons: list[BoutonSpec] = []
+        if etat_cr is not None:
+            boutons.append(BoutonSpec(
+                _ICONE_CR_MISTRAL, etat_cr.tooltip, etat_cr.actif,
+                lambda c=chemin: self._generer_cr_mistral(c),
+                menu_deroulant=self._menu_prompts(chemin) if etat_cr.actif else None,
+                tooltip_fleche="Générer le CR avec un autre prompt"))
+        boutons.append(BoutonSpec(
+            _ICONE_COPIER, "Copier le CR" if ligne.cr_disponible else "Aucun CR à copier",
+            ligne.cr_disponible, lambda c=chemin: self._copier_cr(c)))
+        return boutons
+
+    def _menu_prompts(self, chemin: Path) -> list[ActionSpec] | None:
+        """Items de la flèche du bouton « Générer le CR » : un par prompt de la config
+        (choix **ponctuel** — le prompt actif ne change pas). None s'il n'y a pas au
+        moins 2 prompts exploitables : la flèche serait du bruit sans alternative."""
+        prompts = [p for p in (self._config.get("prompts") or [])
+                   if (p or {}).get("contenu", "").strip()]
+        if len(prompts) < 2:
+            return None
+        return [ActionSpec(
+            _ICONE_CR_MISTRAL, p.get("titre") or "Sans titre", True,
+            lambda c=chemin, contenu=p["contenu"]: self._generer_cr_mistral(c, prompt=contenu))
+            for p in prompts]
 
     # ── Interco BlueMind — F1 (docs/40 §6) ──────────────────────────────────────
 
@@ -371,6 +426,8 @@ class ReunionView(QWidget):
         if etat.etat == "linked":
             return CalendrierSpec(
                 "calendar-check", C.SUCCESS, f"Associé à « {etat.titre_evenement} »", False)
+        # Cliquable tant que non associé : raccourci d'association d'un coup d'œil,
+        # en plus de l'item « Associer à la réunion » du menu ⋯ (exhaustif).
         return CalendrierSpec(
             "calendar-plus", C.ACCENT_INK,
             "Un événement du calendrier BlueMind correspond — associer", True, etat.on_associer)
@@ -434,6 +491,21 @@ class ReunionView(QWidget):
         contenu = _prompts.contenu_actif(self._config.get("prompts"), self._config.get("prompt_actif"))
         if contenu:
             texte = _prompts.prefixer(texte, contenu)
+        if self._presse_papiers:
+            self._presse_papiers.copier(texte)
+        else:
+            try:
+                subprocess.run(["pbcopy"], input=texte.encode("utf-8"), check=True)
+            except Exception:
+                pass
+
+    def _copier_cr(self, chemin: Path) -> None:
+        """Copie le CR généré tel quel — pas de préfixe de prompt : contrairement à la
+        transcription (matière première pour un assistant), le CR est déjà rédigé."""
+        cr = chemin_cr_mistral(chemin)
+        if not cr.exists():
+            return
+        texte = cr.read_text(encoding="utf-8")
         if self._presse_papiers:
             self._presse_papiers.copier(texte)
         else:
@@ -542,15 +614,28 @@ class ReunionView(QWidget):
         self.selectionner_reunion(nouveau)
         return nouveau if nouveau.exists() else chemin
 
-    def _generer_cr_mistral(self, chemin: Path) -> None:
+    def _generer_cr_mistral(self, chemin: Path, prompt: str | None = None) -> None:
+        """`prompt` : contenu ponctuel choisi via la flèche du bouton « Générer le CR »
+        (None → prompt actif de la config, cf. pipeline)."""
         if self._gestionnaire_cr_mistral is None or not self._gestionnaire_cr_mistral.disponible():
             return
         if self._proposition_en_cours:
-            # Attente de sync + dialogue laissent tourner l'event loop : sans ce garde-fou,
-            # un second clic (menu ⋯ ou colonne calendrier) rentrerait une 2ᵉ fois dans le flux.
+            # Dialogues + attente de sync laissent tourner l'event loop : sans ce garde-fou,
+            # un second clic (bouton dédié ou menu ⋯) rentrerait une 2ᵉ fois dans le flux.
             return
         self._proposition_en_cours = True
         try:
+            if chemin_cr_mistral(chemin).exists():
+                # Le CR n'est jamais régénéré silencieusement (docs/42) — le remplacer est
+                # un choix explicite (ex. relancer avec un autre prompt).
+                confirme = dialogues.confirmer(
+                    self, titre="Remplacer le CR existant ?",
+                    description="Un compte-rendu a déjà été généré pour cette réunion. "
+                    "En générer un nouveau le remplacera définitivement.",
+                    label_action="Remplacer", icone="notebook",
+                    intention=dialogues.Intention.ACCENT)
+                if not confirme:
+                    return
             chemin_cible = self._proposer_association_avant_cr(chemin)
         finally:
             self._proposition_en_cours = False
@@ -570,7 +655,7 @@ class ReunionView(QWidget):
                 return
             self._config.set("mistral_confidentialite_acceptee", True)
             self._config.sauvegarder()
-        if not self._gestionnaire_cr_mistral.lancer(chemin):
+        if not self._gestionnaire_cr_mistral.lancer(chemin, prompt=prompt):
             dialogues.avertir(self, titre="CR Mistral", description="Une tâche est déjà en cours.")
 
     def _cabler_gestionnaire_cr_mistral(self) -> None:

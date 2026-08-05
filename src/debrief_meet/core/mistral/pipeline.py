@@ -212,8 +212,11 @@ def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
         definir_duree(chemin_md, duree)
 
 
-def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
+def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = None) -> Path:
     """Point d'entrée unique du pipeline — produit `CR.md` et retourne son chemin.
+
+    `prompt` : contenu de prompt ponctuel pour ce CR (choisi dans l'UI) ; None ou
+    vide → prompt actif de la config, repli sur le CR simple.
 
     Lève `ErreurMistral` (ou une sous-classe de `core.mistral.client`) sur tout échec
     — jamais de fichier partiel écrit."""
@@ -222,7 +225,8 @@ def generer_cr_reunion(chemin_md: Path, config: "Config") -> Path:
     if not cle_api:
         raise ErreurMistral("Aucune clé API Mistral configurée (Préférences › Remote IA).")
 
-    prompt = contenu_actif(config.get("prompts"), config.get("prompt_actif")) or CR_SIMPLE_CONTENU
+    if prompt is None or not prompt.strip():
+        prompt = contenu_actif(config.get("prompts"), config.get("prompt_actif")) or CR_SIMPLE_CONTENU
     infos = _infos_evenement(chemin_md)                       # éléments d'association (§7.5)
     sujet = infos.titre or titre_reunion(chemin_md)
     forcer_voxtral = config.get("mistral_source_transcription") == "voxtral"

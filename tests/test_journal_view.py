@@ -22,12 +22,15 @@ def _config(tmp_path):
     return cfg
 
 
-def test_journal_a_quatre_actions(qapp, machine, tmp_path):
+def test_journal_bouton_copier_et_menu_exhaustif(qapp, machine, tmp_path):
     (tmp_path / "2026-02-02.md").write_text("note", encoding="utf-8")
     vue = JournalView(_config(tmp_path), machine)
     index = vue._proxy.mapFromSource(vue._modele.index(0, 3))
-    actions = vue._actions_pour_index(index)
-    assert len(actions) == 4
+    ligne = vue._actions_pour_index(index)
+    assert [b.tooltip for b in ligne.boutons] == ["Copier"]
+    # Menu ⋯ exhaustif : Copier y figure aussi.
+    assert [a.tooltip for a in ligne.menu] == [
+        "Copier", "Ouvrir", "Révéler dans le dossier", "Supprimer"]
 
 
 def test_bouton_bascule_declenche_toggle_journal(qapp, machine, tmp_path):

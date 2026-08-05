@@ -31,7 +31,8 @@ def test_lancer_execute_le_pipeline_et_emet_termine(config_tmp, tmp_path, qapp, 
     md.write_text("# Réunion", encoding="utf-8")
     sortie_attendue = tmp_path / "reunion_CR.md"
 
-    monkeypatch.setattr(pipeline, "generer_cr_reunion", lambda chemin, config: sortie_attendue)
+    monkeypatch.setattr(pipeline, "generer_cr_reunion",
+                        lambda chemin, config, prompt=None: sortie_attendue)
 
     g = GestionnaireCRMistral(config_tmp)
     termines = []
@@ -48,7 +49,7 @@ def test_lancer_echec_emet_echoue(config_tmp, tmp_path, qapp, qtbot, monkeypatch
     config_tmp.set("mistral_cle_api", "x")
     md = tmp_path / "reunion.md"
 
-    def _echoue(chemin, config):
+    def _echoue(chemin, config, prompt=None):
         raise RuntimeError("clé invalide")
 
     monkeypatch.setattr(pipeline, "generer_cr_reunion", _echoue)
@@ -62,6 +63,23 @@ def test_lancer_echec_emet_echoue(config_tmp, tmp_path, qapp, qtbot, monkeypatch
     assert echecs == [(md, "clé invalide")]
 
 
+def test_lancer_transmet_le_prompt_ponctuel_au_pipeline(config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    recus = []
+
+    def _capture(chemin, config, prompt=None):
+        recus.append(prompt)
+        return tmp_path / "sortie.md"
+
+    monkeypatch.setattr(pipeline, "generer_cr_reunion", _capture)
+
+    g = GestionnaireCRMistral(config_tmp)
+    assert g.lancer(md, prompt="Rédige un CR détaillé :") is True
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+    assert recus == ["Rédige un CR détaillé :"]
+
+
 def test_lancer_refuse_si_job_deja_en_cours(config_tmp, tmp_path, qapp, qtbot, monkeypatch):
     config_tmp.set("mistral_cle_api", "x")
     md1 = tmp_path / "reunion1.md"
@@ -69,7 +87,7 @@ def test_lancer_refuse_si_job_deja_en_cours(config_tmp, tmp_path, qapp, qtbot, m
 
     peut_continuer = threading.Event()
 
-    def _lente(chemin, config):
+    def _lente(chemin, config, prompt=None):
         peut_continuer.wait(timeout=5)
         return tmp_path / "sortie.md"
 
