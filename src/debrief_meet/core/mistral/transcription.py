@@ -3,7 +3,10 @@
 Défaut (§7.1, tranché par le spike) : on envoie la piste **entière** telle quelle
 (l'Ogg Opus est accepté directement, y compris long — 37,6 min validées en un seul
 appel). Le découpage (`decoupage.py`) et le repli WAV ne sont que des **filets de
-sécurité**, déclenchés uniquement sur échec — jamais le chemin normal.
+sécurité**, déclenchés uniquement sur échec — jamais le chemin normal. Depuis le
+2026-08-05, le quota (429) déclenche aussi le découpage : en tier gratuit, une piste
+longue peut dépasser à elle seule la fenêtre tokens/minute (74 min refusées, alors
+que le spike était passé à 37,6 min).
 """
 from __future__ import annotations
 
@@ -14,7 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from debrief_meet.core.audio import decoder_audio_16k, preparer_asr
-from debrief_meet.core.mistral.client import ClientMistral, ErreurFormatMistral, ErreurReseauMistral
+from debrief_meet.core.mistral.client import (
+    ClientMistral,
+    ErreurFormatMistral,
+    ErreurQuotaMistral,
+    ErreurReseauMistral,
+)
 from debrief_meet.core.mistral.decoupage import LIMITE_SEGMENT_S, decouper_piste
 
 logger = logging.getLogger(__name__)
@@ -97,11 +105,13 @@ def _construire_donnees(modele: str, langue: str | None, context_bias: list[str]
 
 
 def _appel_transcription(client: ClientMistral, chemin: Path, modele: str,
-                         langue: str | None, context_bias: list[str]) -> dict:
+                         langue: str | None, context_bias: list[str],
+                         retries_429: bool = True) -> dict:
     data = _construire_donnees(modele, langue, context_bias)
     contenu = chemin.read_bytes()
     r = client.poster_transcription(
-        "v1/audio/transcriptions", data, chemin.name, contenu, _mime(chemin))
+        "v1/audio/transcriptions", data, chemin.name, contenu, _mime(chemin),
+        retries_429=retries_429)
     return r.json()
 
 
@@ -125,10 +135,16 @@ def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
     """Transcrit un fichier audio **entier** (chemin normal, §7.1).
 
     Repli automatique : format refusé (4xx) → transcodage WAV puis réessai ; erreur
-    réseau persistante (timeout malgré les reprises du client) → découpage (§10)."""
+    réseau persistante (timeout malgré les reprises du client) → découpage (§10) ;
+    quota (429) → découpage **immédiat, sans retry** : sur la piste entière le 429
+    est structurel (la requête seule dépasse la fenêtre tokens/minute du tier
+    Experiment — 74 min refusées à 3 min d'écart chez une utilisatrice le
+    2026-08-05), alors que les segments de 14 min passent. Les segments, eux,
+    gardent les retries du client : leur 429 est transitoire (fenêtre pleine)."""
     context_bias = context_bias or []
     try:
-        payload = _appel_transcription(client, chemin, modele, langue, context_bias)
+        payload = _appel_transcription(client, chemin, modele, langue, context_bias,
+                                       retries_429=False)
         texte, segs = _parser(payload)
         return TranscriptionMistral(texte=texte, segments=segs, usage=payload.get("usage", {}))
     except ErreurFormatMistral:
@@ -136,6 +152,9 @@ def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
         return _transcrire_avec_repli_wav(client, chemin, modele, langue, context_bias)
     except ErreurReseauMistral:
         logger.warning("Échec réseau persistant pour %s — repli découpage", chemin.name)
+        return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
+    except ErreurQuotaMistral:
+        logger.warning("Quota Mistral (429) pour %s — repli découpage sans retry", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
 
 

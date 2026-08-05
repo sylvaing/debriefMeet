@@ -162,3 +162,28 @@ def test_429_persistant_leve_erreur_quota():
     client = ClientMistral(URL, "cle")
     with pytest.raises(ErreurQuotaMistral):
         client.get("v1/models")
+
+
+@respx.mock
+def test_429_sans_retry_leve_immediatement_si_desactive():
+    # retries_429=False (envoi d'une piste entière) : le premier 429 lève sans réessai.
+    route = respx.post(f"{URL}/v1/audio/transcriptions").mock(return_value=httpx.Response(429))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurQuotaMistral):
+        client.poster_transcription("v1/audio/transcriptions", {"model": "m"},
+                                    "a.opus", b"x", "audio/ogg", retries_429=False)
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_429_retries_conserves_par_defaut_sur_transcription():
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429),
+        httpx.Response(200, json={"text": "ok"}),
+    ]
+    client = ClientMistral(URL, "cle")
+    r = client.poster_transcription("v1/audio/transcriptions", {"model": "m"},
+                                    "a.opus", b"x", "audio/ogg")
+    assert r.json() == {"text": "ok"}
+    assert route.call_count == 2
