@@ -154,6 +154,17 @@ entre Prompts et Dossiers). Le flaky `test_selecteur_micro_distingue_les_api_aud
 révélé pendant ce chantier (l'index d'entrée réel du poste indexait la liste mockée)
 a été figé à part (`0e2b8f3` : `sd.default.device` mocké).
 
+Après les prompts par défaut révisés + migration config v2 (fusionné le 2026-08-05) :
+**1297 passed, 0 échec** sur `main` en environnement complet. Défauts à **3 prompts**
+(« CR simple » réécrit, « CR Pipedrive », « CR full .md » — les 2 CR BlueMind
+partagent `_CR_BLUEMIND_CORPS`, seuls intro et format de sortie diffèrent).
+**`VERSION_COURANTE` passe à 2** : la migration met à jour le CR simple *seulement*
+s'il est resté identique à l'ancien défaut (`CR_SIMPLE_CONTENU_V1`), ajoute les 2 CR
+BlueMind si leurs titres manquent, et **resauvegarde la config après migration** (le
+bump de version ne persistait pas avant). Une liste de prompts vidée par l'utilisateur
+reste vide (la clé existante prime sur les défauts) ; le pipeline CR retombe alors
+sur `CR_SIMPLE_CONTENU` codé en dur.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
