@@ -1,11 +1,10 @@
 # Spec — Lexique de corrections (termes mal transcrits, injectés dans les prompts)
 
-> **Statut :** ✅ **code + tests faits** (2026-08-05) — **1277 passed** en clone partiel
-> (3 échecs d'environnement pré-existants : helper Swift non compilé, audio canonique
-> du benchmark, sélecteur micro dépendant des périphériques du poste — échoue aussi sur
-> `main`). +33 tests : `test_lexique.py` (nouveau) + extensions
+> **Statut :** ✅ **fusionné dans `main`** (41cfe8a, 2026-08-05) — **1285 passed, 0 échec**
+> en environnement complet. +33 tests : `test_lexique.py` (nouveau) + extensions
 > `test_mistral_pipeline`/`test_reunion_view`/`test_preferences_view`/`test_config`.
-> Reste : validation manuelle (section Préférences, CR réel avec clé API).
+> Section Préférences **validée manuellement** (en-têtes de colonnes raccourcis au
+> passage, cf. §6). Reste : un CR Mistral réel avec le lexique (clé API).
 > **Besoin :** la transcription (locale Whisper comme Voxtral) écorche systématiquement
 > les noms propres et le jargon métier (« Blue Moon » pour BlueMind, « Seppning Club »
 > pour SecNumCloud, « Mappy » pour MAPI…). L'utilisateur maintient dans les Préférences
