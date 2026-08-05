@@ -16,6 +16,7 @@ URL = "https://api.mistral.ai"
 @pytest.fixture(autouse=True)
 def _pas_de_vrai_sommeil(monkeypatch):
     monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", lambda _s: None)
+    monkeypatch.setattr("debrief_meet.core.mistral.transcription._dormir", lambda _s: None)
 
 
 def _wav_audible(tmp_path, nom="piste.wav", secondes=1.0):
@@ -241,6 +242,93 @@ def test_repli_decoupage_immediat_si_quota(tmp_path, monkeypatch):
     # 3 appels exactement : le 429 de la piste entière n'a PAS été retenté.
     assert route.call_count == 3
     assert resultat.segments[1].debut == pytest.approx(t.LIMITE_SEGMENT_S)
+
+
+# ── 429 informé par le sort de la piste précédente (vécu 2026-08-05 après-midi :
+# moi.opus 74 min passait entier, systeme.opus prenait le 429 de fenêtre pleine) ────
+
+@respx.mock
+def test_429_apres_piste_entiere_attend_puis_retente_entier(tmp_path, monkeypatch):
+    chemin = tmp_path / "systeme.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    attentes: list[float] = []
+    monkeypatch.setattr(t, "_dormir", attentes.append)
+
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429),                                     # fenêtre pleine
+        httpx.Response(200, json={"text": "entier au 2e essai"}),  # fenêtre vidée
+    ]
+
+    monkeypatch.setattr(t, "decouper_piste",
+                        lambda *a: pytest.fail("découpage inutile : l'entier devait repasser"))
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest",
+                                    precedente_entiere=True)
+
+    assert resultat.texte == "entier au 2e essai"
+    assert resultat.decoupee is False
+    assert route.call_count == 2
+    assert attentes == [t._ATTENTE_FENETRE_S]
+
+
+@respx.mock
+def test_429_persistant_apres_piste_entiere_finit_en_decoupage(tmp_path, monkeypatch):
+    chemin = tmp_path / "systeme.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429),                                    # entier, 1er essai
+        httpx.Response(429),                                    # entier, après attente
+        httpx.Response(200, json={"text": "premier segment"}),
+        httpx.Response(200, json={"text": "second segment"}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest",
+                                    precedente_entiere=True)
+
+    assert "premier segment" in resultat.texte
+    assert resultat.decoupee is True
+    assert route.call_count == 4
+
+
+@respx.mock
+def test_piste_precedente_decoupee_decoupe_directement(tmp_path, monkeypatch):
+    # La piste 1 a été découpée : l'envoi entier de la piste 2 échouerait pareil,
+    # on ne le tente même pas (aucun appel avec le fichier complet).
+    chemin = tmp_path / "systeme.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(200, json={"text": "premier segment"}),
+        httpx.Response(200, json={"text": "second segment"}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest",
+                                    precedente_entiere=False)
+
+    assert "premier segment" in resultat.texte
+    assert resultat.decoupee is True
+    # 2 appels seulement : les segments — l'entier n'a jamais été envoyé.
+    assert route.call_count == 2
 
 
 @respx.mock

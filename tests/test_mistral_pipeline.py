@@ -111,6 +111,49 @@ def test_repli_voxtral_si_placeholder_audio_seul(tmp_path, config_tmp):
     assert b"transcription voxtral" in route_cr.calls.last.request.content
 
 
+def test_piste_systeme_informee_du_sort_de_la_piste_moi(tmp_path, config_tmp, monkeypatch):
+    # Le sort de la 1re piste (entière ou découpée) est transmis à la 2e via
+    # `precedente_entiere` — c'est lui qui décide du sens d'un éventuel 429.
+    from debrief_meet.core.mistral.transcription import TranscriptionMistral
+
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _piste(tmp_path, "systeme")
+    _configurer(config_tmp)
+
+    appels: list[tuple[str, bool | None]] = []
+
+    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None):
+        appels.append((piste.stem, precedente_entiere))
+        return TranscriptionMistral(texte=f"texte {piste.stem}", decoupee=(piste.stem == "moi"))
+
+    monkeypatch.setattr(pipeline, "transcrire_fichier", _faux_transcrire)
+    pipeline._transcrire_via_voxtral(md, client=None, config=config_tmp, context_bias=[])
+
+    # moi : aucune info (1re piste) ; systeme : informée que moi a été DÉCOUPÉE.
+    assert appels == [("moi", None), ("systeme", False)]
+
+
+def test_piste_systeme_sait_que_moi_est_passee_entiere(tmp_path, config_tmp, monkeypatch):
+    from debrief_meet.core.mistral.transcription import TranscriptionMistral
+
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _piste(tmp_path, "systeme")
+    _configurer(config_tmp)
+
+    appels: list[tuple[str, bool | None]] = []
+
+    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None):
+        appels.append((piste.stem, precedente_entiere))
+        return TranscriptionMistral(texte=f"texte {piste.stem}")
+
+    monkeypatch.setattr(pipeline, "transcrire_fichier", _faux_transcrire)
+    pipeline._transcrire_via_voxtral(md, client=None, config=config_tmp, context_bias=[])
+
+    assert appels == [("moi", None), ("systeme", True)]
+
+
 @respx.mock
 def test_voxtral_reecrit_le_transcript_local_avec_mention(tmp_path, config_tmp):
     """Placeholder « audio seul » → la transcription Voxtral est récupérée dans le .md
