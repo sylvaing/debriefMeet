@@ -517,6 +517,9 @@ def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch):
     apis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
     monkeypatch.setattr(sd, "query_devices", lambda i=None: peripheriques[i] if i is not None else peripheriques)
     monkeypatch.setattr(sd, "query_hostapis", lambda i=None: apis[i] if i is not None else apis)
+    # L'index d'entrée par défaut du poste indexerait la liste mockée (« par défaut
+    # (actuellement : Haut-parleurs) » quand il vaut 2) — le figer sur le casque.
+    monkeypatch.setattr(sd.default, "device", [0, 1], raising=False)
 
     vue = PreferencesView(_config(tmp_path))
     libelles = [vue._combo_micro.itemText(i) for i in range(vue._combo_micro.count())]
