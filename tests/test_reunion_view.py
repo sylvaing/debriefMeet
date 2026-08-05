@@ -592,10 +592,12 @@ def test_copier_cr_copie_le_contenu_brut_sans_prefixe(qapp, machine, tmp_path):
 
 def test_fleche_absente_avec_un_seul_prompt(qapp, machine, tmp_path):
     _reunion_avec_audio(tmp_path)
-    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "CR simple", "contenu": "Simple."}])
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
     generer = _spec(_boutons(vue), "notebook")
-    assert generer.menu_deroulant is None            # 1 seul prompt (défaut) → pas de flèche
+    assert generer.menu_deroulant is None            # 1 seul prompt → pas de flèche
 
 
 def test_fleche_liste_les_prompts_et_lance_avec_le_prompt_choisi(qapp, machine, tmp_path):

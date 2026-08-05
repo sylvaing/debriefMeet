@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from debrief_meet.core import prompts as prompts_mod
 from debrief_meet.core.config import Config, VERSION_COURANTE, _DEFAUTS
 
 
@@ -144,6 +145,75 @@ class TestMigration:
         assert cfg.get("version") == VERSION_COURANTE
 
 
+class TestMigrationV2Prompts:
+    """v1 → v2 : rafraîchissement des prompts par défaut (CR simple + CR Pipedrive)."""
+
+    def _v1(self, contenu_cr_simple: str) -> dict:
+        return {"version": 1,
+                "prompts": [{"titre": prompts_mod.CR_SIMPLE_TITRE,
+                             "contenu": contenu_cr_simple}],
+                "prompt_actif": 0}
+
+    def test_cr_simple_defaut_v1_mis_a_jour(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1))
+        ps = cfg.get("prompts")
+        assert ps[0]["contenu"] == prompts_mod.CR_SIMPLE_CONTENU
+
+    def test_cr_simple_edite_laisse_intact(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(self._v1("Mon prompt personnalisé."))
+        ps = cfg.get("prompts")
+        assert ps[0]["contenu"] == "Mon prompt personnalisé."
+
+    def test_cr_pipedrive_et_full_md_ajoutes_en_fin(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1))
+        ps = cfg.get("prompts")
+        assert ps[-2:] == [{"titre": prompts_mod.CR_PIPEDRIVE_TITRE,
+                            "contenu": prompts_mod.CR_PIPEDRIVE_CONTENU},
+                           {"titre": prompts_mod.CR_FULL_MD_TITRE,
+                            "contenu": prompts_mod.CR_FULL_MD_CONTENU}]
+        assert cfg.get("prompt_actif") == 0      # l'index actif reste valide
+
+    def test_cr_pipedrive_deja_present_pas_de_doublon(self, config_tmp_avec_fichier):
+        donnees = self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1)
+        donnees["prompts"].append({"titre": prompts_mod.CR_PIPEDRIVE_TITRE,
+                                   "contenu": "Ma version à moi."})
+        cfg = config_tmp_avec_fichier(donnees)
+        ps = cfg.get("prompts")
+        titres = [p["titre"] for p in ps]
+        assert titres.count(prompts_mod.CR_PIPEDRIVE_TITRE) == 1
+        assert ps[1]["contenu"] == "Ma version à moi."   # version éditée conservée
+
+    def test_migration_persistee_sur_disque(self, tmp_path):
+        from debrief_meet.core.config import Config
+        chemin = tmp_path / "config.json"
+        chemin.write_text(json.dumps(self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1)),
+                          encoding="utf-8")
+        Config(chemin=chemin).charger()
+        sur_disque = json.loads(chemin.read_text(encoding="utf-8"))
+        assert sur_disque["version"] == VERSION_COURANTE
+        titres = [p["titre"] for p in sur_disque["prompts"]]
+        assert prompts_mod.CR_PIPEDRIVE_TITRE in titres
+        assert prompts_mod.CR_FULL_MD_TITRE in titres
+
+    def test_config_v2_non_retouchee(self, tmp_path):
+        # Une config déjà en v2 dont l'utilisateur a supprimé la note Pipedrive
+        # ne doit pas la voir réapparaître, ni être réécrite sur disque.
+        from debrief_meet.core.config import Config
+        chemin = tmp_path / "config.json"
+        donnees = {"version": VERSION_COURANTE,
+                   "prompts": [{"titre": "Perso", "contenu": "X"}], "prompt_actif": 0}
+        chemin.write_text(json.dumps(donnees), encoding="utf-8")
+        contenu_initial = chemin.read_text(encoding="utf-8")
+        cfg = Config(chemin=chemin)
+        cfg.charger()
+        assert cfg.get("prompts") == [{"titre": "Perso", "contenu": "X"}]
+        assert chemin.read_text(encoding="utf-8") == contenu_initial
+
+    def test_prompts_absents_ou_malformes_sans_crash(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier({"version": 1, "prompts": "pas une liste"})
+        assert cfg.get("version") == VERSION_COURANTE
+
+
 class TestPrompts:
     def test_defaut_cr_simple_actif(self, config_tmp):
         ps = config_tmp.get("prompts")
@@ -160,12 +230,14 @@ class TestPrompts:
         from debrief_meet.core.config import Config
         a = Config(chemin=tmp_path / "a.json")
         b = Config(chemin=tmp_path / "b.json")
+        nb_defauts = len(b.get("prompts"))
         a.get("prompts").append({"titre": "X", "contenu": "x"})
-        assert len(b.get("prompts")) == 1
+        assert len(b.get("prompts")) == nb_defauts
 
     def test_persistance(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier(
-            {"prompts": [{"titre": "T", "contenu": "C"}], "prompt_actif": None})
+            {"version": VERSION_COURANTE,
+             "prompts": [{"titre": "T", "contenu": "C"}], "prompt_actif": None})
         assert cfg.get("prompts") == [{"titre": "T", "contenu": "C"}]
         assert cfg.get("prompt_actif") is None
 
