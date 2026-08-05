@@ -97,12 +97,20 @@ class ClientMistral:
         return self._requete("POST", chemin, json=corps)
 
     def poster_transcription(self, chemin: str, data: dict, nom_fichier: str,
-                             contenu: bytes, mime: str) -> httpx.Response:
+                             contenu: bytes, mime: str, *,
+                             retries_429: bool = True) -> httpx.Response:
         """Upload multipart. `contenu` en bytes (pas un flux) : un flux déjà consommé
-        lors d'une première tentative serait vide au retry (reprise §7.3)."""
-        return self._requete("POST", chemin, data=data, files={"file": (nom_fichier, contenu, mime)})
+        lors d'une première tentative serait vide au retry (reprise §7.3).
 
-    def _requete(self, methode: str, chemin: str, **kwargs) -> httpx.Response:
+        `retries_429=False` : lève `ErreurQuotaMistral` dès le premier 429 — pour une
+        piste entière trop grosse pour la fenêtre tokens/minute du tier, réessayer ne
+        peut pas aboutir (429 persistant sur 2 tentatives à 3 min d'écart, vécu le
+        2026-08-05 sur 74 min) ; l'appelant bascule sur le découpage (§10)."""
+        return self._requete("POST", chemin, retries_429=retries_429,
+                             data=data, files={"file": (nom_fichier, contenu, mime)})
+
+    def _requete(self, methode: str, chemin: str, *,
+                 retries_429: bool = True, **kwargs) -> httpx.Response:
         chemin = chemin.lstrip("/")
         derniere_exc: Exception | None = None
         reponse: httpx.Response | None = None
@@ -126,10 +134,13 @@ class ClientMistral:
                 _dormir(2 * tentative)
         if reponse is None:
             raise ErreurReseauMistral(f"Connexion impossible ({self._base_url})") from derniere_exc
-        return self._gerer_reponse(reponse, methode, chemin, kwargs)
+        return self._gerer_reponse(reponse, methode, chemin, kwargs, retries_429=retries_429)
 
-    def _gerer_reponse(self, reponse: httpx.Response, methode: str, chemin: str, kwargs: dict) -> httpx.Response:
+    def _gerer_reponse(self, reponse: httpx.Response, methode: str, chemin: str, kwargs: dict,
+                       *, retries_429: bool = True) -> httpx.Response:
         if reponse.status_code == 429:
+            if not retries_429:
+                raise ErreurQuotaMistral(f"Quota dépassé (429) sur {chemin}")
             for tentative in range(1, _TENTATIVES_429 + 1):
                 attente = _delai_retry_after(reponse)
                 if attente is None:

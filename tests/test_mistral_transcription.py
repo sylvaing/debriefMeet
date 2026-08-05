@@ -208,3 +208,64 @@ def test_repli_decoupage_si_reseau_persiste(tmp_path, monkeypatch):
     assert len(resultat.segments) == 2
     # Offset réappliqué : le 2e segment démarre à LIMITE_SEGMENT_S secondes.
     assert resultat.segments[1].debut == pytest.approx(t.LIMITE_SEGMENT_S)
+
+
+# ── repli découpage sur quota 429, sans retry (§10, vécu 74 min le 2026-08-05) ──────
+
+@respx.mock
+def test_repli_decoupage_immediat_si_quota(tmp_path, monkeypatch):
+    chemin = tmp_path / "longue_reunion.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    # 1 seul 429 sur la piste entière (pas de retry) puis 2 segments transcrits.
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429),
+        httpx.Response(200, json={"text": "premier segment",
+                                  "segments": [{"start": 0.0, "end": 5.0, "text": "premier segment"}]}),
+        httpx.Response(200, json={"text": "second segment",
+                                  "segments": [{"start": 0.0, "end": 5.0, "text": "second segment"}]}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+    assert "premier segment" in resultat.texte
+    assert "second segment" in resultat.texte
+    # 3 appels exactement : le 429 de la piste entière n'a PAS été retenté.
+    assert route.call_count == 3
+    assert resultat.segments[1].debut == pytest.approx(t.LIMITE_SEGMENT_S)
+
+
+@respx.mock
+def test_segments_gardent_les_retries_429(tmp_path, monkeypatch):
+    # Un 429 transitoire sur un SEGMENT (fenêtre pleine) est retenté, lui.
+    chemin = tmp_path / "longue_reunion.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429),                                   # piste entière → découpage direct
+        httpx.Response(429),                                   # segment 1, 1re tentative
+        httpx.Response(200, json={"text": "premier segment"}),  # segment 1, retry OK
+        httpx.Response(200, json={"text": "second segment"}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+    assert "premier segment" in resultat.texte
+    assert "second segment" in resultat.texte
+    assert route.call_count == 4

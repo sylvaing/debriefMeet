@@ -2,7 +2,9 @@
 
 Le spike (`spike/mistral-cr/`) a validé l'envoi d'une piste ENTIÈRE de 37,6 min en un
 seul appel à l'endpoint transcription : ce module n'est déclenché que si une piste
-très longue est refusée pour cause de durée, ou en timeout malgré les reprises
+très longue est refusée pour cause de durée, en timeout malgré les reprises, ou en
+quota (429) dès le premier refus — en tier gratuit une piste longue dépasse à elle
+seule la fenêtre tokens/minute (74 min refusées chez une utilisatrice le 2026-08-05)
 (cf. `transcription.py`). Découpe l'Opus PAR COPIE (aucun ré-encodage) — chunks
 compacts, contrairement à un ré-encodage WAV.
 """
