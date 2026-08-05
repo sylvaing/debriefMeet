@@ -380,6 +380,48 @@ def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
     assert "Moi : salut" in pp.dernier
 
 
+def test_copier_ajoute_le_bloc_lexique_apres_le_prompt(qapp, machine, tmp_path):
+    """Lexique actif (défaut) : prompt → bloc de corrections → transcription (docs/46 §5.2)."""
+    from tests.fakes.adapters import PressePapiersFake
+    md = _md_simple(tmp_path)
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "P", "contenu": "Fais un CR."}])
+    cfg.set("prompt_actif", 0)
+    pp = PressePapiersFake()
+    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
+    vue._copier(md)
+    assert (pp.dernier.index("Fais un CR.")
+            < pp.dernier.index("Corrections de transcription")
+            < pp.dernier.index("ligne de transcription"))
+
+
+def test_copier_sans_prompt_actif_reste_brut_malgre_le_lexique(qapp, machine, tmp_path):
+    """Le bloc n'est jamais injecté seul : sans prompt actif, copie brute (docs/46 §1)."""
+    from tests.fakes.adapters import PressePapiersFake
+    md = _md_simple(tmp_path)
+    cfg = _config(tmp_path)
+    cfg.set("prompt_actif", None)
+    pp = PressePapiersFake()
+    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
+    vue._copier(md)
+    assert "Corrections de transcription" not in pp.dernier
+    assert pp.dernier.startswith("# Réunion")
+
+
+def test_copier_lexique_inactif_prompt_seul(qapp, machine, tmp_path):
+    from tests.fakes.adapters import PressePapiersFake
+    md = _md_simple(tmp_path)
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "P", "contenu": "Fais un CR."}])
+    cfg.set("prompt_actif", 0)
+    cfg.set("lexique_actif", False)
+    pp = PressePapiersFake()
+    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
+    vue._copier(md)
+    assert pp.dernier.startswith("Fais un CR.\n\n# Réunion")
+    assert "Corrections de transcription" not in pp.dernier
+
+
 # ── CR Mistral (docs/42) ─────────────────────────────────────────────────────
 
 def test_cr_mistral_absent_sans_gestionnaire(qapp, machine, tmp_path):

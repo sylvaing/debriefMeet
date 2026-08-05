@@ -170,6 +170,33 @@ class TestPrompts:
         assert cfg.get("prompt_actif") is None
 
 
+class TestLexique:
+    def test_defaut_pre_rempli_et_actif(self, config_tmp):
+        corrections = config_tmp.get("lexique_corrections")
+        assert isinstance(corrections, list) and corrections
+        assert {"entendu": "Blue Moon, Bluemine, Blue Mind", "ecrire": "BlueMind"} in corrections
+        assert config_tmp.get("lexique_actif") is True
+
+    def test_retro_compat_fichier_sans_la_cle(self, config_tmp_avec_fichier):
+        # Une installation existante récupère le tableau par défaut, actif (docs/46 §1).
+        cfg = config_tmp_avec_fichier({"modele": "small"})
+        assert cfg.get("lexique_corrections")
+        assert cfg.get("lexique_actif") is True
+
+    def test_instances_isolees(self, tmp_path):
+        from debrief_meet.core.config import Config
+        a = Config(chemin=tmp_path / "a.json")
+        b = Config(chemin=tmp_path / "b.json")
+        a.get("lexique_corrections").append({"entendu": "x", "ecrire": "X"})
+        assert len(b.get("lexique_corrections")) != len(a.get("lexique_corrections"))
+
+    def test_persistance(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"lexique_corrections": [{"entendu": "a", "ecrire": "A"}], "lexique_actif": False})
+        assert cfg.get("lexique_corrections") == [{"entendu": "a", "ecrire": "A"}]
+        assert cfg.get("lexique_actif") is False
+
+
 class TestTranscriptionLive:
     def test_defaut_true(self, config_tmp):
         assert config_tmp.get("transcription_live") is True

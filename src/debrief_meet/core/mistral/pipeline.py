@@ -29,6 +29,7 @@ from debrief_meet.core.fichiers import (
     titre_reunion,
     transcription_en_attente,
 )
+from debrief_meet.core import lexique
 from debrief_meet.core.mistral.client import ClientMistral, ErreurMistral
 from debrief_meet.core.mistral.cr import generer_cr
 from debrief_meet.core.mistral.fusion import fusionner
@@ -227,6 +228,9 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
 
     if prompt is None or not prompt.strip():
         prompt = contenu_actif(config.get("prompts"), config.get("prompt_actif")) or CR_SIMPLE_CONTENU
+    # Bloc de corrections ajouté ici, APRÈS la résolution (ponctuel > actif > CR simple) :
+    # un seul site couvre tous les chemins d'entrée (docs/46 §5.1).
+    prompt = lexique.completer_prompt(prompt, config)
     infos = _infos_evenement(chemin_md)                       # éléments d'association (§7.5)
     sujet = infos.titre or titre_reunion(chemin_md)
     forcer_voxtral = config.get("mistral_source_transcription") == "voxtral"
@@ -236,9 +240,16 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
     transcript = None if forcer_voxtral else _lire_transcript_local(chemin_md)
     source = "local"
 
+    # Biais Voxtral : invités BlueMind d'abord (prioritaires dans la coupe à 100 jetons
+    # de `_construire_donnees`), puis les termes « à écrire » du lexique — même
+    # interrupteur `lexique_actif` que l'injection prompt (docs/46 §5.3).
+    context_bias = list(infos.noms_invites)
+    if config.get("lexique_actif"):
+        context_bias += lexique.termes_biais(config.get("lexique_corrections"))
+
     with ClientMistral(config.get("mistral_base_url"), cle_api) as client:
         if transcript is None:
-            res = _transcrire_via_voxtral(chemin_md, client, config, infos.noms_invites)
+            res = _transcrire_via_voxtral(chemin_md, client, config, context_bias)
             transcript = res.transcript
             source = "voxtral"
             if en_attente:

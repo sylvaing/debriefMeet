@@ -10,6 +10,7 @@ from typing import Any
 import platformdirs
 
 from debrief_meet import APP_NAME
+from debrief_meet.core import lexique as _lexique
 from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,11 @@ _DEFAUTS: dict[str, Any] = {
     "retention_audio": True,
     "prompts": _prompts.prompts_par_defaut(),
     "prompt_actif": _prompts.PROMPT_ACTIF_DEFAUT,
+    # Lexique de corrections (docs/46) — correspondances « entendu → à écrire »
+    # injectées à la fin des prompts (CR Mistral + copie avec prompt) et dans le
+    # `context_bias` Voxtral. Global : indépendant du prompt choisi.
+    "lexique_corrections": _lexique.corrections_par_defaut(),
+    "lexique_actif": True,
     "demarrage_auto": False,
     # Windows : logs DEBUG activés par défaut (décision D5) — seul canal de debug tant
     # qu'aucune machine Windows de dev n'est disponible. macOS/Linux inchangés.

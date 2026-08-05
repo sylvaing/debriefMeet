@@ -251,11 +251,12 @@ def test_association_injecte_sujet_et_participants_dans_le_cr(tmp_path, config_t
 def test_association_alimente_le_context_bias_de_la_transcription(tmp_path, config_tmp):
     """En repli Voxtral, les noms d'invités (tous) servent de context_bias (orthographe).
     Chaque nom est découpé en jetons (Voxtral refuse les espaces/virgules, code 3051) :
-    3 invités « Prénom Nom » → 6 jetons."""
+    3 invités « Prénom Nom » → 6 jetons. Lexique désactivé pour isoler les invités
+    (sa contribution au biais est couverte par les tests lexique ci-dessous)."""
     md = _md_placeholder(tmp_path)
     _piste(tmp_path, "moi")
     _ecrire_association(md)
-    _configurer(config_tmp)
+    _configurer(config_tmp, lexique_actif=False)
     route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
         return_value=httpx.Response(200, json={"text": "bonjour"}))
     respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
@@ -282,6 +283,103 @@ def test_association_injecte_la_date_dans_le_cr(tmp_path, config_tmp):
     pipeline.generer_cr_reunion(md, config_tmp)
 
     assert b"01/01/2026 10:00" in route_cr.calls.last.request.content
+
+
+# ── Lexique de corrections (docs/46) ─────────────────────────────────────────────
+
+@respx.mock
+def test_lexique_injecte_le_bloc_dans_le_prompt_cr(tmp_path, config_tmp):
+    """Défauts : lexique actif + tableau pré-rempli → le bloc de corrections suit le
+    prompt résolu, quel que soit son chemin d'entrée (docs/46 §5.1)."""
+    md = _md_avec_transcript(tmp_path)
+    _configurer(config_tmp)
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    corps = route_cr.calls.last.request.content
+    assert b"Corrections de transcription" in corps
+    assert b"SecNumCloud" in corps                    # ligne du tableau par défaut
+
+
+@respx.mock
+def test_lexique_complete_aussi_le_prompt_ponctuel(tmp_path, config_tmp):
+    md = _md_avec_transcript(tmp_path)
+    _configurer(config_tmp)
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp, prompt="Prompt ponctuel choisi.")
+
+    corps = route_cr.calls.last.request.content
+    assert b"Prompt ponctuel choisi." in corps
+    assert b"Corrections de transcription" in corps
+
+
+@respx.mock
+def test_lexique_inactif_prompt_intact(tmp_path, config_tmp):
+    md = _md_avec_transcript(tmp_path)
+    _configurer(config_tmp, lexique_actif=False)
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert b"Corrections de transcription" not in route_cr.calls.last.request.content
+
+
+@respx.mock
+def test_lexique_alimente_le_context_bias_voxtral(tmp_path, config_tmp):
+    """Sans association BlueMind, le biais = les termes « à écrire » du lexique,
+    parenthèses retirées (docs/46 §5.3)."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp, lexique_corrections=[
+        {"entendu": "Maza", "ecrire": "ACME (société fictive)"},
+        {"entendu": "Seppning Club", "ecrire": "SecNumCloud"},
+    ])
+    route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    corps = route_t.calls.last.request.content
+    assert corps.count(b'name="context_bias"') == 2
+    assert b"MASA" in corps and b"SecNumCloud" in corps
+    assert "ministère".encode() not in corps          # précision parenthèses exclue
+
+
+@respx.mock
+def test_invites_prioritaires_devant_le_lexique_dans_le_biais(tmp_path, config_tmp):
+    """Invités BlueMind en tête du biais : prioritaires dans la coupe à 100 jetons."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _ecrire_association(md)
+    _configurer(config_tmp, lexique_corrections=[{"entendu": "Blue Moon", "ecrire": "BlueMind"}])
+    route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    corps = route_t.calls.last.request.content
+    assert corps.count(b'name="context_bias"') == 7   # 3 invités × 2 mots + 1 terme lexique
+    assert corps.index(b"Alice") < corps.index(b"BlueMind")
+
+
+@respx.mock
+def test_lexique_inactif_pas_de_biais_lexique(tmp_path, config_tmp):
+    """Même interrupteur pour le prompt et le biais (docs/46 §5.3) — inactif, seuls
+    les invités restent."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp, lexique_actif=False)
+    route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert b'name="context_bias"' not in route_t.calls.last.request.content
 
 
 @respx.mock

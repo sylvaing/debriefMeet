@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QKeySequenceEdit,
     QLabel,
     QLineEdit,
@@ -39,6 +40,8 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -258,7 +261,8 @@ class PreferencesView(QWidget):
         Méthode et non constante de module : les constructeurs sont des méthodes liées
         (c'est précisément pourquoi il y avait deux tuples parallèles auparavant).
 
-        Les 9 sections sont inconditionnelles (docs/45) : le mode ne fait varier que le
+        Les 10 sections sont inconditionnelles (docs/45, « Lexique » ajoutée par
+        docs/46) : le mode ne fait varier que le
         CONTENU de « Transcription » (sous-bloc local montré/caché) — jamais la nav,
         pour que « Sur cet ordinateur » reste découvrable depuis le mode distant.
         Ordre pensé utilisateur : du plus structurant (mode) au plus technique (logs).
@@ -270,6 +274,7 @@ class PreferencesView(QWidget):
             ("Audio", "waveform", self._section_audio),
             ("BlueMind", "list", self._section_bluemind),
             ("Prompts", "chat-text", self._section_prompts),
+            ("Lexique", "book-open", self._section_lexique),
             ("Dossiers", "folders", self._section_dossiers),
             ("Raccourcis", "keyboard", self._section_raccourcis),
             ("Journalisation", "bug", self._section_logs),
@@ -773,6 +778,109 @@ class PreferencesView(QWidget):
             self._maj_prompt = False
         self._sauver_prompts_immediat()
         self._definir("prompt_actif", self._prompt_actif)
+
+    # ── Section Lexique (corrections de transcription, docs/46) ────────────────
+
+    def _section_lexique(self) -> QWidget:
+        from copy import deepcopy
+
+        self._lexique: list[dict] = deepcopy(self._config.get("lexique_corrections") or [])
+        self._maj_lexique = False
+
+        w = QWidget()
+        w.setMaximumWidth(600)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(13)
+
+        lay.addWidget(_note(
+            "Termes que la transcription écrit mal — plusieurs variantes possibles "
+            "dans « Entendu », séparées par des virgules. Les correspondances sont "
+            "ajoutées aux prompts (génération du CR et copie avec prompt) pour que "
+            "l'IA les corrige silencieusement."))
+
+        self._check_lexique = QCheckBox("Corriger les termes mal transcrits")
+        self._check_lexique.setChecked(bool(self._config.get("lexique_actif")))
+        self._check_lexique.toggled.connect(self._lexique_actif_toggle)
+        lay.addWidget(self._check_lexique)
+
+        self._table_lexique = QTableWidget(0, 2)
+        self._table_lexique.setObjectName("lexiqueTable")
+        # En-têtes courts : Qt centre et TRONQUE (des deux côtés) un texte d'en-tête
+        # plus large que la colonne — l'explication des variantes vit dans la note
+        # d'intro et en infobulle.
+        self._table_lexique.setHorizontalHeaderLabels(["Entendu", "À écrire"])
+        self._table_lexique.horizontalHeaderItem(0).setToolTip(
+            "Plusieurs variantes possibles, séparées par des virgules")
+        entete = self._table_lexique.horizontalHeader()
+        entete.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        entete.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table_lexique.verticalHeader().setVisible(False)
+        self._table_lexique.itemChanged.connect(self._lexique_cellule_change)
+        lay.addWidget(self._table_lexique, 1)
+
+        barre = QHBoxLayout()
+        barre.setSpacing(8)
+        btn_add = QPushButton()
+        btn_add.setIcon(icone_svg_teintee(icone_phosphor("plus"), C.INK600, 14))
+        btn_add.setFixedSize(32, 28)
+        btn_add.setToolTip("Ajouter une correspondance")
+        btn_add.setStyleSheet(_STYLE_MINI_CARRE)
+        btn_add.clicked.connect(self._lexique_ajouter)
+        btn_del = QPushButton()
+        btn_del.setIcon(icone_svg_teintee(icone_phosphor("minus"), C.INK600, 14))
+        btn_del.setFixedSize(32, 28)
+        btn_del.setToolTip("Supprimer la ou les lignes sélectionnées")
+        btn_del.setStyleSheet(_STYLE_MINI_CARRE)
+        btn_del.clicked.connect(self._lexique_supprimer)
+        barre.addWidget(btn_add)
+        barre.addWidget(btn_del)
+        barre.addStretch()
+        lay.addLayout(barre)
+
+        lay.addWidget(_note(
+            "Un nom dont l'IA n'est pas sûre est suivi de « (à confirmer) » plutôt "
+            "qu'inventé. Les termes « À écrire » guident aussi la transcription "
+            "Voxtral (biais de contexte)."))
+
+        self._remplir_table_lexique()
+        self._table_lexique.setEnabled(self._check_lexique.isChecked())
+        return w
+
+    def _remplir_table_lexique(self) -> None:
+        self._maj_lexique = True
+        self._table_lexique.setRowCount(len(self._lexique))
+        for i, c in enumerate(self._lexique):
+            self._table_lexique.setItem(i, 0, QTableWidgetItem((c or {}).get("entendu", "")))
+            self._table_lexique.setItem(i, 1, QTableWidgetItem((c or {}).get("ecrire", "")))
+        self._maj_lexique = False
+
+    def _lexique_cellule_change(self, item: QTableWidgetItem) -> None:
+        if self._maj_lexique:
+            return
+        cle = "entendu" if item.column() == 0 else "ecrire"
+        self._lexique[item.row()][cle] = item.text()
+        self._definir_differe("lexique_corrections", self._lexique)
+
+    def _lexique_actif_toggle(self, coche: bool) -> None:
+        self._table_lexique.setEnabled(coche)  # grisé, pas masqué (docs/46 §6)
+        self._definir("lexique_actif", coche)
+
+    def _lexique_ajouter(self) -> None:
+        self._lexique.append({"entendu": "", "ecrire": ""})
+        self._remplir_table_lexique()
+        derniere = len(self._lexique) - 1
+        self._table_lexique.setCurrentCell(derniere, 0)
+        self._table_lexique.editItem(self._table_lexique.item(derniere, 0))
+        self._definir("lexique_corrections", self._lexique)
+
+    def _lexique_supprimer(self) -> None:
+        lignes = sorted({i.row() for i in self._table_lexique.selectedIndexes()}, reverse=True)
+        for row in lignes:
+            del self._lexique[row]
+        if lignes:
+            self._remplir_table_lexique()
+            self._definir("lexique_corrections", self._lexique)
 
     # ── Section Général ────────────────────────────────────────────────────────
 
