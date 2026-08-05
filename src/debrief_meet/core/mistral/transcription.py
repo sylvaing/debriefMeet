@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +33,16 @@ _MIME_PAR_EXT = {
     ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".flac": "audio/flac",
 }
 
+# La fenêtre de rate-limit Mistral est PAR MINUTE glissante : quand la piste
+# précédente vient de passer entière en la remplissant, attendre juste au-delà
+# d'une minute suffit pour qu'un nouvel envoi entier reparte sur une fenêtre vide.
+_ATTENTE_FENETRE_S = 65.0
+
+
+def _dormir(secondes: float) -> None:
+    """Isolé pour être monkeypatché en test (évite de vraiment dormir)."""
+    time.sleep(secondes)
+
 
 @dataclass
 class Segment:
@@ -45,6 +56,9 @@ class TranscriptionMistral:
     texte: str
     segments: list[Segment] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
+    #: True si la piste a dû être découpée (repli §10) — le pipeline s'en sert pour
+    #: découper directement la piste suivante (son envoi entier échouerait pareil).
+    decoupee: bool = False
 
 
 @dataclass
@@ -129,24 +143,44 @@ def _parser(payload: dict, offset: float = 0.0) -> tuple[str, list[Segment]]:
     return texte, segs
 
 
+def _transcrire_entier(client: ClientMistral, chemin: Path, modele: str,
+                       langue: str | None, context_bias: list[str]) -> TranscriptionMistral:
+    payload = _appel_transcription(client, chemin, modele, langue, context_bias,
+                                   retries_429=False)
+    texte, segs = _parser(payload)
+    return TranscriptionMistral(texte=texte, segments=segs, usage=payload.get("usage", {}))
+
+
 def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
                       langue: str | None = None,
-                      context_bias: list[str] | None = None) -> TranscriptionMistral:
+                      context_bias: list[str] | None = None,
+                      precedente_entiere: bool | None = None) -> TranscriptionMistral:
     """Transcrit un fichier audio **entier** (chemin normal, §7.1).
 
     Repli automatique : format refusé (4xx) → transcodage WAV puis réessai ; erreur
-    réseau persistante (timeout malgré les reprises du client) → découpage (§10) ;
-    quota (429) → découpage **immédiat, sans retry** : sur la piste entière le 429
-    est structurel (la requête seule dépasse la fenêtre tokens/minute du tier
-    Experiment — 74 min refusées à 3 min d'écart chez une utilisatrice le
-    2026-08-05), alors que les segments de 14 min passent. Les segments, eux,
-    gardent les retries du client : leur 429 est transitoire (fenêtre pleine)."""
+    réseau persistante (timeout malgré les reprises du client) → découpage (§10).
+
+    Quota (429) sur l'envoi entier : le sens du 429 dépend de `precedente_entiere`
+    (comment la piste PRÉCÉDENTE de la même réunion a fini — None si aucune) :
+    - `True` — la précédente est passée entière et vient de remplir la fenêtre
+      tokens/minute : le 429 est transitoire. Attendre `_ATTENTE_FENETRE_S` puis
+      retenter ENTIER une fois (préserve la qualité : zéro point de coupe) ;
+      découpage seulement si nouveau 429. Vécu chez une utilisatrice le
+      2026-08-05 : moi.opus (74 min) passait entier, systeme.opus prenait le
+      429 de fenêtre pleine.
+    - `False` — la précédente a dû être découpée : un envoi entier échouerait
+      pareil, on découpe DIRECTEMENT (économise l'upload d'un gros fichier
+      condamné).
+    - `None` — pas d'information (première piste) : découpage immédiat, sans
+      retry — réessayer en aveugle coûtait 30 s pour rien.
+    Les segments du découpage, eux, gardent les retries du client (20/40/60 s) :
+    leur 429 est toujours transitoire."""
     context_bias = context_bias or []
+    if precedente_entiere is False:
+        logger.warning("Piste précédente découpée — découpage direct pour %s", chemin.name)
+        return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
     try:
-        payload = _appel_transcription(client, chemin, modele, langue, context_bias,
-                                       retries_429=False)
-        texte, segs = _parser(payload)
-        return TranscriptionMistral(texte=texte, segments=segs, usage=payload.get("usage", {}))
+        return _transcrire_entier(client, chemin, modele, langue, context_bias)
     except ErreurFormatMistral:
         logger.warning("Format refusé pour %s — repli transcodage WAV 16k", chemin.name)
         return _transcrire_avec_repli_wav(client, chemin, modele, langue, context_bias)
@@ -154,7 +188,18 @@ def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
         logger.warning("Échec réseau persistant pour %s — repli découpage", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
     except ErreurQuotaMistral:
-        logger.warning("Quota Mistral (429) pour %s — repli découpage sans retry", chemin.name)
+        if precedente_entiere:
+            logger.warning(
+                "Quota Mistral (429) pour %s — fenêtre remplie par la piste précédente, "
+                "nouvel essai entier dans %.0f s", chemin.name, _ATTENTE_FENETRE_S)
+            _dormir(_ATTENTE_FENETRE_S)
+            try:
+                return _transcrire_entier(client, chemin, modele, langue, context_bias)
+            except ErreurQuotaMistral:
+                logger.warning("Quota Mistral (429) persistant pour %s — repli découpage",
+                               chemin.name)
+        else:
+            logger.warning("Quota Mistral (429) pour %s — repli découpage sans retry", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
 
 
@@ -195,4 +240,5 @@ def _transcrire_decoupe(client: ClientMistral, chemin: Path, modele: str,
             usage_seg = payload.get("usage") or {}
             for cle, valeur in usage_seg.items():
                 usage_total[cle] = usage_total.get(cle, 0) + (valeur or 0)
-    return TranscriptionMistral(texte=texte_total, segments=segs_total, usage=usage_total)
+    return TranscriptionMistral(texte=texte_total, segments=segs_total, usage=usage_total,
+                                decoupee=True)

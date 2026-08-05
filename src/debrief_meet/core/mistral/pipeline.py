@@ -150,10 +150,12 @@ def _reinserer_bloc_invites(chemin_md: Path) -> None:
 
 
 def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
-                         modele: str, langue: str | None, context_bias: list[str]):
+                         modele: str, langue: str | None, context_bias: list[str],
+                         precedente_entiere: bool | None = None):
     if piste is None or analyse is None or analyse.silencieuse:
         return None
-    return transcrire_fichier(client, piste, modele, langue, context_bias)
+    return transcrire_fichier(client, piste, modele, langue, context_bias,
+                              precedente_entiere=precedente_entiere)
 
 
 def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Config",
@@ -183,7 +185,12 @@ def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Con
     modele = config.get("mistral_modele_transcription")
 
     res_moi = _transcrire_si_utile(client, piste_moi, analyse_moi, modele, langue, context_bias)
-    res_systeme = _transcrire_si_utile(client, piste_systeme, analyse_systeme, modele, langue, context_bias)
+    # Le sort de la 1re piste renseigne la 2e sur le sens d'un éventuel 429 : passée
+    # entière → fenêtre pleine (attendre puis retenter entier) ; découpée → inutile
+    # de tenter l'envoi entier ; absente/silencieuse → aucune information.
+    res_systeme = _transcrire_si_utile(
+        client, piste_systeme, analyse_systeme, modele, langue, context_bias,
+        precedente_entiere=None if res_moi is None else not res_moi.decoupee)
     if res_moi is None and res_systeme is None:
         raise ErreurMistral("Transcription Mistral : aucune piste exploitable (silence ou échec).")
     return _ResultatVoxtral(
