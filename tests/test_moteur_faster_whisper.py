@@ -109,17 +109,24 @@ def test_terminer_recupere_et_termine_tous_les_workers():
 
 
 def test_terminer_attend_un_worker_occupe_rendu_en_retard():
+    # Tolérance sur le chrono : `threading.Timer` peut rendre la main légèrement avant
+    # son délai et la granularité d'horloge Windows (~15,6 ms) suffit à faire mesurer
+    # 0,099 s pour un timer de 0,1 s — la gate VM a échoué là-dessus le 2026-08-05.
+    # La garantie réelle est portée par `worker.termine` : sans attente, `terminer()`
+    # rendrait la main avant le timer et le worker ne serait jamais récupéré.
+    delai = 0.1
+    tolerance = 0.02
     moteur = MoteurFasterWhisper()
     worker = _FauxWorker()
     moteur._n_workers = 1
-    threading.Timer(0.1, lambda: moteur._pool.put(worker)).start()
+    threading.Timer(delai, lambda: moteur._pool.put(worker)).start()
 
     debut = time.monotonic()
     moteur.terminer()
     ecoule = time.monotonic() - debut
 
     assert worker.termine
-    assert ecoule >= 0.1
+    assert ecoule >= delai - tolerance
 
 
 def test_terminer_balaie_les_workers_geles_hors_pool():

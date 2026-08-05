@@ -67,6 +67,15 @@ ssh_vm "cmd /c del /q $VM_REPO\\dist\\debriefMeet-lite-setup-*.exe 2>nul" || tru
 
 echo ""
 echo "[3/4] Sync sources Mac -> VM ($VM_REPO)"
+# Purge src\ et tests\ AVANT extraction : tar ECRASE les fichiers mais ne supprime
+# jamais ceux retires a la source -- un module supprime survit indefiniment sur la
+# VM (bug vecu le 2026-08-05 : core\edition.py + tests\test_edition.py, retires par
+# docs/45, ont fait echouer la gate avec 11 AttributeError EDITION_COMPILEE ; le
+# couple ui\preferences.py + tests\test_preferences.py, lui, passait EN SILENCE
+# depuis des mois en testant du code mort). Sans danger : _version.py est regenere
+# par build_app.cmd [3/6], apres cette synchro.
+ssh_vm "cmd /c rmdir /s /q $VM_REPO\\src 2>nul" || true
+ssh_vm "cmd /c rmdir /s /q $VM_REPO\\tests 2>nul" || true
 # benchmark/ et spike/ sont des outils internes, pas le produit livre -- on ne les
 # synchronise pas. build_app.cmd ignore les tests qui les importent (test_benchmark_*,
 # test_spike_backends_*) plutot que de trainer leur code juste pour la collecte pytest.
