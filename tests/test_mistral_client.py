@@ -165,6 +165,22 @@ def test_429_persistant_leve_erreur_quota():
 
 
 @respx.mock
+def test_429_backoff_traverse_une_fenetre_minute(monkeypatch):
+    # Sans Retry-After, le cumul des attentes avant la dernière tentative doit
+    # dépasser 60 s : un gros appel réussi juste avant laisse la fenêtre
+    # tokens/minute pleine (vécu 2026-08-05, 1er segment du repli découpage).
+    attentes: list[float] = []
+    monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", attentes.append)
+    respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(429))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurQuotaMistral):
+        client.get("v1/models")
+    # Chaque attente précède sa tentative : la dernière tentative part à
+    # sum(attentes) secondes du premier 429 — elle doit être hors fenêtre.
+    assert sum(attentes) > 60.0
+
+
+@respx.mock
 def test_429_sans_retry_leve_immediatement_si_desactive():
     # retries_429=False (envoi d'une piste entière) : le premier 429 lève sans réessai.
     route = respx.post(f"{URL}/v1/audio/transcriptions").mock(return_value=httpx.Response(429))
