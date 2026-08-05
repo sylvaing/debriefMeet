@@ -144,7 +144,12 @@ class ClientMistral:
             for tentative in range(1, _TENTATIVES_429 + 1):
                 attente = _delai_retry_after(reponse)
                 if attente is None:
-                    attente = 5.0 * tentative
+                    # Sans Retry-After, les attentes doivent TRAVERSER une fenêtre
+                    # tokens/minute complète (cumul > 60 s avant la dernière tentative) :
+                    # un gros appel qui vient de réussir laisse la fenêtre pleine, et
+                    # 5/10/15 s (cumul 30 s) échouaient dans la même fenêtre — vécu le
+                    # 2026-08-05 sur le 1er segment du repli découpage (deux fois).
+                    attente = 20.0 * tentative
                 logger.warning("429 Mistral — attente %.1fs (tentative %d/%d)",
                                attente, tentative, _TENTATIVES_429)
                 _dormir(attente)
