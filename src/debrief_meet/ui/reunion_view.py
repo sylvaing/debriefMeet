@@ -487,10 +487,13 @@ class ReunionView(QWidget):
         if not source.exists():
             return
         texte = source.read_text(encoding="utf-8")
+        from debrief_meet.core import lexique as _lexique
         from debrief_meet.core import prompts as _prompts
         contenu = _prompts.contenu_actif(self._config.get("prompts"), self._config.get("prompt_actif"))
         if contenu:
-            texte = _prompts.prefixer(texte, contenu)
+            # Lexique ajouté au prompt seulement — sans prompt actif la copie reste
+            # brute, le bloc n'est jamais injecté seul (docs/46 §5.2).
+            texte = _prompts.prefixer(texte, _lexique.completer_prompt(contenu, self._config))
         if self._presse_papiers:
             self._presse_papiers.copier(texte)
         else:

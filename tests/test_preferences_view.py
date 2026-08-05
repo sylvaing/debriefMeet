@@ -26,12 +26,13 @@ def _flush(vue: PreferencesView) -> None:
 
 # ── Sections & navigation ────────────────────────────────────────────────────
 
-def test_neuf_sections(qapp, tmp_path):
-    """8 sections historiques + « IA en ligne » (interco Mistral, docs/42 §9.1) ;
-    « Modèle » est devenue « Transcription » (choix du mode, docs/45)."""
+def test_dix_sections(qapp, tmp_path):
+    """8 sections historiques + « IA en ligne » (interco Mistral, docs/42 §9.1) +
+    « Lexique » (corrections de transcription, docs/46) ; « Modèle » est devenue
+    « Transcription » (choix du mode, docs/45)."""
     vue = PreferencesView(_config(tmp_path))
-    assert vue._pages.count() == 9
-    assert vue._nav.count() == 9
+    assert vue._pages.count() == 10
+    assert vue._nav.count() == 10
 
 
 def test_navigation_change_la_page_active(qapp, tmp_path):
@@ -193,6 +194,68 @@ def test_toggle_prompt_actif_persiste(qapp, tmp_path):
     vue._liste_prompts.setCurrentRow(0)
     vue._check_prompt_actif.setChecked(True)
     assert cfg.get("prompt_actif") == 0
+
+
+# ── Lexique de corrections (docs/46) ─────────────────────────────────────────
+
+def test_section_lexique_charge_la_config(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("lexique_corrections", [
+        {"entendu": "Blue Moon", "ecrire": "BlueMind"},
+        {"entendu": "Mappy", "ecrire": "MAPI"},
+    ])
+    vue = PreferencesView(cfg)
+    assert vue._table_lexique.rowCount() == 2
+    assert vue._table_lexique.item(0, 0).text() == "Blue Moon"
+    assert vue._table_lexique.item(1, 1).text() == "MAPI"
+    assert vue._check_lexique.isChecked() is True     # défaut : actif
+
+
+def test_editer_cellule_lexique_persiste_apres_flush(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("lexique_corrections", [{"entendu": "Blue Moon", "ecrire": "BlueMind"}])
+    vue = PreferencesView(cfg)
+    vue._table_lexique.item(0, 0).setText("Blue Moon, Bluemine")
+    assert cfg.get("lexique_corrections")[0]["entendu"] == "Blue Moon, Bluemine"
+    _flush(vue)
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("lexique_corrections")[0]["entendu"] == "Blue Moon, Bluemine"
+
+
+def test_ajouter_ligne_lexique_persiste(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("lexique_corrections", [])
+    vue = PreferencesView(cfg)
+    vue._lexique_ajouter()
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("lexique_corrections") == [{"entendu": "", "ecrire": ""}]
+
+
+def test_supprimer_ligne_lexique_persiste(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    cfg.set("lexique_corrections", [
+        {"entendu": "a", "ecrire": "A"},
+        {"entendu": "b", "ecrire": "B"},
+    ])
+    vue = PreferencesView(cfg)
+    vue._table_lexique.setCurrentCell(0, 0)
+    vue._lexique_supprimer()
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("lexique_corrections") == [{"entendu": "b", "ecrire": "B"}]
+
+
+def test_toggle_lexique_grise_la_table_et_persiste(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    vue = PreferencesView(cfg)
+    assert vue._table_lexique.isEnabled()
+    vue._check_lexique.setChecked(False)
+    assert not vue._table_lexique.isEnabled()         # grisée, pas masquée (docs/46 §6)
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("lexique_actif") is False
 
 
 # ── Modèle ───────────────────────────────────────────────────────────────────
@@ -396,14 +459,14 @@ def test_ordre_des_sections_pense_utilisateur(qapp, tmp_path):
     vue = PreferencesView(_config(tmp_path))
     assert _titres_sections(vue) == [
         "Général", "Transcription", "IA en ligne", "Audio", "BlueMind",
-        "Prompts", "Dossiers", "Raccourcis", "Journalisation"]
+        "Prompts", "Lexique", "Dossiers", "Raccourcis", "Journalisation"]
 
 
-def test_neuf_sections_aussi_en_distant(qapp, tmp_path, mode_distant):
+def test_dix_sections_aussi_en_distant(qapp, tmp_path, mode_distant):
     """La nav ne varie plus avec le mode : « Sur cet ordinateur » doit rester
     découvrable depuis le mode distant."""
     vue = PreferencesView(_config(tmp_path))
-    assert vue._pages.count() == vue._nav.count() == 9
+    assert vue._pages.count() == vue._nav.count() == 10
 
 
 def test_sections_derivees_et_index_alignes(qapp, tmp_path):

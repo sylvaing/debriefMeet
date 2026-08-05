@@ -1,6 +1,11 @@
 # Spec — Lexique de corrections (termes mal transcrits, injectés dans les prompts)
 
-> **Statut :** 📝 spec validée à implémenter (2026-08-05).
+> **Statut :** ✅ **code + tests faits** (2026-08-05) — **1277 passed** en clone partiel
+> (3 échecs d'environnement pré-existants : helper Swift non compilé, audio canonique
+> du benchmark, sélecteur micro dépendant des périphériques du poste — échoue aussi sur
+> `main`). +33 tests : `test_lexique.py` (nouveau) + extensions
+> `test_mistral_pipeline`/`test_reunion_view`/`test_preferences_view`/`test_config`.
+> Reste : validation manuelle (section Préférences, CR réel avec clé API).
 > **Besoin :** la transcription (locale Whisper comme Voxtral) écorche systématiquement
 > les noms propres et le jargon métier (« Blue Moon » pour BlueMind, « Seppning Club »
 > pour SecNumCloud, « Mappy » pour MAPI…). L'utilisateur maintient dans les Préférences
@@ -173,14 +178,18 @@ Nouvelle entrée dans `_sections()` de `preferences_view.py`, entre **Prompts** 
 
 Contenu de la section (`_section_lexique`, `setMaximumWidth(600)` comme les autres) :
 
-- Texte d'intro : « Termes que la transcription écrit mal. Les correspondances sont
-  ajoutées aux prompts (génération du CR et copie avec prompt) pour que l'IA corrige
-  silencieusement. »
+- Texte d'intro : « Termes que la transcription écrit mal — plusieurs variantes
+  possibles dans “Entendu”, séparées par des virgules. Les correspondances sont
+  ajoutées aux prompts (génération du CR et copie avec prompt) pour que l'IA les
+  corrige silencieusement. »
 - Case **« Corriger les termes mal transcrits »** → `lexique_actif` (écriture
   immédiate). Décochée → tableau grisé (désactivé, pas masqué).
-- **`QTableWidget` 2 colonnes** « Entendu (variantes séparées par des virgules) » /
-  « À écrire », lignes éditables in-place, hauteur extensible (le tableau prend la
-  place verticale disponible — c'est la raison de la section dédiée).
+- **`QTableWidget` 2 colonnes** « Entendu » / « À écrire » — en-têtes **courts**
+  (constaté en validation manuelle : Qt centre et tronque des deux côtés un texte
+  d'en-tête plus large que la colonne), l'explication des variantes vit dans l'intro
+  et en infobulle sur l'en-tête « Entendu ». Lignes éditables in-place, hauteur
+  extensible (le tableau prend la place verticale disponible — c'est la raison de la
+  section dédiée).
 - Boutons **＋** / **−** sous le tableau (icônes `plus`/`minus` existantes, même motif
   que la liste des prompts) : ＋ ajoute une ligne vide et ouvre l'édition de la 1ʳᵉ
   cellule ; − supprime la (les) ligne(s) sélectionnée(s), sans confirmation (pas de
