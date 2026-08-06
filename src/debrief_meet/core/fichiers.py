@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import wave
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -372,6 +373,38 @@ def chemin_ffmpeg() -> str | None:
 
 def _ffmpeg_present() -> bool:
     return chemin_ffmpeg() is not None
+
+
+def prechauffer_ffmpeg() -> threading.Thread | None:
+    """Exécute `ffmpeg -version` en arrière-plan, une fois, au lancement de l'app.
+
+    Le premier spawn de ffmpeg après le lancement paie le scan antivirus du binaire
+    embarqué (mesuré 4 à 7 s sur poste Windows, au moment de la création des écrivains
+    Opus — soit en plein démarrage d'enregistrement, thread UI bloqué). Le payer ici,
+    hors du chemin critique, rend le premier enregistrement aussi rapide que les
+    suivants. Sans effet si ffmpeg est introuvable (le repli WAV ne passe pas par
+    ffmpeg). Renvoie le thread de préchauffage (None si rien à faire) — les appelants
+    l'ignorent, les tests peuvent le joindre."""
+    exe = chemin_ffmpeg()
+    if exe is None:
+        logger.debug("Préchauffage ffmpeg : binaire introuvable — ignoré")
+        return None
+
+    def _chauffer() -> None:
+        import subprocess
+        try:
+            subprocess.run(
+                [exe, "-version"], timeout=60,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            logger.debug("Préchauffage ffmpeg terminé (%s)", exe)
+        except Exception:
+            logger.debug("Préchauffage ffmpeg échoué (sans gravité)", exc_info=True)
+
+    thread = threading.Thread(target=_chauffer, name="prechauffe-ffmpeg", daemon=True)
+    thread.start()
+    return thread
 
 
 class _PisteWriter:

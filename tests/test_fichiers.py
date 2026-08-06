@@ -743,3 +743,33 @@ def test_apercu_journal_vide(tmp_path):
     md = tmp_path / "j.md"
     md.write_text("# Titre\n\n---\n", encoding="utf-8")
     assert apercu_journal(md) == ""
+
+
+# ── prechauffer_ffmpeg() — scan antivirus payé au lancement, pas au 1ᵉʳ enregistrement ──
+
+def test_prechauffage_sans_ffmpeg_ne_fait_rien(monkeypatch):
+    from debrief_meet.core import fichiers
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: None)
+    assert fichiers.prechauffer_ffmpeg() is None
+
+
+def test_prechauffage_lance_ffmpeg_version_en_arriere_plan(monkeypatch):
+    import subprocess
+    from debrief_meet.core import fichiers
+    appels = []
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: "/chemin/ffmpeg")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: appels.append(cmd))
+    thread = fichiers.prechauffer_ffmpeg()
+    assert thread is not None
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert appels == [["/chemin/ffmpeg", "-version"]]
+
+
+def test_prechauffage_echec_silencieux(monkeypatch, tmp_path):
+    # Binaire inexistant : subprocess.run lève FileNotFoundError — absorbé (DEBUG).
+    from debrief_meet.core import fichiers
+    monkeypatch.setattr(fichiers, "chemin_ffmpeg", lambda: str(tmp_path / "absent.exe"))
+    thread = fichiers.prechauffer_ffmpeg()
+    thread.join(timeout=5)
+    assert not thread.is_alive()

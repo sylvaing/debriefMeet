@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -159,6 +160,16 @@ class OrchestrateurReunion(QObject):
 
     def _demarrer(self) -> None:
         self._actif = True
+        # Retour visuel immédiat (tray rouge) : la suite bloque le thread UI pendant
+        # plusieurs secondes à froid (micro, loopback, spawn ffmpeg — mesuré 2 à 12 s
+        # sur poste Windows). En cas d'échec, `_annuler_demarrage` remet REPOS.
+        self.etat_visuel_change.emit(EtatVisuel.ENREGISTREMENT)
+        # Chrono par étape (DEBUG) : identifie la phase lente d'un démarrage à partir
+        # d'un export diagnostic, sans rien supposer de l'ordre des logs tiers.
+        _t0 = time.monotonic()
+
+        def _jalon(nom: str) -> None:
+            logger.debug("Démarrage réunion — %s à +%.2fs", nom, time.monotonic() - _t0)
         # Mode distant : jamais de transcription en direct, quoi qu'en dise la config —
         # `transcription_live` garde sa valeur pour un retour en mode local (docs/45).
         # C'est le SEUL site à gater : `_transcription_live` pilote ensuite la rétention
@@ -178,6 +189,7 @@ class OrchestrateurReunion(QObject):
             fichier = chemin_reunion(
                 Path(self._config.get("dossier_reunions")), self._debut, titre_pre)
             self._ecrivain = EcrivainReunion(fichier, self._debut)
+            _jalon("dossier prêt")
             self._avec_systeme = self._systeme.disponible()
             if not self._avec_systeme:
                 logger.warning(
@@ -188,6 +200,7 @@ class OrchestrateurReunion(QObject):
             try:
                 self._micro.demarrer(micro_index)
                 self._avec_micro = True
+                _jalon("micro démarré")
             except Exception as exc:
                 logger.warning("Micro indisponible au démarrage (%s) — réunion sans micro", exc)
                 self._avec_micro = False
@@ -197,6 +210,7 @@ class OrchestrateurReunion(QObject):
 
             if self._avec_systeme:
                 self._systeme.demarrer()
+                _jalon("capture système démarrée")
 
             # AEC : active seulement si micro + système présents et activée en config.
             # Conservée aussi en mode audio-seul (nettoie le micro retenu → bénéficie à la
@@ -207,6 +221,7 @@ class OrchestrateurReunion(QObject):
                 try:
                     self._processeur_aec.demarrer()
                     self._aec = self._processeur_aec
+                    _jalon("AEC démarrée")
                 except Exception as exc:
                     logger.warning("AEC indisponible (%s) — réunion sans annulation d'écho", exc)
                     self._aec = None
@@ -225,15 +240,16 @@ class OrchestrateurReunion(QObject):
                     base_moi=base_moi if self._avec_micro else None,
                     base_systeme=base_sys if self._avec_systeme else None,
                 )
+                _jalon("écrivains audio prêts (spawn ffmpeg)")
 
             if self._transcription_live:
                 self._ecrivain.creer(avec_systeme=self._avec_systeme, avec_micro=self._avec_micro)
             else:
                 # Mode enregistrement seul : placeholder, transcription lancée plus tard.
                 self._ecrivain.creer_placeholder()
+            _jalon("transcription.md créé — démarrage terminé")
 
             self._timer.start(self._config.get("intervalle_reunion") * 1000)
-            self.etat_visuel_change.emit(EtatVisuel.ENREGISTREMENT)
             self.reunion_demarree.emit(fichier)
         except Exception as exc:
             logger.error("Démarrage de la réunion impossible (%s) — annulation", exc, exc_info=True)

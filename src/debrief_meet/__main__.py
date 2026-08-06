@@ -437,6 +437,11 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(100, lambda: _executer_commande(commande_initiale))
 
+    # Préchauffage ffmpeg (thread daemon) : paie le scan antivirus du binaire embarqué
+    # maintenant plutôt qu'au premier démarrage d'enregistrement (thread UI bloqué).
+    from debrief_meet.core.fichiers import prechauffer_ffmpeg
+    prechauffer_ffmpeg()
+
     logger.info("debriefMeet démarré")
     code = app.exec()
 

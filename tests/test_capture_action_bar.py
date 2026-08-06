@@ -55,6 +55,44 @@ def test_clic_desactive_n_emet_rien(qapp, qtbot):
     assert appels == []
 
 
+# ── Retour visuel immédiat au clic (le démarrage de capture bloque le thread UI) ──
+
+def test_clic_demarrage_affiche_l_etat_intermediaire_pendant_la_bascule(qapp):
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False)
+    vu = {}
+
+    def _pendant():
+        vu["texte"] = barre._bouton.text()
+        vu["actif"] = barre._bouton.isEnabled()
+        # Le contrôleur réapplique l'état réel pendant la bascule (mode démarré).
+        barre.definir_etat(Mode.REUNION, secondes=0)
+
+    barre.demande_bascule.connect(_pendant)
+    barre._bouton.click()
+    assert vu["texte"] == " Démarrage…"
+    assert vu["actif"] is False
+    assert "Arrêter" in barre._bouton.text()      # état final = actif
+    assert barre._bouton.isEnabled()
+
+
+def test_clic_arret_affiche_l_etat_intermediaire(qapp):
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False)
+    barre.definir_etat(Mode.REUNION, secondes=12)
+    vu = {}
+    barre.demande_bascule.connect(lambda: vu.setdefault("texte", barre._bouton.text()))
+    barre._bouton.click()
+    assert vu["texte"] == " Arrêt…"
+
+
+def test_clic_refuse_restaure_l_etat_precedent(qapp):
+    # Bascule refusée (autre mode démarré via raccourci entre-temps) : aucun
+    # mode_change émis → le bouton doit revenir de « Démarrage… » à l'état repos.
+    barre = CaptureActionBar(Mode.REUNION, avec_recherche=False)
+    barre._bouton.click()                          # personne ne réapplique d'état
+    assert "Démarrer la réunion" in barre._bouton.text()
+    assert barre._bouton.isEnabled()
+
+
 def test_recherche_optionnelle(qapp):
     sans = CaptureActionBar(Mode.DICTEE, avec_recherche=False)
     assert sans._recherche is None

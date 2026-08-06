@@ -79,7 +79,7 @@ class CaptureActionBar(QWidget):
         self._bouton = QPushButton(self)
         self._bouton.setFont(QFont(SANS, 13, QFont.Weight.DemiBold))
         self._bouton.setIconSize(QSize(16, 16))
-        self._bouton.clicked.connect(self.demande_bascule.emit)
+        self._bouton.clicked.connect(self._sur_clic)
         layout.addWidget(self._bouton)
 
         self._point = PointPulsant(9, self)
@@ -125,12 +125,31 @@ class CaptureActionBar(QWidget):
 
     def definir_etat(self, mode_actif: Mode, secondes: int = 0) -> None:
         """`mode_actif` = `Mode.IDLE` si rien n'enregistre."""
+        self._dernier_etat = (mode_actif, secondes)
         if mode_actif == self._mode:
             self._configurer_actif(secondes)
         elif mode_actif is Mode.IDLE:
             self._configurer_repos()
         else:
             self._configurer_desactive()
+
+    def _sur_clic(self) -> None:
+        """Retour visuel immédiat avant la bascule : le démarrage/arrêt de la capture
+        est synchrone sur le thread UI (ouverture micro, loopback, spawn ffmpeg… —
+        plusieurs secondes à froid sous Windows), et sans repaint forcé le bouton
+        resterait figé sur son ancien état pendant tout ce temps. L'état définitif est
+        réappliqué par le RecordingController pendant `demande_bascule` ; si la bascule
+        a été refusée (aucun `mode_change` émis), la réapplication du dernier état
+        connu restaure le bouton."""
+        en_cours = self._dernier_etat[0] == self._mode
+        self._bouton.setEnabled(False)
+        self._bouton.setText(" Arrêt…" if en_cours else " Démarrage…")
+        if not en_cours:
+            self._bouton.setStyleSheet(_STYLE_DANGER)
+            self._bouton.setIcon(icone_svg_teintee(icone_phosphor("stop"), "#FFFFFF", 14))
+        self.repaint()
+        self.demande_bascule.emit()
+        self.definir_etat(*self._dernier_etat)
 
     def _configurer_repos(self) -> None:
         self._bouton.setEnabled(True)
