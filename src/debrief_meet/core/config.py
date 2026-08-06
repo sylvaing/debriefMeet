@@ -15,7 +15,7 @@ from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
 
-VERSION_COURANTE = 2
+VERSION_COURANTE = 3
 
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
@@ -85,7 +85,10 @@ _DEFAUTS: dict[str, Any] = {
     # décision adaptative §1) ; "voxtral" : force la re-transcription cloud.
     "mistral_source_transcription": "auto",
     "mistral_modele_transcription": "voxtral-mini-latest",
-    "mistral_modele_cr": "mistral-small-latest",
+    # large par défaut (2026-08-06) : les prompts CR portent des consignes exigeantes
+    # (camps, anti-invention) — on aligne le défaut sur le modèle le plus robuste,
+    # déjà utilisé en réel sur le poste de Sylvain.
+    "mistral_modele_cr": "mistral-large-latest",
     "mistral_duree_max_min": 180,
     "mistral_confidentialite_acceptee": False,
 }
@@ -146,6 +149,8 @@ class Config:
         logger.info("Migration config v%d → v%d", version, VERSION_COURANTE)
         if version < 2:
             self._migrer_v2_prompts(donnees)
+        if version < 3:
+            self._migrer_v3_modele_cr(donnees)
         donnees["version"] = VERSION_COURANTE
         return True
 
@@ -171,3 +176,11 @@ class Config:
                                (_prompts.CR_FULL_MD_TITRE, _prompts.CR_FULL_MD_CONTENU)):
             if titre not in titres:
                 prompts.append({"titre": titre, "contenu": contenu})
+
+    @staticmethod
+    def _migrer_v3_modele_cr(donnees: dict[str, Any]) -> None:
+        """v3 : le modèle de CR par défaut passe à mistral-large-latest (cf. le
+        commentaire de `_DEFAUTS`). Seule l'ancienne valeur par défaut est migrée —
+        un autre choix explicite est conservé."""
+        if donnees.get("mistral_modele_cr") == "mistral-small-latest":
+            donnees["mistral_modele_cr"] = "mistral-large-latest"

@@ -14,9 +14,13 @@ import re
 
 _CHAPEAU = (
     "Corrections de transcription :\n"
-    "la transcription contient des erreurs phonétiques sur les noms propres et le "
-    "jargon technique. Corrige-les silencieusement dans ta réponse, sans les signaler. "
-    "Correspondances fréquentes (« entendu » → à écrire) :"
+    "la transcription peut contenir des erreurs phonétiques sur les noms propres et le "
+    "jargon technique. Corrige une erreur uniquement si une variante « entendu » "
+    "apparaît réellement dans la transcription — silencieusement, sans la signaler. "
+    "Cette liste est un référentiel d'orthographes, pas une liste de participants ni "
+    "de sujets : n'introduis jamais dans ta réponse un nom ou un terme de la liste qui "
+    "n'apparaît pas dans la transcription. Correspondances fréquentes "
+    "(« entendu » → à écrire) :"
 )
 
 _CONSIGNE_FINALE = (
@@ -73,15 +77,35 @@ def bloc_instructions(corrections: list[dict] | None) -> str | None:
     return f"{_CHAPEAU}\n{corps}\n{_CONSIGNE_FINALE}"
 
 
+# Ligne d'annonce qui clôt les prompts CR — le bloc de corrections doit rester AVANT
+# elle : injecté après, il est lu comme faisant partie de la transcription et ses noms
+# propres deviennent des « gens de la réunion » (participant inventé sur un CR réel,
+# 2026-08-06).
+_MARQUEUR_TRANSCRIPTION = "Voici la transcription"
+
+
 def completer_prompt(prompt: str, config) -> str:
-    """`prompt` suivi du bloc de corrections si le lexique est actif et non vide —
-    sinon le prompt inchangé, à l'identique (pas de rstrip parasite)."""
+    """`prompt` complété du bloc de corrections si le lexique est actif et non vide —
+    sinon le prompt inchangé, à l'identique (pas de rstrip parasite).
+
+    Le bloc est inséré avant la dernière ligne « Voici la transcription… » quand le
+    prompt en contient une (groupé avec les instructions, au plus près du contenu) ;
+    sans elle, il est mis en TÊTE de prompt — jamais en fin, où il se retrouverait au
+    contact direct de la transcription concaténée derrière."""
     if not config.get("lexique_actif"):
         return prompt
     bloc = bloc_instructions(config.get("lexique_corrections"))
     if bloc is None:
         return prompt
-    return f"{prompt.rstrip()}\n\n{bloc}"
+    tronc = prompt.rstrip()
+    idx = tronc.rfind(_MARQUEUR_TRANSCRIPTION)
+    if idx == -1:
+        return f"{bloc}\n\n{tronc}"
+    debut_ligne = tronc.rfind("\n", 0, idx) + 1
+    avant, annonce = tronc[:debut_ligne].rstrip(), tronc[debut_ligne:]
+    if not avant:
+        return f"{bloc}\n\n{annonce}"
+    return f"{avant}\n\n{bloc}\n\n{annonce}"
 
 
 def termes_biais(corrections: list[dict] | None) -> list[str]:

@@ -30,7 +30,8 @@ def test_bloc_rendu_variantes_multiples():
 def test_bloc_contient_chapeau_et_garde_fou():
     bloc = lexique.bloc_instructions([{"entendu": "Mappy", "ecrire": "MAPI"}])
     assert bloc.startswith("Corrections de transcription :")
-    assert "Corrige-les silencieusement" in bloc
+    assert "uniquement si une variante « entendu »" in bloc   # pas de correction hors transcription
+    assert "n'introduis jamais" in bloc          # la liste n'est pas une liste de participants
     assert "« (à confirmer) »" in bloc           # garde-fou anti-invention (docs/46 §4)
 
 
@@ -63,10 +64,39 @@ def test_bloc_none_si_rien_d_exploitable():
 
 # ── completer_prompt() ───────────────────────────────────────────────────────────
 
-def test_completer_prompt_suffixe_le_bloc(config_tmp):
+def test_completer_prompt_sans_annonce_bloc_en_tete(config_tmp):
+    # Prompt sans ligne d'annonce → bloc en TÊTE : jamais en fin de prompt, où il
+    # serait au contact direct de la transcription concaténée derrière.
     out = lexique.completer_prompt("Fais un CR.", config_tmp)   # défauts : actif + tableau
-    assert out.startswith("Fais un CR.\n\nCorrections de transcription :")
+    assert out.startswith("Corrections de transcription :")
+    assert out.endswith("\n\nFais un CR.")
     assert "BlueMind" in out
+
+
+def test_completer_prompt_insere_avant_l_annonce_de_transcription(config_tmp):
+    # Injecté après « Voici la transcription : », le bloc serait lu comme faisant
+    # partie de la transcription — ses noms propres deviennent des participants.
+    prompt = "Fais un CR.\n\nVoici la transcription :"
+    out = lexique.completer_prompt(prompt, config_tmp)
+    assert out.startswith("Fais un CR.\n\nCorrections de transcription :")
+    assert out.endswith("\n\nVoici la transcription :")
+
+
+def test_completer_prompt_annonce_suivie_d_un_separateur(config_tmp):
+    # CR simple : l'annonce est suivie de « --- » — le bloc reste avant l'annonce.
+    prompt = "Fais un CR.\n\nVoici la transcription :\n---"
+    out = lexique.completer_prompt(prompt, config_tmp)
+    assert out.endswith("\n\nVoici la transcription :\n---")
+    assert "Corrections de transcription :" in out
+
+
+def test_completer_prompt_defauts_bloc_avant_l_annonce(config_tmp):
+    # Les 3 prompts par défaut se terminent tous par la ligne d'annonce.
+    from debrief_meet.core import prompts as prompts_mod
+    for p in prompts_mod.prompts_par_defaut():
+        out = lexique.completer_prompt(p["contenu"], config_tmp)
+        assert out.rindex("Corrections de transcription :") \
+            < out.rindex("Voici la transcription"), p["titre"]
 
 
 def test_completer_prompt_inactif_identite(config_tmp):

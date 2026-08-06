@@ -29,7 +29,7 @@ class TestDefauts:
         assert config_tmp.get("mistral_base_url") == "https://api.mistral.ai"
         assert config_tmp.get("mistral_source_transcription") == "auto"
         assert config_tmp.get("mistral_modele_transcription") == "voxtral-mini-latest"
-        assert config_tmp.get("mistral_modele_cr") == "mistral-small-latest"
+        assert config_tmp.get("mistral_modele_cr") == "mistral-large-latest"
         assert config_tmp.get("mistral_duree_max_min") == 180
         assert config_tmp.get("mistral_confidentialite_acceptee") is False
 
@@ -211,6 +211,31 @@ class TestMigrationV2Prompts:
 
     def test_prompts_absents_ou_malformes_sans_crash(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier({"version": 1, "prompts": "pas une liste"})
+        assert cfg.get("version") == VERSION_COURANTE
+
+
+class TestMigrationV3ModeleCr:
+    """v2 → v3 : modèle de CR par défaut mistral-small → mistral-large."""
+
+    def test_ancien_defaut_migre(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 2, "mistral_modele_cr": "mistral-small-latest"})
+        assert cfg.get("mistral_modele_cr") == "mistral-large-latest"
+        assert cfg.get("version") == VERSION_COURANTE
+
+    def test_choix_explicite_conserve(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 2, "mistral_modele_cr": "mistral-medium-latest"})
+        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert cfg.get("version") == VERSION_COURANTE
+
+    def test_depuis_v1_les_migrations_s_enchainent(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 1, "mistral_modele_cr": "mistral-small-latest",
+             "prompts": [{"titre": "Perso", "contenu": "X"}]})
+        assert cfg.get("mistral_modele_cr") == "mistral-large-latest"
+        titres = [p["titre"] for p in cfg.get("prompts")]
+        assert titres == ["Perso", "CR Pipedrive", "CR full .md"]   # v2 a joué aussi
         assert cfg.get("version") == VERSION_COURANTE
 
 

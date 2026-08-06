@@ -362,8 +362,11 @@ def test_copier_prefixe_le_prompt_actif(qapp, machine, tmp_path):
     pp = PressePapiersFake()
     vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
     vue._copier(md)
-    assert pp.dernier.startswith("Fais un CR.\n\n")
-    assert "ligne de transcription" in pp.dernier
+    # Lexique actif (défaut) + prompt sans ligne d'annonce → bloc de corrections en
+    # tête, puis le prompt, puis la transcription.
+    assert pp.dernier.startswith("Corrections de transcription :")
+    assert "Fais un CR.\n\n" in pp.dernier
+    assert pp.dernier.index("Fais un CR.") < pp.dernier.index("ligne de transcription")
 
 
 def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
@@ -376,12 +379,14 @@ def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
     pp = PressePapiersFake()
     vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
     vue._copier(md)
-    assert pp.dernier.startswith("Résume.\n\n")
-    assert "Moi : salut" in pp.dernier
+    assert "Résume.\n\n" in pp.dernier
+    assert pp.dernier.index("Résume.") < pp.dernier.index("Moi : salut")
 
 
-def test_copier_ajoute_le_bloc_lexique_apres_le_prompt(qapp, machine, tmp_path):
-    """Lexique actif (défaut) : prompt → bloc de corrections → transcription (docs/46 §5.2)."""
+def test_copier_bloc_lexique_jamais_au_contact_de_la_transcription(qapp, machine, tmp_path):
+    """Lexique actif (défaut), prompt sans ligne d'annonce : bloc de corrections →
+    prompt → transcription — le bloc ne précède jamais directement le contenu, ses
+    noms propres seraient pris pour des participants (CR client du 2026-08-06)."""
     from tests.fakes.adapters import PressePapiersFake
     md = _md_simple(tmp_path)
     cfg = _config(tmp_path)
@@ -390,8 +395,8 @@ def test_copier_ajoute_le_bloc_lexique_apres_le_prompt(qapp, machine, tmp_path):
     pp = PressePapiersFake()
     vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
     vue._copier(md)
-    assert (pp.dernier.index("Fais un CR.")
-            < pp.dernier.index("Corrections de transcription")
+    assert (pp.dernier.index("Corrections de transcription")
+            < pp.dernier.index("Fais un CR.")
             < pp.dernier.index("ligne de transcription"))
 
 
