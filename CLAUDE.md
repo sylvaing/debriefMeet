@@ -318,3 +318,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |
 | **Lexique de corrections (tableau « entendu → à écrire » injecté dans les prompts + biais Voxtral) — ✅ fusionné dans `main`, UI validée manuellement** | `docs/46` |
+| Diarization Voxtral V2 en mode distant — **piste non instruite** (annonce Transcribe 2 de 2026-02 : diarization batch, 3 h/requête ; questions §4 à instruire avant chantier) | `docs/47` |
