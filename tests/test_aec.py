@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from debrief_meet.core.aec import (
+    RECAL_SEUIL_ECH,
     MoteurAEC,
     ProcesseurAEC,
     SEUIL_RMS,
@@ -214,3 +215,58 @@ def test_attenuation_echo_e2e_livekit():
     assert echo_net < echo_brut * 0.3             # forte atténuation de l'écho
     assert echo_net < SEUIL_RMS                   # sous le seuil anti-hallucination
     assert voix_net > 5 * echo_net                # la voix survit nettement
+
+
+# ── Suivi continu du délai + alerte d'efficacité (docs/48 §4.2) ───────────────────
+
+def _echo_decale(ref: np.ndarray, delai: int, gain: float = 0.5) -> np.ndarray:
+    echo = np.zeros_like(ref)
+    echo[delai:] = ref[:-delai] * gain
+    return echo
+
+
+def test_calibration_supporte_l_offset_d_ingestion_700ms():
+    # docs/48 : le décalage inter-chaînes mesuré (700 ms) dépassait l'ancienne borne
+    # de ±600 ms → verrou parasite. La borne élargie doit caler juste.
+    rng = np.random.default_rng(7)
+    delai = int(0.7 * SR_AEC)
+    ref = rng.normal(0, 0.3, SR_AEC * 4).astype(np.float32)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc.pousser(_echo_decale(ref, delai), ref)
+    assert proc.calibre
+    assert abs(proc.delai_estime - delai) <= 2
+
+
+def test_derive_declenche_un_realignement_confirme():
+    # Écho à 400 éch pendant la calibration, puis brutalement à 2000 éch (dérive
+    # cumulée > 80 ms) : après 2 mesures concordantes, le délai suivi rejoint 2000.
+    rng = np.random.default_rng(11)
+    ref = rng.normal(0, 0.3, SR_AEC * 60).astype(np.float32)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+
+    d1, d2 = 400, 2000
+    mic = np.concatenate([_echo_decale(ref, d1)[:SR_AEC * 24],
+                          _echo_decale(ref, d2)[SR_AEC * 24:]])
+    for debut in range(0, SR_AEC * 60, SR_AEC * 12):
+        proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
+
+    assert proc.calibre
+    assert abs(proc.delai_estime - d2) <= RECAL_SEUIL_ECH
+
+
+def test_echo_residuel_persistant_emet_un_warning_unique(caplog):
+    # Moteur identité = l'écho survit au nettoyage → au bout de 5 tranches où la
+    # sortie reste corrélée à la référence, un WARNING (unique) est émis.
+    import logging as _logging
+    rng = np.random.default_rng(13)
+    ref = rng.normal(0, 0.3, SR_AEC * 12 * 8).astype(np.float32)
+    mic = _echo_decale(ref, 320)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
+        for debut in range(0, len(ref), SR_AEC * 12):
+            proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
+    alertes = [r for r in caplog.records if "AEC inefficace" in r.getMessage()]
+    assert len(alertes) == 1

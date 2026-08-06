@@ -1,7 +1,12 @@
 # 48 — Écho non annulé & transcriptions en double (AEC continue + dédoublonnage)
 
-> **Statut : 📋 SPEC à implémenter** — rédigée le 2026-08-06 après diagnostic terrain
-> le jour même (3 réunions réelles sur le Mac de Sylvain + logs de Alix).
+> **Statut : 🔄 étapes A, B et C-mesure implémentées** (2026-08-06, 1323 passed) —
+> dédoublonnage à la fusion (`_sans_doublons_inter_pistes`), AEC à ré-estimation
+> périodique + WARNING d'écho résiduel, mesure de l'offset d'ingestion à la 1ʳᵉ
+> tranche. Reste : validation terrain (§5, rejouer les paires opus du 2026-08-06 +
+> une vraie visio sans casque) et C-compensation si le modèle d'offset est confirmé.
+> Spec rédigée le 2026-08-06 après diagnostic terrain le jour même (3 réunions
+> réelles sur le Mac de Sylvain + logs de Alix).
 > **Besoin :** en réunion sans casque, la voix des correspondants sort des
 > haut-parleurs, entre dans le micro, et l'AEC censée la retirer **ne retire rien**.
 > Résultat : quasi toutes les phrases du correspondant sont transcrites **en double**

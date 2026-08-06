@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import threading
@@ -580,6 +581,51 @@ class EcrivainReunion:
         return self._chemin
 
 
+# Dédoublonnage inter-pistes (docs/48 §4.1) : quand l'écho HP→micro n'est pas annulé
+# par l'AEC, la voix distante est transcrite sur les DEUX pistes — le segment micro
+# quasi identique à un segment système proche est un doublon, pas une prise de parole.
+_DEDUP_FENETRE_S = 3.0       # décalage inter-pistes mesuré ≤ 0,7 s + découpage des segments
+_DEDUP_SIMILARITE = 0.8
+_DEDUP_LONGUEUR_MIN = 25     # caractères normalisés — protège les « Oui. » légitimes
+
+_MOTIF_NON_MOT = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _normalise_dedup(texte: str) -> str:
+    return _MOTIF_NON_MOT.sub(" ", texte.lower()).strip()
+
+
+def _sans_doublons_inter_pistes(
+    segments_moi: "list[tuple[float, str]]",
+    segments_participants: "list[tuple[float, str]]",
+) -> "list[tuple[float, str]]":
+    """Segments micro sans ceux qui doublonnent un segment système (docs/48 §4.1).
+
+    On écarte la copie MICRO (la piste système est la source dédiée de la voix
+    distante) ; dans le cas symétrique — écho renvoyé par le poste d'en face — les
+    deux copies sont quasi identiques, en garder une seule donne le même texte."""
+    systeme = [(debut, _normalise_dedup(texte)) for debut, texte in segments_participants]
+    retenus: list[tuple[float, str]] = []
+    for debut, texte in segments_moi:
+        norme = _normalise_dedup(texte)
+        doublon = False
+        if len(norme) >= _DEDUP_LONGUEUR_MIN:
+            for debut_sys, norme_sys in systeme:
+                if abs(debut_sys - debut) > _DEDUP_FENETRE_S:
+                    continue
+                if len(norme_sys) < _DEDUP_LONGUEUR_MIN:
+                    continue
+                if difflib.SequenceMatcher(None, norme, norme_sys).ratio() >= _DEDUP_SIMILARITE:
+                    logger.debug(
+                        "Doublon inter-pistes écarté (micro %.1fs ≈ système %.1fs) : %.60s…",
+                        debut, debut_sys, texte)
+                    doublon = True
+                    break
+        if not doublon:
+            retenus.append((debut, texte))
+    return retenus
+
+
 def _entrelaces(
     texte_moi: str,
     texte_participants: str,
@@ -600,6 +646,7 @@ def _entrelaces(
             blocs.append(("Participants", texte_participants))
         return blocs
 
+    segments_moi = _sans_doublons_inter_pistes(segments_moi, segments_participants)
     tous = [(debut, "Moi", texte.strip()) for debut, texte in segments_moi if texte.strip()]
     tous += [(debut, "Participants", texte.strip()) for debut, texte in segments_participants if texte.strip()]
     tous.sort(key=lambda x: x[0])

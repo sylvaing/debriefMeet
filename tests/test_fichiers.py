@@ -773,3 +773,50 @@ def test_prechauffage_echec_silencieux(monkeypatch, tmp_path):
     thread = fichiers.prechauffer_ffmpeg()
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+# ── Dédoublonnage inter-pistes à la fusion (docs/48 §4.1) ────────────────────────
+
+def _entrelaces_(moi, participants):
+    from debrief_meet.core.fichiers import _entrelaces
+    return _entrelaces("x", "y", moi, participants)
+
+
+def test_dedup_ecarte_le_doublon_micro():
+    # Écho HP→micro non annulé : la phrase du correspondant est transcrite sur les
+    # deux pistes (décalage inter-pistes ≤ 0,7 s mesuré) → la copie micro est écartée.
+    blocs = _entrelaces_(
+        moi=[(10.0, "Je vous propose plutôt quatorze heures lundi ou mardi.")],
+        participants=[(10.7, "Je vous propose plutôt 14h lundi ou mardi.")])
+    assert blocs == [("Participants", "Je vous propose plutôt 14h lundi ou mardi.")]
+
+
+def test_dedup_variantes_de_transcription():
+    # Les deux captations du même propos divergent un peu (« Rob calme » / « Bastien
+    # calme ») : similarité ≥ 0,8 → doublon quand même.
+    blocs = _entrelaces_(
+        moi=[(5.0, "il y a Rob calme son collègue pour la réunion il le calme")],
+        participants=[(5.6, "Et Bastien calme son collègue pendant la réunion. Il le calme.")])
+    assert len(blocs) == 1 and blocs[0][0] == "Participants"
+
+
+def test_dedup_hors_fenetre_conserve():
+    blocs = _entrelaces_(
+        moi=[(2.0, "Je vous propose plutôt quatorze heures lundi ou mardi.")],
+        participants=[(9.0, "Je vous propose plutôt quatorze heures lundi ou mardi.")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+def test_dedup_repetition_courte_legitime_conservee():
+    # « Oui. » des deux camps à 2 s d'écart = accord, pas un écho.
+    blocs = _entrelaces_(
+        moi=[(3.0, "Oui, ça marche.")],
+        participants=[(4.0, "Oui, ça marche.")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+def test_dedup_textes_differents_conserves():
+    blocs = _entrelaces_(
+        moi=[(3.0, "Nous avons soixante-treize mille euros de factures en attente.")],
+        participants=[(3.5, "Je fais un point de trésorerie et je vous envoie un mail récapitulatif.")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]

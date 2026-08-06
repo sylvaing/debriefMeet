@@ -10,8 +10,10 @@ Caractéristiques (validées au spike) :
 - moteur **LiveKit AEC3**, débruitage (NS) **désactivé** (dégrade la voix) ;
 - la référence doit **précéder** l'écho (filtre causal) → **marge de lead ~40 ms** ;
 - objet **à état** : on l'alimente par tranche via `pousser()`, l'état de l'AEC et
-  l'alignement sont conservés d'une tranche à l'autre (la dérive d'horloge est
-  absorbée par l'estimateur interne d'AEC3, cf. spike Étape 2).
+  l'alignement sont conservés d'une tranche à l'autre. La dérive fine est absorbée
+  par l'estimateur interne d'AEC3 ; la dérive lente et les décalages d'ingestion
+  (docs/48) sont suivis par une ré-estimation périodique du délai résiduel, avec
+  WARNING si l'écho survit au nettoyage sur plusieurs tranches.
 
 Ce module ne touche pas à l'app (le câblage `factory`/`reunion` est l'étape 2).
 """
@@ -40,10 +42,21 @@ def _trace(msg: str) -> None:
 SR_AEC = 16_000                       # 16 kHz mono, comme ce qu'on envoie à Whisper
 TRAME = SR_AEC * 10 // 1000           # 160 échantillons = 10 ms (imposé par WebRTC)
 MARGE_LEAD_MS_DEFAUT = 40             # réf précède l'écho (cf. spike : plateau 20-60 ms)
-DELAI_MAX_MS = 600                    # délai HP→micro plausible : au-delà = faux verrou
+# Écho HP→micro (< 100 ms) + offset d'ingestion entre les 2 chaînes de capture (jusqu'à
+# 700 ms mesurés sur le terrain, variable par réunion — docs/48 §1). L'ancienne borne
+# de 600 ms était parfois PLUS PETITE que l'offset réel → verrou parasite.
+DELAI_MAX_MS = 1500
 CALIB_FENETRE_S = 12.0                # fenêtre de cross-corrélation pour caler le délai
 REF_RMS_MIN = 0.005                   # en deçà, le système est silencieux → pas d'écho à caler
 QUALITE_CORR_MIN = 10.0               # pic/médiane mini pour un délai FIABLE (sinon on diffère)
+
+# Suivi continu (docs/48 §4.2) : l'offset dérive (~125 ppm mesurés) → une calibration
+# one-shot se périme. Ré-estimation périodique sur une queue glissante des flux
+# réellement traités ; ré-alignement seulement au-delà de RECAL_SEUIL_ECH, confirmé
+# deux fois (hystérésis) — la dérive fine reste absorbée par l'estimateur interne AEC3.
+RECAL_FENETRE_S = 12.0                # queue glissante near/far/nettoyé
+RECAL_SEUIL_ECH = int(0.080 * SR_AEC) # résidu toléré avant ré-alignement (80 ms)
+ECHO_RESIDUEL_TRANCHES = 5            # tranches consécutives d'écho résiduel avant WARNING
 
 
 # ── Estimation du délai (cross-corrélation bornée) ───────────────────────────
@@ -172,6 +185,14 @@ class ProcesseurAEC:
         self._a_sauter_ref = 0
         self._delai_estime: int | None = None
         self._derniere_attenuation_db: float | None = None
+        # Suivi continu (docs/48 §4.2) — queues glissantes des flux réellement traités.
+        self._n_queue = int(RECAL_FENETRE_S * SR_AEC)
+        self._queue_near = np.zeros(0, dtype=np.float32)
+        self._queue_far = np.zeros(0, dtype=np.float32)
+        self._queue_nettoye = np.zeros(0, dtype=np.float32)
+        self._derive_confirmations = 0
+        self._tranches_echo_residuel = 0
+        self._alerte_efficacite_emise = False
 
     def demarrer(self) -> None:
         """Prépare une session : moteur AEC **frais** (sauf moteur injecté) + état remis à zéro.
@@ -216,7 +237,10 @@ class ProcesseurAEC:
             _trace(f"non calé → passthrough {len(sortie)} éch (voix préservée)")
             return sortie
 
-        return self._traiter_dispo()
+        sortie = self._traiter_dispo()
+        self._suivre_alignement()
+        self._surveiller_efficacite()
+        return sortie
 
     # ── Privé ────────────────────────────────────────────────────────────────
 
@@ -284,7 +308,67 @@ class ProcesseurAEC:
 
         nettoye = sortie.astype(np.float32) / 32767.0
         self._maj_attenuation(near, nettoye)
+        self._queue_near = np.concatenate([self._queue_near, near])[-self._n_queue:]
+        self._queue_far = np.concatenate([self._queue_far, far])[-self._n_queue:]
+        self._queue_nettoye = np.concatenate([self._queue_nettoye, nettoye])[-self._n_queue:]
         return nettoye
+
+    def _suivre_alignement(self) -> None:
+        """Ré-estimation périodique du délai résiduel (docs/48 §4.2).
+
+        Mesurée sur le micro BRUT et la référence tels que réellement traités (queues
+        glissantes, donc déjà alignés) : le résidu attendu est la marge de lead. Un
+        résidu au-delà de RECAL_SEUIL_ECH, confirmé sur 2 mesures consécutives,
+        déclenche un ré-alignement par sauts (mêmes conventions que la calibration
+        initiale) ; une mesure de mauvaise qualité ne change rien."""
+        if len(self._queue_near) < self._n_queue // 2 or _rms(self._queue_far) < REF_RMS_MIN:
+            self._derive_confirmations = 0
+            return
+        delai, qualite = _caler_delai(self._queue_near, self._queue_far,
+                                      int(DELAI_MAX_MS / 1000 * SR_AEC))
+        if qualite < QUALITE_CORR_MIN:
+            self._derive_confirmations = 0
+            return
+        residu = delai - self._marge
+        if abs(residu) <= RECAL_SEUIL_ECH:
+            self._derive_confirmations = 0
+            return
+        self._derive_confirmations += 1
+        if self._derive_confirmations < 2:
+            return
+        self._derive_confirmations = 0
+        self._a_sauter_ref += max(0, -residu)
+        self._a_sauter_micro += max(0, residu)
+        self._delai_estime = (self._delai_estime or 0) + residu
+        self._queue_near = np.zeros(0, dtype=np.float32)
+        self._queue_far = np.zeros(0, dtype=np.float32)
+        self._queue_nettoye = np.zeros(0, dtype=np.float32)
+        _trace(f"dérive : résidu {residu} éch ({residu / SR_AEC * 1000:+.0f} ms) → ré-alignement "
+               f"(délai suivi {self._delai_estime} éch)")
+
+    def _surveiller_efficacite(self) -> None:
+        """WARNING unique si l'écho SURVIT au nettoyage (docs/48 §4.2) : la sortie
+        nettoyée reste corrélée à la référence avec un pic franc sur plusieurs
+        tranches consécutives. L'échec de terrain d'août 2026 (−0,2 à −1 dB pendant
+        des réunions entières) n'était visible qu'en DEBUG — plus jamais ça."""
+        if (self._alerte_efficacite_emise
+                or len(self._queue_nettoye) < self._n_queue // 2
+                or _rms(self._queue_far) < REF_RMS_MIN):
+            return
+        _, qualite = _caler_delai(self._queue_nettoye, self._queue_far,
+                                  int(DELAI_MAX_MS / 1000 * SR_AEC))
+        if qualite >= QUALITE_CORR_MIN:
+            self._tranches_echo_residuel += 1
+        else:
+            self._tranches_echo_residuel = 0
+        if self._tranches_echo_residuel >= ECHO_RESIDUEL_TRANCHES:
+            self._alerte_efficacite_emise = True
+            att = self._derniere_attenuation_db
+            logger.warning(
+                "AEC inefficace : écho encore corrélé à la référence après nettoyage "
+                "sur %d tranches (délai calé %s éch, atténuation %s dB) — cf. docs/48",
+                ECHO_RESIDUEL_TRANCHES, self._delai_estime,
+                f"{att:.1f}" if att is not None else "?")
 
     def _maj_attenuation(self, brut: np.ndarray, nettoye: np.ndarray) -> None:
         """Indicateur d'atténuation (auto-vérif). Affiné en étape 3 (fenêtres de silence)."""

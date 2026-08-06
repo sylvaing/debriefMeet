@@ -127,6 +127,7 @@ class OrchestrateurReunion(QObject):
         self._ecrivain: EcrivainReunion | None = None
         self._avec_systeme = False
         self._avec_micro = True
+        self._offset_ingestion_mesure = False
         self._base_moi: Path | None = None
         self._worker: _WorkerTranche | None = None
         self._thread: QThread | None = None
@@ -182,6 +183,7 @@ class OrchestrateurReunion(QObject):
         self._avec_micro = False
         self._avec_systeme = False
         self._micro_a_capte_du_son = False
+        self._offset_ingestion_mesure = False
         evt_pre_associe = self._evenement_pre_associe
         self._evenement_pre_associe = None
         try:
@@ -378,6 +380,15 @@ class OrchestrateurReunion(QObject):
         (cf. docs/25) → tentative de reconnexion."""
         audio_micro = self._micro.recuperer_echantillons() if self._avec_micro else _vide()
         audio_systeme = self._systeme.recuperer_echantillons() if self._avec_systeme else _vide()
+        if not self._offset_ingestion_mesure and self._avec_micro and self._avec_systeme:
+            # docs/48 §4.3 — à la 1ʳᵉ tranche, chaque piste vide l'arriéré accumulé
+            # depuis SON démarrage : l'écart de durées = l'offset d'ingestion, celui
+            # qui décale les pistes retenues et fausse la calibration AEC.
+            self._offset_ingestion_mesure = True
+            d_moi = len(audio_micro) / max(1, self._micro.taux_echantillonnage)
+            d_sys = len(audio_systeme) / max(1, self._systeme.taux_echantillonnage)
+            logger.debug("Offset d'ingestion 1ʳᵉ tranche : micro %.2fs, système %.2fs "
+                         "— écart %+.0f ms", d_moi, d_sys, (d_moi - d_sys) * 1000)
         if surveiller and self._actif and self._avec_micro and len(audio_micro) == 0:
             self._recuperer_micro()
         sr_micro = self._micro.taux_echantillonnage
