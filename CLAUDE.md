@@ -290,7 +290,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Specs fonctionnelles | `docs/01` |
 | Architecture technique | `docs/02` |
 | Phases & Definition of Done | `docs/03` |
-| AEC (WebRTC/livekit) | `docs/06` |
+| AEC (WebRTC/livekit) — ⚠️ inefficace sur le terrain, cf. docs/48 | `docs/06` |
 | Diarization (pyannote) | `docs/07` |
 | Benchmark RTF/WER | `docs/08` |
 | Packaging macOS | `docs/16` |
@@ -319,3 +319,4 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |
 | **Lexique de corrections (tableau « entendu → à écrire » injecté dans les prompts + biais Voxtral) — ✅ fusionné dans `main`, UI validée manuellement** | `docs/46` |
 | Diarization Voxtral V2 en mode distant — **piste non instruite** (annonce Transcribe 2 de 2026-02 : diarization batch, 3 h/requête ; questions §4 à instruire avant chantier) | `docs/47` |
+| **AEC inefficace sur le terrain + transcriptions en double — 📋 spec à implémenter** (diagnostic mesuré du 2026-08-06 : décalage inter-pistes 300-700 ms variable par réunion + dérive ~125 ppm, calibration one-shot inadaptée, att −0,2/−1 dB partout ; plan : dédoublonnage à la fusion → mesure d'offset → AEC à alignement continu) | `docs/48` |
