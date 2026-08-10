@@ -247,6 +247,29 @@ def test_supprimer_ligne_lexique_persiste(qapp, tmp_path):
     assert relu.get("lexique_corrections") == [{"entendu": "b", "ecrire": "B"}]
 
 
+def test_editeur_de_cellule_lexique_tient_dans_la_ligne(qapp, tmp_path):
+    """Le texte en cours de saisie était invisible (retour terrain 2026-08-10) :
+    l'éditeur du delegate est un QLineEdit, il héritait du style des champs de
+    formulaire (padding 10px, police 14px → sizeHint 42px) écrasé dans une ligne
+    de 30px, donc le texte tombait hors de la zone visible."""
+    from PySide6.QtWidgets import QLineEdit
+
+    from debrief_meet.ui.theme import charger_theme
+
+    charger_theme(qapp)
+    try:
+        cfg = _config(tmp_path)
+        cfg.set("lexique_corrections", [{"entendu": "acmé", "ecrire": "Acme"}])
+        vue = PreferencesView(cfg)
+        table = vue._table_lexique
+        table.editItem(table.item(0, 1))
+        editeurs = table.viewport().findChildren(QLineEdit)
+        assert len(editeurs) == 1
+        assert editeurs[0].sizeHint().height() <= table.rowHeight(0)
+    finally:
+        qapp.setStyleSheet("")
+
+
 def test_toggle_lexique_grise_la_table_et_persiste(qapp, tmp_path):
     cfg = _config(tmp_path)
     vue = PreferencesView(cfg)

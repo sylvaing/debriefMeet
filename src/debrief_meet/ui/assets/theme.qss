@@ -74,6 +74,17 @@ QTableView { background: #fff; border: none; gridline-color: transparent;
   selection-background-color: #EEF1FE; selection-color: #1A1D23; }
 QTableView::item { border: none; border-bottom: 1px solid #F1F2F5; }
 
+/* Éditeur de cellule (delegate = QLineEdit enfant de la vue, aucun objectName
+   possible) : sans cette règle il hérite du style des champs plus haut
+   (padding 10px, police 14px → sizeHint 42px) écrasé dans une ligne de 30px,
+   donc le texte en cours de saisie sortait de la zone visible — invisible à
+   l'écriture (retour terrain 2026-08-10, section Lexique). Police alignée sur
+   celle du texte affiché (13px), pas sur celle des champs de formulaire. */
+QAbstractItemView QLineEdit {
+  padding: 0 4px; font-size: 13px; border-radius: 5px; min-height: 0;
+  background: #fff; border: 1px solid #3B5BDB;
+}
+
 /* ---------- Sous-nav des préférences ---------- */
 QListWidget#prefNav { background: #FBFBFC; border: none; border-right: 1px solid #EFF1F4; }
 QListWidget#prefNav::item { padding: 8px 11px; border-radius: 8px; margin: 1px 8px;
