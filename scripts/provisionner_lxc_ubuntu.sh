@@ -54,41 +54,48 @@ ssh_lxc 'set -eu
         libportaudio2
     echo "  paquets installes"'
 
-echo "=== [3/5] Python 3.13 (PyInstaller ne supporte pas 3.14) ==="
+echo "=== [3/5] Python : celui de la distribution, sans PPA ==="
+# Decision du 2026-08-10 : le port Linux utilise le Python SYSTEME d'Ubuntu 26.04
+# (3.14), pas une version installee depuis un PPA tiers. La contrainte historique
+# « PyInstaller ne supporte pas 3.14 » (CLAUDE.md, chaines macOS/Windows en 3.13)
+# a expire : PyInstaller 6.22 accepte 3.14, et PySide6 est distribue en roue abi3
+# (cp310-abi3) donc compatible par construction. Mac et Windows seront alignes
+# plus tard, separement.
+#
+# `python3-venv` n'est PAS tire par defaut sur une image LXC minimale : sans lui,
+# `python3 -m venv` echoue sur « ensurepip is not available ».
 ssh_lxc 'set -eu
     export DEBIAN_FRONTEND=noninteractive
-    if command -v python3.13 >/dev/null 2>&1; then
-        echo "  deja present : $(python3.13 --version)"
-    elif apt-get install -y -qq python3.13 python3.13-venv python3.13-dev 2>/dev/null; then
-        echo "  installe depuis archive : $(python3.13 --version)"
-    else
-        echo "  absent de l archive — bascule sur le PPA deadsnakes"
-        apt-get install -y -qq software-properties-common
-        add-apt-repository -y ppa:deadsnakes/ppa
-        apt-get update -qq
-        apt-get install -y -qq python3.13 python3.13-venv python3.13-dev
-        echo "  installe depuis deadsnakes : $(python3.13 --version)"
-    fi'
+    apt-get install -y -qq python3 python3-venv python3-dev
+    echo "  python systeme : $(python3 --version) ($(command -v python3))"'
 
 echo "=== [4/5] Venv de build + dependances de l app ==="
 ssh_lxc 'set -eu
     RACINE=$HOME/build/debrief-meet
     mkdir -p "$RACINE"
-    if [ ! -d "$HOME/build/.venv-build" ]; then
-        python3.13 -m venv "$HOME/build/.venv-build"
+    VENV=$HOME/build/.venv-build
+    # Recree le venv s il pointe sur un interpreteur disparu (ex. bascule 3.13 -> 3.14) :
+    # un venv orphelin echoue plus tard, au milieu du build, avec un message obscur.
+    if [ -d "$VENV" ] && ! "$VENV/bin/python" --version >/dev/null 2>&1; then
+        echo "  venv casse (interpreteur disparu) — recreation"
+        rm -rf "$VENV"
     fi
-    "$HOME/build/.venv-build/bin/pip" install --quiet --upgrade pip wheel
-    echo "  venv pret : $("$HOME/build/.venv-build/bin/python" --version)"
-    echo "  (les dependances de l app sont installees par le script de build,"
+    [ -d "$VENV" ] || python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet --upgrade pip wheel
+    echo "  venv pret : $("$VENV/bin/python" --version)"
+    echo "  (les dependances de l app sont installees par le script de gate/build,"
     echo "   depuis le pyproject.toml synchronise)"'
 
 echo "=== [5/5] Recapitulatif ==="
 ssh_lxc 'set -eu
-    echo "  python3.13 : $(command -v python3.13)"
+    echo "  python     : $(python3 --version) ($(command -v python3))"
     echo "  ffmpeg     : $(command -v ffmpeg) ($(ffmpeg -version 2>/dev/null | head -1))"
     echo "  dpkg-deb   : $(command -v dpkg-deb)"
     echo "  venv build : $HOME/build/.venv-build"
-    echo "  sources    : $HOME/build/debrief-meet (synchronisees par le script de build)"'
+    echo "  sources    : $HOME/build/debrief-meet (synchronisees par le script de build)"
+    if [ -n "$(ls /etc/apt/sources.list.d/ 2>/dev/null | grep -i deadsnakes || true)" ]; then
+        echo "  ATTENTION : un depot deadsnakes traine encore dans les sources apt"
+    fi'
 
 echo
 echo "Conteneur pret. Etape suivante : gate pytest (docs/49 §8 etape 1) —"

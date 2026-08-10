@@ -35,6 +35,7 @@ récent), pas pour des Ubuntu antérieures — assumé, la cible est unique.
 | L3 | **Packaging `.deb` amd64** | PyInstaller onedir + `dpkg-deb`. Permet `Depends: ffmpeg` → **tout le chantier ffmpeg embarqué disparaît** (pas d'équivalent docs/41). Installation/désinstallation propres via apt. AppImage = plan B si multi-distro un jour ; Snap/Flatpak écartés (leur sandbox bride précisément ce dont on a besoin : sources `.monitor`, `~/Documents`, autostart). |
 | L4 | **Build dans un LXC Ubuntu 26.04 amd64 sur le Proxmox** | Même mécanique que la VM Windows : tar over ssh, pytest bloquant (`QT_QPA_PLATFORM=offscreen`), build, rapatriement du `.deb`. Script `scripts/build_app_linux_lxc.sh` miroir de `build_app_windows_vm.sh`. La fumée SSH est plus simple que sur Windows (`dpkg -i`, `--version`, réinstall, `apt purge`) et **sans la limite `usPostUninstall`** de docs/37. |
 | L5 | **Logs DEBUG par défaut sur Linux** | Même décision que Windows (docs/31 D5) et pour la même raison : utilisateur distant, logs = seul canal. macOS reste off par défaut. |
+| L7 | **Python système (3.14), sans PPA tiers** | Arbitré le 2026-08-10 après vérification sur le conteneur : la contrainte historique « PyInstaller ne supporte pas 3.14 » (qui a valu leur 3.13 aux chaînes macOS/Windows) **a expiré** — PyInstaller 6.22 accepte 3.14, et PySide6 est distribué en roue `cp310-abi3` donc compatible par construction. Le builder utilise donc `python3` d'Ubuntu 26.04 (3.14.4), ce qui **retire le PPA deadsnakes de la chaîne de build** : une source tierce en moins, interpréteur maintenu par la distro. macOS et Windows restent en 3.13 pour l'instant ; leur alignement est un chantier distinct, à faire d'un bloc et à valider par un vrai build sur chaque chaîne. |
 | L6 | **Désinstallation** | `apt remove` supprime l'app (`/opt/debriefmeet`). Config/logs (XDG) et `~/Documents/debriefMeet` ne sont **jamais** dans le paquet, donc jamais touchés par dpkg — le nettoyage config/logs est documenté dans la notice (pas de `postrm purge` agressif en v1). |
 
 ## 3. Périmètre fonctionnel v1 Linux
@@ -220,19 +221,51 @@ Trivial et testable sans OS réel (chemin injectable).
 
 ### 6.2 Conteneur LXC (à provisionner une fois)
 
-- Ubuntu 26.04 amd64, SSH activé, utilisateur dédié (même philosophie d'accès que
-  la VM Windows). Conteneur non privilégié standard — un build Python n'a besoin
-  d'aucun nesting.
-- **Python 3.13 obligatoire** (PyInstaller ne supporte pas 3.14) : paquet
-  `python3.13` de l'archive si présent, sinon PPA deadsnakes — à constater au
-  provisionnement.
-- Paquets de build : `binutils` (requis par PyInstaller sur Linux), `git`.
-- Paquets pour la gate pytest offscreen (deps runtime de PySide6 même sans écran) :
-  `libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1` + ce que le premier
-  `pytest` réclamera — figer la liste dans le script de provisionnement.
-- **Gate pytest bloquante avant build** : `QT_QPA_PLATFORM=offscreen pytest -m "not
-  integration"`. Compte attendu à établir au premier run vert et à consigner dans
-  CLAUDE.md (les échecs d'environnement connus : helper Swift, audio canonique).
+**Provisionné le 2026-08-10** — `192.168.1.32`, root/SSH par mot de passe (a demandé
+un `PermitRootLogin yes` : Ubuntu refuse root par mot de passe par défaut). Script
+`scripts/provisionner_lxc_ubuntu.sh`, idempotent et rejouable.
+
+- Ubuntu 26.04 LTS amd64, 2 vCPU, 5 Go RAM. Conteneur non privilégié standard — un
+  build Python n'a besoin d'aucun nesting.
+- **Python système, sans PPA** (décision L7) : `python3` = 3.14.4 d'Ubuntu, plus
+  `python3-venv` (absent d'une image LXC minimale — sans lui `python3 -m venv` échoue
+  sur « ensurepip is not available »).
+- Paquets de build : `binutils` (requis par PyInstaller sur Linux), `dpkg-dev`,
+  `fakeroot`, `git`, `rsync`.
+- Paquets runtime : `ffmpeg` 8.0.1 (le `Depends` du `.deb`), `pulseaudio-utils`
+  (`pactl`, lu par `infos_systeme`), `libportaudio2`, et les deps de PySide6
+  nécessaires même en offscreen (`libgl1 libegl1 libxkbcommon0 libdbus-1-3
+  libfontconfig1 libxcb-*`).
+- **Gate pytest bloquante avant build** — `scripts/gate_pytest_lxc.sh` :
+  `QT_QPA_PLATFORM=offscreen pytest -m "not integration"`.
+  **Premier run vert le 2026-08-10 : 1141 passed, 21 skipped, 0 échec.**
+  Exclusions, toutes pour cause de source non synchronisée (jamais pour masquer un
+  échec) : `test_benchmark_*` et `test_spike_backends_*` (outils internes, pas le
+  produit), `test_build.py` (à réintégrer avec `TestSpecLinux` quand
+  `packaging/linux/` existera). `packaging/` **est** synchronisé —
+  `test_generer_version.py` charge `packaging/windows/generer_version.py` par son
+  chemin, sans quoi la collecte tombe en erreur.
+
+### 6.3 Ce que la gate a révélé (2026-08-10)
+
+Le premier passage a rendu 7 échecs et 7 erreurs. Aucun n'était un bug de
+l'application — tous des hypothèses d'environnement implicites dans les tests, la
+famille de trouvailles que la gate existe pour produire (docs/44 en avait révélé 2
+sur Windows) :
+
+| Symptôme | Diagnostic | Correctif |
+|----------|------------|-----------|
+| 7 erreurs de collecte `test_generer_version.py` | `packaging/` n'était pas synchronisé | Synchroniser `packaging/` (hors `vendor/`) |
+| 4 erreurs de collecte `test_spike_backends_*` | Liste d'exclusions nominative incomplète (4 modules oubliés) | `--ignore-glob` plutôt qu'une énumération |
+| `test_config::test_valeurs_defaut_presentes` | Le test codait « logs ON sur Windows uniquement » ; la décision L5 étend le défaut à Linux | Attendu élargi à Linux |
+| 4 tests faisant `import sounddevice` | **L'import lui-même lève** `PortAudioError` sur une machine sans serveur audio — ce n'est pas une `ImportError`, donc `importorskip` ne l'attrape pas | Fixture `sounddevice_dispo` (conftest) qui saute proprement |
+
+Le dernier point méritait une vérification côté application, faite : **l'app est
+saine**. Tous ses imports de `sounddevice` sont paresseux (jamais au niveau module) et
+`CaptureMicroSounddevice.disponible()` attrape déjà `Exception` — un poste dont le
+démon audio n'est pas encore levé (cas réel : démarrage auto en tout début de session
+graphique) obtient `False` et le repli, pas un crash. Aucun durcissement n'était
+nécessaire ; c'est le genre de conclusion qu'il faut établir plutôt que supposer.
 
 ### 6.3 Scripts (miroirs de l'existant Windows)
 
@@ -258,10 +291,9 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 
 ## 8. Ordre d'exécution
 
-1. **Provisionner le LXC** (§6.2) + **gate pytest verte** en offscreen — c'est le
-   smoke test de l'archi en couches ; consigner le compte attendu. Aucun code app
-   à ce stade, seulement d'éventuels correctifs de tests non gardés (hypothèses
-   macOS/Windows implicites, comme docs/44 en avait révélé 2).
+1. ✅ **Provisionner le LXC** (§6.2) + **gate pytest verte** en offscreen — c'est le
+   smoke test de l'archi en couches. Fait le 2026-08-10 : **1141 passed, 21 skipped,
+   0 échec** ; les 4 catégories de correctifs sont détaillées en §6.3.
 2. **Spike `spike/capture_monitor_linux/`** (§5.1) sur une Ubuntu 26.04 graphique
    (UTM arm64 suffit) — parallélisable avec l'étape 1 (le LXC est headless, le
    spike a besoin d'une session audio). Sortie : réponses aux 5 questions du §5.1,

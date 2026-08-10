@@ -15,8 +15,8 @@ def test_ne_leve_jamais_et_rubriques_attendues_presentes():
         assert cle in infos
 
 
-def test_sounddevice_qui_leve_devient_indisponible(monkeypatch):
-    import sounddevice as sd
+def test_sounddevice_qui_leve_devient_indisponible(monkeypatch, sounddevice_dispo):
+    sd = sounddevice_dispo
 
     def _leve(*a, **kw):
         raise RuntimeError("PortAudio cassé")
