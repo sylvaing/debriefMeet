@@ -18,13 +18,35 @@ sans serveur audio.
 Options : `--secondes 20` (durée de la capture phase 2), `--phases 1` (inventaire
 seul, sans manipulation).
 
+## Envoyer le spike à quelqu'un
+
+Le dossier est autonome — il ne dépend ni du dépôt ni du venv de l'app. Pour
+l'envoyer à l'utilisateur cible :
+
+```sh
+zip -r spike-son-ubuntu.zip spike/capture_monitor_linux -x '*/sorties/*' '*/.venv/*'
+```
+
+`LISEZ-MOI.txt` est la notice destinée à cette personne : prérequis, déroulé,
+ce qu'il faut renvoyer, et ce que contient le fichier de résultat (l'audio capté,
+dit explicitement — avec l'option de n'envoyer que le log). Ce README-ci, lui,
+reste interne.
+
 ## Ce qui est demandé à l'utilisateur
 
 Le script est un **protocole guidé** : il annonce chaque action à l'écran, une à la
-fois, attend Entrée, et écrit un marqueur `ACTION` horodaté dans le log. Prévoir :
+fois, attend Entrée, et écrit un marqueur `ACTION` horodaté dans le log. Les
+consignes sont rédigées pour quelqu'un **sans contexte** — « ouvre une vidéo YouTube
+ou un fichier de musique », « branche le casque USB maintenant » — et jamais en
+termes de projet. Prévoir :
 
 1. Un morceau de musique ou une vidéo à jouer sur la sortie par défaut.
 2. Un casque **USB ou Bluetooth** à brancher puis débrancher, flux de capture ouvert.
+   La phase 3 est **sautable** (touche `s`) : sans casque sous la main, l'utilisateur
+   n'est pas bloqué et les deux premières phases restent exploitables.
+
+À la fin, le script produit **un seul `.zip`** à renvoyer (et non un dossier) : une
+occasion de moins de se tromper pour quelqu'un qui fait ça une fois.
 
 ## Ce que ça produit
 

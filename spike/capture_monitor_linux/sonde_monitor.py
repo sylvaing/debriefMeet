@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
 import shutil
 import subprocess
 import sys
@@ -77,17 +76,31 @@ class Journal:
         self._fichier.close()
 
 
-def demander(journal: Journal, consigne: str) -> None:
-    """Annonce UNE action à faire, attend Entrée, puis la consigne dans le log."""
+def demander(journal: Journal, titre: str, details: list[str] | None = None,
+             optionnel: bool = False) -> bool:
+    """Annonce UNE action à faire, attend validation, puis la consigne dans le log.
+
+    Le script est envoyé à quelqu'un qui ne connaît ni le projet ni ce qu'on cherche :
+    chaque consigne doit être exécutable telle quelle, sans rien deviner. Retourne
+    False si l'étape a été sautée (uniquement possible quand `optionnel`)."""
     print()
     print("─" * 72)
-    print(f"  ▶ {consigne}")
+    print(f"  ▶ {titre}")
+    for ligne in details or []:
+        print(f"      {ligne}")
     print("─" * 72)
+    invite = "    Entrée quand c'est fait"
+    invite += (" — ou tape s puis Entrée pour sauter : " if optionnel else " : ")
     try:
-        input("    Appuie sur Entrée quand c'est fait… ")
+        reponse = input(invite).strip().lower()
     except EOFError:
         print("(entrée non interactive — on continue sans attendre)")
-    journal.action(consigne)
+        reponse = ""
+    if optionnel and reponse == "s":
+        journal.action(f"SAUTÉE — {titre}")
+        return False
+    journal.action(titre)
+    return True
 
 
 # ── Inventaire (Q1, Q2) ──────────────────────────────────────────────────────────
@@ -269,12 +282,28 @@ def phase_capture(journal: Journal, sortie: Path, index_moniteur: int, secondes:
     micro = Enregistreur(journal, sd.default.device[0], "micro")
     moniteur = Enregistreur(journal, index_moniteur, "moniteur")
 
-    demander(journal, "Lance une musique / une vidéo sur la sortie par défaut, "
-                      "à un volume audible, PUIS reviens ici")
+    demander(
+        journal,
+        "FAIS JOUER DU SON sur cet ordinateur, puis reviens dans ce terminal",
+        [
+            "Par exemple : ouvre une vidéo YouTube dans ton navigateur et lance-la,",
+            "ou ouvre un fichier de musique avec le lecteur de ton choix.",
+            "",
+            "Important :",
+            "  • le son doit sortir des HAUT-PARLEURS de l'ordinateur (pas d'un casque)",
+            "  • volume clairement audible, et surtout PAS coupé (pas de mute)",
+            "  • LAISSE-LE JOUER pendant toute la mesure : ne mets pas en pause,",
+            "    ne ferme pas l'onglet, tu peux juste revenir sur ce terminal.",
+        ],
+    )
     micro.demarrer()
     moniteur.demarrer()
-    journal.info(f"Capture de {secondes} s en cours — parle aussi dans le micro "
-                 f"pour distinguer les deux pistes…")
+    print()
+    print(f"  ⏺  Mesure en cours pendant {secondes} secondes — ne touche à rien.")
+    print("     PARLE À VOIX HAUTE quelques mots pendant ce temps (n'importe quoi :")
+    print("     compte jusqu'à dix), pour qu'on distingue ta voix du son de la vidéo.")
+    print()
+    journal.info(f"Capture de {secondes} s en cours (musique + voix attendues)…")
 
     arret = threading.Event()
     _surveiller(journal, {"micro": micro, "moniteur": moniteur}, secondes, arret)
@@ -285,13 +314,28 @@ def phase_capture(journal: Journal, sortie: Path, index_moniteur: int, secondes:
     moniteur.ecrire_wav(sortie / "phase2_monitor.wav", audio_moniteur)
 
     rms_moniteur = float(np.sqrt(np.mean(audio_moniteur.astype(np.float64) ** 2))) if audio_moniteur.size else 0.0
-    if rms_moniteur > 1e-4:
+
+    # Seuils : de la musique à volume audible donne un RMS de l'ordre de 0,05. Un
+    # seuil à 1e-4 laisserait passer le simple bruit de fond et validerait à tort un
+    # moniteur muet — d'où la zone intermédiaire, qui dit « douteux » plutôt que « bon ».
+    if rms_moniteur > 1e-2:
         journal.reponse("Q5", f"le moniteur capte bien le son des applications "
                               f"(RMS {rms_moniteur:.5f}) — voie validée")
+    elif rms_moniteur > 1e-4:
+        journal.reponse("Q5", f"signal DOUTEUX sur le moniteur (RMS {rms_moniteur:.5f}, "
+                              f"attendu > 0.01) : volume trop bas, son mis en pause, ou "
+                              f"moniteur suivant un sink inactif — ne pas conclure sans "
+                              f"écouter phase2_monitor.wav")
+        print()
+        print("  ⚠  Le son capté est très faible. Si tu avais coupé le son ou mis la")
+        print("     vidéo en pause, relance le test : il ne dure que 3 minutes.")
     else:
         journal.reponse("Q5", f"le moniteur est SILENCIEUX (RMS {rms_moniteur:.5f}) alors "
                               f"qu'un son jouait : mauvais périphérique, ou le moniteur "
                               f"suit un sink inactif — à instruire avant l'adaptateur")
+        print()
+        print("  ⚠  Aucun son n'a été capté. Vérifie que la vidéo jouait bien et que le")
+        print("     volume n'était pas coupé, puis relance le test.")
 
 
 # ── Phase 3 — bascule de sortie à chaud (Q4) ────────────────────────────────────
@@ -302,8 +346,33 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
                  "l'adaptateur : on ne coupe jamais le flux, on observe.")
 
     moniteur = Enregistreur(journal, index_moniteur, "moniteur")
-    demander(journal, "Laisse une musique jouer sur la sortie ACTUELLE (haut-parleurs "
-                      "internes de préférence), PUIS reviens ici")
+
+    poursuivre = demander(
+        journal,
+        "Il te faut un CASQUE USB ou BLUETOOTH pour cette étape",
+        [
+            "On va observer ce qui se passe quand le son change de destination",
+            "pendant qu'on enregistre. Prends un casque USB (à brancher en USB) ou",
+            "un casque Bluetooth (à appairer/allumer le moment venu).",
+            "",
+            "Si tu n'as ni l'un ni l'autre, saute cette étape : ce n'est pas grave,",
+            "les deux premières phases sont déjà utiles.",
+        ],
+        optionnel=True,
+    )
+    if not poursuivre:
+        journal.reponse("Q4", "NON MESURÉE — étape sautée faute de casque disponible")
+        return
+
+    demander(
+        journal,
+        "REMETS DU SON EN LECTURE sur les haut-parleurs, puis reviens ici",
+        [
+            "Même chose qu'à l'étape précédente : une vidéo YouTube ou un morceau",
+            "de musique, son audible sur les haut-parleurs de l'ordinateur.",
+            "Laisse-le jouer jusqu'à la fin de cette phase (environ 1 minute).",
+        ],
+    )
     moniteur.demarrer()
     avant = _pactl("get-default-sink")
     journal.info(f"Sortie par défaut au démarrage du flux : {avant}")
@@ -313,17 +382,38 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
         target=_surveiller, args=(journal, {"moniteur": moniteur}, secondes * 3, arret), daemon=True)
     veilleur.start()
 
+    print()
+    print("  ⏺  Enregistrement démarré — il ne s'arrête plus jusqu'à la fin de la phase.")
     time.sleep(min(5, secondes))
-    demander(journal, "Branche un casque USB ou Bluetooth MAINTENANT (le son doit "
-                      "basculer dessus), PUIS reviens ici")
+    demander(
+        journal,
+        "BRANCHE LE CASQUE MAINTENANT (sans rien arrêter d'autre)",
+        [
+            "Casque USB : branche-le sur un port USB.",
+            "Casque Bluetooth : allume-le / connecte-le depuis le menu Bluetooth.",
+            "",
+            "Le son de la vidéo doit basculer dans le casque (les haut-parleurs se",
+            "taisent). Si Ubuntu te demande quoi faire, choisis d'utiliser le casque.",
+            "Ne mets PAS la vidéo en pause, ne ferme pas ce terminal.",
+        ],
+    )
     apres = _pactl("get-default-sink")
     journal.info(f"Sortie par défaut après branchement : {apres} "
                  f"({'CHANGÉE' if apres != avant else 'inchangée'})")
+    print("  ⏺  On continue d'enregistrer quelques secondes, ne touche à rien…")
     time.sleep(min(8, secondes))
 
-    demander(journal, "Débranche le casque (retour aux haut-parleurs), PUIS reviens ici")
+    demander(
+        journal,
+        "DÉBRANCHE LE CASQUE (le son doit revenir dans les haut-parleurs)",
+        [
+            "Casque USB : retire-le du port USB.",
+            "Casque Bluetooth : éteins-le, ou déconnecte-le depuis le menu Bluetooth.",
+        ],
+    )
     retour = _pactl("get-default-sink")
     journal.info(f"Sortie par défaut après débranchement : {retour}")
+    print("  ⏺  Dernières secondes d'enregistrement, ne touche à rien…")
     time.sleep(min(5, secondes))
 
     arret.set()
@@ -389,16 +479,25 @@ def main() -> int:
     journal.info("═══ Terminé ═══")
     journal.fermer()
 
+    # Un seul fichier à renvoyer plutôt qu'un dossier : moins d'occasions de se
+    # tromper pour quelqu'un qui exécute ça une seule fois.
+    archive = shutil.make_archive(str(racine), "zip", root_dir=racine.parent,
+                                 base_dir=racine.name)
+
     print()
-    print("Fichiers produits :")
-    for f in sorted(racine.iterdir()):
-        print(f"  {f}")
+    print("═══════════════════════════════════════════════════════════════════════")
+    if code == 0:
+        print("  C'est terminé, merci !")
+    else:
+        print("  Le test s'est arrêté avant la fin — ce n'est pas grave.")
+        print("  Ce qui a été mesuré jusque-là est utile, envoie-le quand même.")
     print()
-    print("À renvoyer pour analyse : le dossier complet ci-dessus "
-          "(sonde.log + WAVs).")
-    print("Lecture rapide des conclusions :")
-    print(f"  grep REPONSE {racine / 'sonde.log'}")
-    (racine / "resume.json").write_text(json.dumps({"dossier": str(racine)}, indent=2), "utf-8")
+    print("  UN SEUL FICHIER À RENVOYER À SYLVAIN :")
+    print(f"    {archive}")
+    print()
+    print("  Il contient le journal de la mesure et les enregistrements audio")
+    print("  (uniquement ce qui a été capté pendant les phases ci-dessus).")
+    print("═══════════════════════════════════════════════════════════════════════")
     return code
 
 

@@ -15,31 +15,58 @@ ICI="$(cd "$(dirname "$0")" && pwd)"
 VENV="$ICI/.venv"
 
 if [ ! -d "$VENV" ]; then
-    echo "→ Création du venv du spike (isolé de celui de l'app)…"
-    python3 -m venv "$VENV"
+    echo "→ Première exécution : préparation de l'environnement (~30 s)…"
+    if ! python3 -m venv "$VENV" 2>/dev/null; then
+        echo
+        echo "✗ Impossible de créer l'environnement Python. Il manque un paquet :"
+        echo
+        echo "    sudo apt install python3-venv"
+        echo
+        echo "  Relance ensuite cette même commande."
+        exit 1
+    fi
     "$VENV/bin/pip" install --quiet --upgrade pip
     "$VENV/bin/pip" install --quiet sounddevice numpy
 fi
 
 if ! command -v pactl >/dev/null 2>&1; then
-    echo "⚠  pactl absent — installe-le pour répondre à la question Q2 :"
+    echo "⚠  Un outil optionnel est absent. Pour une mesure plus complète :"
     echo "     sudo apt install pulseaudio-utils"
-    echo "   (le spike tourne quand même, Q2 sera notée « pactl absent »)"
+    echo "   (le test fonctionne quand même sans, tu peux continuer)"
     echo
 fi
 
-echo "═══════════════════════════════════════════════════════════════════════"
-echo "  Spike « capture système Linux » — 3 phases, ~2 minutes"
-echo
-echo "  Phase 1  inventaire des périphériques (automatique)"
-echo "  Phase 2  capture micro + moniteur — il te sera demandé de LANCER UNE"
-echo "           MUSIQUE puis de parler dans le micro"
-echo "  Phase 3  bascule à chaud — il te sera demandé de BRANCHER puis"
-echo "           DÉBRANCHER un casque USB ou Bluetooth, flux ouvert"
-echo
-echo "  Prépare : un morceau de musique, et un casque USB ou BT sous la main."
-echo "  Chaque action est annoncée à l'écran et attend ta validation."
-echo "═══════════════════════════════════════════════════════════════════════"
+cat <<'FIN'
+═══════════════════════════════════════════════════════════════════════
+  Test de captation du son système — environ 3 minutes
+
+  Ce test mesure comment ton Ubuntu expose le son qui sort des
+  haut-parleurs, pour préparer l'enregistrement des réunions.
+  Il n'installe rien sur ton système et n'envoie rien sur Internet.
+
+  CE QU'IL FAUT PRÉPARER AVANT DE COMMENCER :
+
+    1. De quoi faire du son : une vidéo YouTube ouverte dans ton
+       navigateur, ou un fichier de musique. N'importe quoi qui dure
+       au moins 2 minutes.
+
+    2. Un casque USB ou Bluetooth, à portée de main mais PAS ENCORE
+       branché. (Si tu n'en as pas, tu pourras sauter cette partie.)
+
+  COMMENT ÇA SE PASSE :
+
+    Le test t'indique quoi faire, une action à la fois, et attend que
+    tu appuies sur Entrée. Tu n'as jamais à deviner : suis les
+    consignes à l'écran.
+
+    Il enregistre le son pendant de courts moments. Les enregistrements
+    restent sur ta machine ; à la fin, le test crée UN fichier .zip
+    que tu renvoies à Sylvain.
+
+═══════════════════════════════════════════════════════════════════════
+FIN
+printf "\n  Prêt ? Appuie sur Entrée pour commencer : "
+read -r _ || true
 echo
 
 exec "$VENV/bin/python" "$ICI/sonde_monitor.py" "$@"
