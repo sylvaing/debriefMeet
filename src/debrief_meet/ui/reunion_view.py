@@ -93,6 +93,9 @@ class _EtatBluemind:
     etat: str  # "linked" | "match" | "none"
     titre_evenement: str = ""
     on_associer: Callable[[], None] | None = None
+    # Ouvre le détail de l'événement associé (état "linked") — None si le sidecar
+    # est illisible : rien à afficher, l'icône redevient passive.
+    on_details: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -395,7 +398,8 @@ class ReunionView(QWidget):
         if bluemind_association.existe(chemin):
             asso = bluemind_association.lire(chemin)
             titre = asso.titre if asso else chemin.parent.name
-            return _EtatBluemind("linked", titre)
+            on_details = (lambda a=asso: self._details_bluemind(a)) if asso else None
+            return _EtatBluemind("linked", titre, on_details=on_details)
 
         correspondances = self._evenements_correspondants_pour(chemin)
         if not correspondances:
@@ -410,7 +414,11 @@ class ReunionView(QWidget):
         if etat is None or etat.etat == "none":
             return None
         if etat.etat == "linked":
-            return ActionSpec(_ICONE_BLUEMIND_ASSOCIE, f"Associé — {etat.titre_evenement}", False, lambda: None)
+            # Actif dès qu'il y a un détail à montrer (même dialogue que l'icône verte
+            # de la colonne calendrier — le menu ⋯ reste exhaustif).
+            return ActionSpec(
+                _ICONE_BLUEMIND_ASSOCIE, f"Associé — {etat.titre_evenement}",
+                etat.on_details is not None, etat.on_details or (lambda: None))
         return ActionSpec(_ICONE_BLUEMIND_ASSOCIER, "Associer à la réunion", True, etat.on_associer)
 
     def _calendrier_pour_index(self, index: QModelIndex) -> CalendrierSpec | None:
@@ -424,13 +432,23 @@ class ReunionView(QWidget):
         if etat is None or etat.etat == "none":
             return CalendrierSpec(None, "", "", False)
         if etat.etat == "linked":
+            tooltip = f"Associé à « {etat.titre_evenement} »"
+            if etat.on_details is not None:
+                tooltip += " — voir le détail"
             return CalendrierSpec(
-                "calendar-check", C.SUCCESS, f"Associé à « {etat.titre_evenement} »", False)
+                "calendar-check", C.SUCCESS, tooltip,
+                etat.on_details is not None, etat.on_details)
         # Cliquable tant que non associé : raccourci d'association d'un coup d'œil,
         # en plus de l'item « Associer à la réunion » du menu ⋯ (exhaustif).
         return CalendrierSpec(
             "calendar-plus", C.ACCENT_INK,
             "Un événement du calendrier BlueMind correspond — associer", True, etat.on_associer)
+
+    def _details_bluemind(self, association) -> None:
+        """Détail (lecture seule) de l'événement associé — clic sur l'icône verte de
+        la colonne calendrier ou item « Associé — … » du menu ⋯."""
+        from debrief_meet.ui.bluemind_details import DialogDetailsBluemind
+        DialogDetailsBluemind(association, self).exec()
 
     def _associer_bluemind(self, chemin: Path, evenements) -> None:
         from debrief_meet.ui.bluemind_association import DialogAssociationBluemind

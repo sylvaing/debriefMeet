@@ -1148,7 +1148,9 @@ def test_nommer_locuteurs_disponible_sans_store_bluemind(qapp, machine, tmp_path
     assert rv_module._ICONE_NOMMER_LOCUTEURS in icones
 
 
-def test_action_indique_deja_associe(qapp, machine, tmp_path):
+def test_action_indique_deja_associe(qapp, machine, tmp_path, monkeypatch):
+    """Une fois associé, l'item du menu ⋯ reste présent et **actif** : il ouvre le
+    détail de l'événement (même dialogue que l'icône verte de la colonne)."""
     from debrief_meet.core.bluemind.association import Association, ecrire
     md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
     ecrire(md, Association(event_uid="e1", cal_uid="cal", titre="Point projet X",
@@ -1156,8 +1158,52 @@ def test_action_indique_deja_associe(qapp, machine, tmp_path):
     store = _store_avec_evenement(tmp_path, 0, 1)  # peu importe, déjà associé
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
     spec = _spec(_actions(vue), rv_module._ICONE_BLUEMIND_ASSOCIE)
-    assert spec.actif is False
+    assert spec.actif is True
     assert "Point projet X" in spec.tooltip
+
+    ouverts = []
+    monkeypatch.setattr(vue, "_details_bluemind", lambda asso: ouverts.append(asso))
+    spec.on_click()
+    assert len(ouverts) == 1
+    assert ouverts[0].titre == "Point projet X"
+
+
+def test_colonne_calendrier_associee_cliquable_vers_le_detail(qapp, machine, tmp_path, monkeypatch):
+    """L'icône verte « associé » n'est plus passive : cliquer ouvre le détail de
+    l'événement (titre, date, participants retenus/écartés)."""
+    from debrief_meet.core.bluemind.association import Association, InviteAssocie, ecrire
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    ecrire(md, Association(
+        event_uid="e1", cal_uid="cal", titre="Point projet X", debut="2026-01-01T10:00:00",
+        invites=[InviteAssocie(nom="Jean Dupont", email="jean@ex.com",
+                               part_status="Accepted", organisateur=False, coche=True)]))
+    store = _store_avec_evenement(tmp_path, 0, 1)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    index = vue._proxy.mapFromSource(vue._modele.index(0, 5))
+    spec = vue._calendrier_pour_index(index)
+    assert spec.icone == "calendar-check"
+    assert spec.cliquable is True
+    assert "voir le détail" in spec.tooltip
+
+    ouverts = []
+    monkeypatch.setattr(vue, "_details_bluemind", lambda asso: ouverts.append(asso))
+    spec.on_click()
+    assert [i.nom for i in ouverts[0].invites] == ["Jean Dupont"]
+
+
+def test_colonne_calendrier_sidecar_illisible_reste_passive(qapp, machine, tmp_path):
+    """Sidecar `bluemind.json` corrompu : la réunion reste « associée » (icône verte)
+    mais il n'y a aucun détail à montrer — l'icône redevient passive."""
+    from debrief_meet.core.bluemind.association import chemin_sidecar
+    md = _reunion_avec_audio(tmp_path, nom="2026-01-01_10-00-00")
+    chemin_sidecar(md).write_text("{pas du json", encoding="utf-8")
+    store = _store_avec_evenement(tmp_path, 0, 1)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(), store_bluemind=store)
+    index = vue._proxy.mapFromSource(vue._modele.index(0, 5))
+    spec = vue._calendrier_pour_index(index)
+    assert spec.icone == "calendar-check"
+    assert spec.cliquable is False
+    assert spec.on_click is None
 
 
 # ── Actions en masse (§8.6.4) ────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 """Délégué de la colonne « lien calendrier » (interco BlueMind, DESIGN.md
 §8.6.2) — icône 28×28 alignée à droite, alignement constant quelle que soit la
-longueur du titre. Trois états : associé (vert, passif) / associable (accent,
-cliquable) / vide (aucune correspondance ou BlueMind non configuré).
+longueur du titre. Trois états : associé (vert, cliquable → détail de
+l'événement) / associable (accent, cliquable → association) / vide (aucune
+correspondance ou BlueMind non configuré).
 
 Même architecture que `ActionsDelegate` : le fournisseur (`ReunionView.
 _calendrier_pour_index`) calcule l'état par ligne (accès à `core/bluemind`),

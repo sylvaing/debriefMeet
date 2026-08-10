@@ -31,9 +31,10 @@ from debrief_meet.ui.dialogues import DialogueGabarit, Intention
 from debrief_meet.ui.theme import C, SANS
 
 
-def _libelle_section(texte: str) -> QLabel:
+def libelle_section(texte: str) -> QLabel:
     """Étiquette de section discrète (« PARTICIPANTS ») — mêmes codes que les
-    libellés de champ des Préférences (DESIGN.md §3/§8.4)."""
+    libellés de champ des Préférences (DESIGN.md §3/§8.4). Partagée avec le
+    dialog de détail (`bluemind_details`)."""
     lab = QLabel(texte.upper())
     lab.setFont(QFont(SANS, 11, QFont.Weight.DemiBold))
     lab.setStyleSheet(f"color: {C.INK400}; letter-spacing: 0.5px;")
@@ -165,7 +166,7 @@ class DialogAssociationBluemind(DialogueGabarit):
         self._lay_recap.addWidget(self._check_titre)
 
         self._lay_recap.addSpacing(4)
-        self._lay_recap.addWidget(_libelle_section("Participants"))
+        self._lay_recap.addWidget(libelle_section("Participants"))
 
         self._checks_invites = []
         personnes = []
