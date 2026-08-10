@@ -75,6 +75,8 @@ spike/diarization/sorties/
 spike/diarization/*.log
 # Spike Mistral (docs/42) : transcripts + CR de vraies réunions renvoyés par l'API.
 spike/mistral-cr/sorties/
+spike/capture_monitor_linux/sorties/
+spike/capture_monitor_linux/.venv/
 # Rapports de spike renvoyés par Bastien/Alix : zip + toute extraction
 # (transcriptions verbatim de réunions réelles). Voir docs/18.
 spike/backends_windows/resultats/

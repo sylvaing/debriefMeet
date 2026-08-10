@@ -101,9 +101,11 @@ def test_chemin_ffmpeg_dev_repli_shutil_which(monkeypatch):
     assert chemin_ffmpeg() == "/usr/bin/ffmpeg"
 
 
+@pytest.mark.skipif(sys.platform.startswith("linux"),
+                    reason="Linux n'embarque pas ffmpeg (docs/49 L3 : Depends: ffmpeg)")
 def test_chemin_ffmpeg_figee_resout_le_binaire_embarque(monkeypatch, tmp_path):
     """La disposition embarquée diffère selon l'OS (`core/fichiers.chemin_ffmpeg`) :
-    `ffmpeg\\ffmpeg.exe` sur Windows (docs/41), `vendor/ffmpeg` ailleurs. Le test suit
+    `ffmpeg\\ffmpeg.exe` sur Windows (docs/41), `vendor/ffmpeg` sur macOS. Le test suit
     la branche de la plateforme courante plutôt que de coder en dur celle de macOS —
     il échouait sur la gate VM en assertant `vendor/ffmpeg` sous Windows."""
     from debrief_meet.core import ressources
@@ -117,12 +119,30 @@ def test_chemin_ffmpeg_figee_resout_le_binaire_embarque(monkeypatch, tmp_path):
     assert chemin_ffmpeg() == str(binaire)
 
 
+@pytest.mark.skipif(sys.platform.startswith("linux"),
+                    reason="Linux n'embarque pas ffmpeg (docs/49 L3 : Depends: ffmpeg)")
 def test_chemin_ffmpeg_figee_binaire_absent_retourne_none(monkeypatch, tmp_path):
     from debrief_meet.core import ressources
 
     monkeypatch.setattr(ressources, "est_figee", lambda: True)
     monkeypatch.setattr(ressources, "chemin_ressource", lambda *p: Path(tmp_path, *p))
     assert chemin_ffmpeg() is None
+
+
+def test_chemin_ffmpeg_figee_sur_linux_utilise_le_ffmpeg_systeme(monkeypatch, tmp_path):
+    """docs/49 L3 : le `.deb` déclare `Depends: ffmpeg`, rien n'est embarqué. Même
+    figée, l'app doit résoudre `/usr/bin/ffmpeg` par le PATH — une app lancée depuis
+    le menu GNOME hérite d'un PATH standard, contrairement au Finder/`console=False`.
+    Si la branche embarquée s'appliquait, `chemin_ffmpeg()` rendrait None et toute la
+    rétention Opus tomberait en repli WAV chez l'utilisateur."""
+    from debrief_meet.core import ressources
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ressources, "est_figee", lambda: True)
+    monkeypatch.setattr(ressources, "chemin_ressource",
+                        lambda *p: Path(tmp_path, *p))  # inexistant : ne doit pas être consulté
+    monkeypatch.setattr("shutil.which", lambda nom: f"/usr/bin/{nom}")
+    assert chemin_ffmpeg() == "/usr/bin/ffmpeg"
 
 
 def test_enregistreur_opus_leve_erreur_typee_si_ffmpeg_introuvable(monkeypatch, tmp_path):

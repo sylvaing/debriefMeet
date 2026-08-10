@@ -176,12 +176,66 @@ def _windows() -> Adaptateurs:
 
 
 def _linux() -> Adaptateurs:
-    # Phase 6 : MoteurFasterWhisper, PipeWire, systemd
+    # Phase 6 (docs/49). Même discipline que `_windows()` : tout repli stub est loggé
+    # en WARNING avec l'exception d'origine — l'utilisateur cible est un collègue en
+    # production, les logs sont le seul canal de debug.
+    #
+    # v1 = mode distant seul (décision L1) : aucun moteur local n'est écrit pour
+    # Linux. Un utilisateur qui force `mode_transcription: local` obtient le stub —
+    # comportement honnête et loggé, plutôt qu'un moteur qui mourrait à la première
+    # transcription. Le mode local viendra en remontant le worker faster-whisper de
+    # `platform/windows/` dans `platform/commun/` (docs/49 §4.3).
+    moteur: MoteurTranscription | None
+    if not mode_transcription.avec_transcription_locale():
+        logger.info("Mode distant — aucun moteur de transcription local "
+                    "(transcription et CR délégués à l'API Mistral)")
+        moteur = None
+    else:
+        logger.warning("Mode local demandé mais aucun moteur local n'existe sur Linux "
+                       "(docs/49 L1 : v1 = mode distant seul) — repli stub")
+        moteur = MoteurStub()
+
+    try:
+        from debrief_meet.platform.commun.micro_sounddevice import CaptureMicroSounddevice
+        micro: CaptureMicro = CaptureMicroSounddevice()
+    except ImportError as exc:
+        logger.warning("Micro indisponible (%s) — repli stub", exc)
+        micro = MicroStub()
+
+    # Capture système : source `.monitor` PipeWire — écrite après le spike
+    # `spike/capture_monitor_linux/` (docs/49 §5.1, étape 4). Stub jusque-là : la
+    # réunion tourne en micro seul, ce qui est déjà un livrable de bout en bout.
+    systeme: CaptureAudioSysteme = SystemeStub()
+    logger.warning("Capture audio système Linux pas encore implémentée "
+                   "(docs/49 §5.1) — repli stub, réunion en micro seul")
+
+    try:
+        from debrief_meet.platform.linux.presse_papiers import PressePapiersLinux
+        presse_papiers: PressePapiers = PressePapiersLinux()
+    except ImportError as exc:
+        logger.warning("Presse-papiers indisponible (%s) — repli stub", exc)
+        presse_papiers = PressePapiersStub()
+
+    try:
+        from debrief_meet.platform.linux.demarrage_auto import DemarrageAutoLinux
+        demarrage_auto: DemarrageAuto = DemarrageAutoLinux()
+    except ImportError as exc:
+        logger.warning("Démarrage auto indisponible (%s) — repli stub", exc)
+        demarrage_auto = DemarrageAutoStub()
+
+    # Raccourcis globaux : hors v1 (décision L2). Ubuntu 26.04 est en GNOME Wayland
+    # par défaut, où `XGrabKey` ne fonctionne pas ; la voie propre est le portail XDG
+    # `org.freedesktop.portal.GlobalShortcuts`. En mode distant, dictée et journal
+    # sont de toute façon désactivés — seul le toggle réunion perd son raccourci, et
+    # le tray le couvre.
+    logger.info("Raccourcis globaux non implémentés sur Linux (docs/49 L2 : "
+                "Wayland, reportés au portail XDG) — actions disponibles au tray")
+
     return Adaptateurs(
-        moteur=MoteurStub() if mode_transcription.avec_transcription_locale() else None,
-        micro=MicroStub(),
-        systeme=SystemeStub(),
-        presse_papiers=PressePapiersStub(),
-        demarrage_auto=DemarrageAutoStub(),
+        moteur=moteur,
+        micro=micro,
+        systeme=systeme,
+        presse_papiers=presse_papiers,
+        demarrage_auto=demarrage_auto,
         raccourcis=RaccourcisStub(),
     )
