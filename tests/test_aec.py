@@ -314,3 +314,23 @@ def test_calibration_refusee_en_butee_de_fenetre(monkeypatch):
     out = proc.pousser(mic, ref)
     assert not proc.calibre
     assert np.array_equal(out, mic)                           # passthrough : voix préservée
+
+
+def test_attenuation_forte_n_emet_pas_d_alerte(caplog):
+    # Terrain 2026-08-10 : WARNING émis avec −14 dB d'atténuation — un écho bien
+    # annulé laisse un résidu corrélé détectable, la corrélation seule ne suffit pas.
+    import logging as _logging
+
+    class _Attenue(MoteurAEC):
+        def traiter_trame(self, near, far):
+            return (near.astype(np.float32) * 0.05).astype(np.int16)   # ≈ −26 dB
+
+    rng = np.random.default_rng(23)
+    ref = rng.normal(0, 0.3, SR_AEC * 12 * 8).astype(np.float32)
+    mic = _echo_decale(ref, 320)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Attenue())
+    proc.demarrer()
+    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
+        for debut in range(0, len(ref), SR_AEC * 12):
+            proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
+    assert not [r for r in caplog.records if "AEC inefficace" in r.getMessage()]

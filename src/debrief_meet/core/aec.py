@@ -57,6 +57,7 @@ QUALITE_CORR_MIN = 10.0               # pic/médiane mini pour un délai FIABLE 
 RECAL_FENETRE_S = 12.0                # queue glissante near/far/nettoyé
 RECAL_SEUIL_ECH = int(0.080 * SR_AEC) # résidu toléré avant ré-alignement (80 ms)
 ECHO_RESIDUEL_TRANCHES = 5            # tranches consécutives d'écho résiduel avant WARNING
+ECHO_RESIDUEL_ATT_DB = 3.0            # atténuation (en valeur absolue) qui disculpe l'AEC
 
 
 # ── Estimation du délai (cross-corrélation bornée) ───────────────────────────
@@ -374,7 +375,12 @@ class ProcesseurAEC:
             return
         _, qualite = _caler_delai(self._queue_nettoye, self._queue_far,
                                   int(DELAI_MAX_MS / 1000 * SR_AEC))
-        if qualite >= QUALITE_CORR_MIN:
+        # Deux conditions : un résidu encore corrélé ET une atténuation faible. Même
+        # annulé de 10-15 dB, un écho laisse un pic de corrélation détectable — la
+        # corrélation seule faisait crier au loup une AEC qui marchait (terrain
+        # 2026-08-10 : WARNING émis avec −14 dB d'atténuation sur la tranche).
+        att = self._derniere_attenuation_db
+        if qualite >= QUALITE_CORR_MIN and (att is None or att > -ECHO_RESIDUEL_ATT_DB):
             self._tranches_echo_residuel += 1
         else:
             self._tranches_echo_residuel = 0
