@@ -190,7 +190,7 @@ class ProcesseurAEC:
         self._queue_near = np.zeros(0, dtype=np.float32)
         self._queue_far = np.zeros(0, dtype=np.float32)
         self._queue_nettoye = np.zeros(0, dtype=np.float32)
-        self._derive_confirmations = 0
+        self._dernier_residu: int | None = None
         self._tranches_echo_residuel = 0
         self._alerte_efficacite_emise = False
 
@@ -259,10 +259,16 @@ class ProcesseurAEC:
             if _rms(self._buf_ref[:n]) < REF_RMS_MIN:      # système silencieux → pas d'écho
                 _trace("calibration différée (système silencieux)")
                 return False
-            delai, qualite = _caler_delai(self._buf_micro[:n], self._buf_ref[:n],
-                                          int(DELAI_MAX_MS / 1000 * SR_AEC))
+            borne = int(DELAI_MAX_MS / 1000 * SR_AEC)
+            delai, qualite = _caler_delai(self._buf_micro[:n], self._buf_ref[:n], borne)
             if qualite < QUALITE_CORR_MIN:                 # pas de pic franc → pas d'écho fiable
                 _trace(f"calibration différée (qualité corr {qualite:.1f} < {QUALITE_CORR_MIN})")
+                return False
+            if abs(delai) >= int(borne * 0.95):
+                # Pic en butée de fenêtre = vraisemblablement un pic parasite dont le
+                # vrai sommet est HORS fenêtre (verrou à −1456 ms observé sur le
+                # terrain, butée de ±1500) → on diffère plutôt que de mal caler.
+                _trace(f"calibration différée (délai {delai} éch en butée de fenêtre)")
                 return False
 
         self._delai_estime = delai
@@ -318,28 +324,39 @@ class ProcesseurAEC:
 
         Mesurée sur le micro BRUT et la référence tels que réellement traités (queues
         glissantes, donc déjà alignés) : le résidu attendu est la marge de lead. Un
-        résidu au-delà de RECAL_SEUIL_ECH, confirmé sur 2 mesures consécutives,
-        déclenche un ré-alignement par sauts (mêmes conventions que la calibration
-        initiale) ; une mesure de mauvaise qualité ne change rien."""
+        résidu au-delà de RECAL_SEUIL_ECH, confirmé par 2 mesures consécutives
+        CONCORDANTES (même signe, écart ≤ seuil), déclenche un ré-alignement par sauts
+        (mêmes conventions que la calibration initiale) — borné à ±DELAI_MAX_MS ; une
+        mesure de mauvaise qualité ou discordante ne change rien."""
         if len(self._queue_near) < self._n_queue // 2 or _rms(self._queue_far) < REF_RMS_MIN:
-            self._derive_confirmations = 0
+            self._dernier_residu = None
             return
         delai, qualite = _caler_delai(self._queue_near, self._queue_far,
                                       int(DELAI_MAX_MS / 1000 * SR_AEC))
         if qualite < QUALITE_CORR_MIN:
-            self._derive_confirmations = 0
+            self._dernier_residu = None
             return
         residu = delai - self._marge
         if abs(residu) <= RECAL_SEUIL_ECH:
-            self._derive_confirmations = 0
+            self._dernier_residu = None
             return
-        self._derive_confirmations += 1
-        if self._derive_confirmations < 2:
+        # Concordance exigée (docs/48 §4.2) : deux mesures consécutives doivent pointer
+        # le MÊME résidu (même signe, écart ≤ seuil). Sur du bruit sans vrai pic, les
+        # résidus successifs sont erratiques et ne concordent jamais — sans cette garde,
+        # le délai suivi part en fuite (−3,2 s observés sur le terrain le 2026-08-07).
+        precedent, self._dernier_residu = self._dernier_residu, residu
+        if (precedent is None or (residu > 0) != (precedent > 0)
+                or abs(residu - precedent) > RECAL_SEUIL_ECH):
             return
-        self._derive_confirmations = 0
+        nouveau = (self._delai_estime or 0) + residu
+        if abs(nouveau) > int(DELAI_MAX_MS / 1000 * SR_AEC):
+            _trace(f"dérive : délai suivi {nouveau} éch hors ±{DELAI_MAX_MS} ms — ré-alignement ignoré")
+            self._dernier_residu = None
+            return
+        self._dernier_residu = None
         self._a_sauter_ref += max(0, -residu)
         self._a_sauter_micro += max(0, residu)
-        self._delai_estime = (self._delai_estime or 0) + residu
+        self._delai_estime = nouveau
         self._queue_near = np.zeros(0, dtype=np.float32)
         self._queue_far = np.zeros(0, dtype=np.float32)
         self._queue_nettoye = np.zeros(0, dtype=np.float32)

@@ -270,3 +270,47 @@ def test_echo_residuel_persistant_emet_un_warning_unique(caplog):
             proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
     alertes = [r for r in caplog.records if "AEC inefficace" in r.getMessage()]
     assert len(alertes) == 1
+
+
+def test_derive_residus_discordants_jamais_appliques(monkeypatch):
+    # Terrain 2026-08-07 (poste de Alix) : des pics de bruit passaient la porte
+    # qualité avec des résidus erratiques → 8 ré-alignements en 10 min, délai suivi
+    # en fuite à -3,2 s. Deux mesures consécutives doivent CONCORDER pour agir.
+    from debrief_meet.core import aec as aec_mod
+    rng = np.random.default_rng(17)
+    ref = rng.normal(0, 0.3, SR_AEC * 12 * 6).astype(np.float32)
+    mic = _echo_decale(ref, 320)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc.pousser(mic[:SR_AEC * 12], ref[:SR_AEC * 12])        # calibration réelle
+    delai_initial = proc.delai_estime
+
+    valeurs = [+7000, -14000, +9000, -6000, +13000]           # erratiques 2 à 2
+    appels = {"n": 0}
+
+    def faux_caler(a, b, d):
+        v = valeurs[appels["n"] % len(valeurs)]
+        appels["n"] += 1
+        return v, 50.0                                        # qualité forte : la porte passe
+
+    monkeypatch.setattr(aec_mod, "_caler_delai", faux_caler)
+    for i in range(1, 6):
+        proc.pousser(mic[SR_AEC * 12 * i:SR_AEC * 12 * (i + 1)],
+                     ref[SR_AEC * 12 * i:SR_AEC * 12 * (i + 1)])
+    assert proc.delai_estime == delai_initial                 # aucun saut appliqué
+
+
+def test_calibration_refusee_en_butee_de_fenetre(monkeypatch):
+    # Un pic EN BUTÉE de la fenêtre de recherche = pic parasite dont le vrai sommet
+    # est hors fenêtre (verrou à -1456 ms sur ±1500 observé le 2026-08-07) → différer.
+    from debrief_meet.core import aec as aec_mod
+    rng = np.random.default_rng(19)
+    ref = rng.normal(0, 0.3, SR_AEC * 2).astype(np.float32)
+    mic = rng.normal(0, 0.2, SR_AEC * 2).astype(np.float32)
+    borne = int(aec_mod.DELAI_MAX_MS / 1000 * SR_AEC)
+    monkeypatch.setattr(aec_mod, "_caler_delai", lambda a, b, d: (int(borne * 0.98), 50.0))
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    out = proc.pousser(mic, ref)
+    assert not proc.calibre
+    assert np.array_equal(out, mic)                           # passthrough : voix préservée
