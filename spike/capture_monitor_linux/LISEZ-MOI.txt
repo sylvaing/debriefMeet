@@ -27,12 +27,19 @@ CE QU'IL FAUT PRÉPARER
 COMMENT LANCER
 --------------
 
-Ouvre un terminal dans le dossier qu'on t'a envoyé, puis :
+Une seule dépendance à installer au préalable (elle permet à Python de
+lire le son ; elle n'est pas toujours présente sur Ubuntu) :
+
+    sudo apt install libportaudio2
+
+Ouvre ensuite un terminal dans le dossier qu'on t'a envoyé, puis :
 
     sh lancer.sh
 
-Si un message te dit qu'il manque « python3-venv », lance la commande
-qu'il affiche puis relance « sh lancer.sh ».
+Si un message te dit qu'il manque autre chose (« python3-venv » par
+exemple), lance la commande qu'il affiche puis relance « sh lancer.sh ».
+Le test vérifie ces prérequis avant de commencer et te donne la commande
+exacte : tu ne peux pas te tromper.
 
 
 COMMENT ÇA SE PASSE

@@ -37,8 +37,18 @@ from pathlib import Path
 try:
     import numpy as np
     import sounddevice as sd
+except OSError as exc:  # pragma: no cover
+    # `OSError`, PAS `ImportError` : sous Linux, `pip install sounddevice` n'installe
+    # que le binding Python — la bibliothèque C PortAudio est un paquet système, et
+    # son absence lève « PortAudio library not found » au moment de l'import (même
+    # famille que la PortAudioError vue sur le conteneur de build, docs/49 §6.3).
+    print(f"\n✗ Il manque une bibliothèque système pour lire le son ({exc}).\n\n"
+          "  Installe-la avec :\n\n"
+          "      sudo apt install libportaudio2\n\n"
+          "  puis relance le test.\n", file=sys.stderr)
+    raise SystemExit(2)
 except ImportError as exc:  # pragma: no cover — le script s'exécute hors venv de l'app
-    print(f"Dépendance manquante ({exc}).\n"
+    print(f"Dépendance Python manquante ({exc}).\n"
           "  python3 -m venv .venv && .venv/bin/pip install sounddevice numpy",
           file=sys.stderr)
     raise SystemExit(2)

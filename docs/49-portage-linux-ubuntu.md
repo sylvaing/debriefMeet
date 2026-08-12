@@ -210,9 +210,19 @@ Trivial et testable sans OS réel (chemin injectable).
   `/usr/bin/debriefmeet` (symlink), `/usr/share/applications/debriefmeet.desktop`,
   icônes hicolor. Versionnement identique aux autres OS
   (`0.2.0+AAAAMMJJ.hashgit` — le `+` est valide en version deb).
-- **`Depends`** : `ffmpeg`, `pulseaudio-utils` (si `pactl` retenu en §5.1), plus le
-  minimum Qt que le bundle PySide6 ne couvre pas (typiquement `libxcb-cursor0` ;
-  liste exacte à figer au premier build en testant sur un conteneur nu).
+- **`Depends`** : `ffmpeg`, **`libportaudio2`**, `pulseaudio-utils` (si `pactl` retenu
+  en §5.1), plus le minimum Qt que le bundle PySide6 ne couvre pas (typiquement
+  `libxcb-cursor0` ; liste exacte à figer au premier build en testant sur un
+  conteneur nu).
+
+  ⚠️ **`libportaudio2` n'est pas optionnel et se rate facilement.** Sous Linux,
+  `pip install sounddevice` n'installe que le binding Python : la bibliothèque C
+  PortAudio est un paquet système (contrairement à macOS/Windows, où la roue
+  l'embarque). Son absence lève `OSError: PortAudio library not found` **à l'import**,
+  donc avant tout code de l'app. Vécu le 2026-08-11 sur le poste du premier
+  utilisateur du spike, sur une Ubuntu de bureau standard — c'est-à-dire exactement
+  la machine cible. À vérifier explicitement à la fumée du `.deb` : PyInstaller ne
+  garantit pas de collecter cette `.so` système.
 - **Spec** : `packaging/linux/debriefMeet.spec` (dérivé du spec Windows, sans la
   section ffmpeg embarqué) + `packaging/linux/build_deb.sh` (arbre `DEBIAN/control`
   + `dpkg-deb --build`). `TestSpecLinux` miroir de `TestSpecWindows`.

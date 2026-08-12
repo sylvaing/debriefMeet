@@ -29,6 +29,25 @@ if [ ! -d "$VENV" ]; then
     "$VENV/bin/pip" install --quiet sounddevice numpy
 fi
 
+# Verification AVANT l'ecran d'accueil : `pip install sounddevice` ne fournit PAS la
+# bibliotheque C PortAudio sous Linux (contrairement a macOS/Windows ou la roue
+# l'embarque) — sans le paquet systeme, l'import leve « PortAudio library not found ».
+# Constate chez le premier utilisateur du spike, le 2026-08-11.
+if ! "$VENV/bin/python" -c "import sounddevice" >/dev/null 2>&1; then
+    ERREUR="$("$VENV/bin/python" -c "import sounddevice" 2>&1 | tail -1)"
+    echo
+    echo "✗ Il manque une bibliothèque système pour lire le son."
+    echo
+    echo "  Installe-la avec :"
+    echo
+    echo "      sudo apt install libportaudio2"
+    echo
+    echo "  puis relance cette même commande (sh lancer.sh)."
+    echo
+    echo "  [détail technique : $ERREUR]"
+    exit 1
+fi
+
 if ! command -v pactl >/dev/null 2>&1; then
     echo "⚠  Un outil optionnel est absent. Pour une mesure plus complète :"
     echo "     sudo apt install pulseaudio-utils"
