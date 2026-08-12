@@ -148,6 +148,44 @@ corréler après coup un silence ou une erreur PortAudio avec ce que l'humain ve
 de faire. `lancer.sh` s'exécute sans argument et termine en rappelant où sont les
 fichiers produits (log + WAVs) et quoi renvoyer pour analyse.
 
+#### Résultats du premier passage terrain (2026-08-12, poste Ubuntu du collègue)
+
+Machine : Ubuntu, **Wayland/GNOME**, PipeWire, carte `sof-hda-dsp`, 4 sorties
+(HDMI1/2/3 + Headphones), sortie par défaut **HDMI1**.
+
+| Q | Réponse | Conséquence |
+|---|---------|-------------|
+| **Q1** ✅ | **4 sources `.monitor` visibles de PortAudio**, mais **uniquement sous le hostapi `PulseAudio`** (index 2) — pas sous ALSA. Noms techniques exacts : `alsa_output.<carte>.HiFi__HDMI1__sink.monitor`, jamais « Monitor of… ». | L'adaptateur **filtre sur le hostapi PulseAudio** et sur le suffixe `.monitor`. `soundcard` et l'API PipeWire native sont inutiles. |
+| **Q2** ✅ | **`pactl` est nécessaire.** La sortie par défaut vue de PortAudio est `[9] 'default'` — un périphérique ALSA générique qui n'identifie **aucun** sink. `pactl get-default-sink` rend le nom exact, et le moniteur est **exactement** `<nom-du-sink>.monitor`. | **`Depends: pulseaudio-utils` confirmé.** Le repli « premier moniteur de la liste » aurait choisi HDMI3 sur ce poste, soit une piste système muette : il ne doit **pas** être un repli silencieux. |
+| **Q3** ✅ | **2 canaux @ 48 000 Hz** (comme les sinks : `s24-32le 2ch 48000Hz`). | Contrat **identique à WASAPI** — downmix stéréo→mono, pas de rééchantillonnage propre à Linux. |
+| **Q5** ✅ | Moniteur : RMS **0,125**, crête 0,68 sur 15 s pendant une vidéo. Micro simultané : RMS 0,169 (crête 0,99997 — micro proche de la saturation, à surveiller côté AEC). | La voie `.monitor` est validée. |
+| **Q4** ⚠️ | **Partiellement répondue, et c'est déjà le résultat le plus important.** Le flux ouvert sur le moniteur d'un sink devenu inactif rend **du silence numérique parfait — 100 % d'échantillons nuls sur 63 s**, sans **aucune** erreur ni statut PortAudio. | Voir ci-dessous. |
+
+**Ce que Q4 impose déjà.** Comme rien dans l'API ne signale la bascule, l'adaptateur
+**ne peut pas** détecter le problème depuis le flux : du silence parfait est
+indiscernable d'une réunion réellement silencieuse. Il faut donc **surveiller
+activement la sortie par défaut** (`pactl get-default-sink`, ou l'abonnement
+`pactl subscribe`) et rouvrir le flux dès qu'elle change. C'était la pire des trois
+hypothèses envisagées — et celle qui coûte le plus cher à découvrir en production.
+
+**Piège supplémentaire, trouvé au passage : PortAudio fige sa table de périphériques
+à l'initialisation.** Le moniteur d'une sortie apparue *après* le démarrage (casque
+BT allumé en cours de réunion) est invisible de `query_devices()` tant qu'on n'a pas
+fait un cycle `sd._terminate()` / `sd._initialize()`. C'est exactement le piège déjà
+rencontré côté micro sur macOS (docs/25) — et `micro_sounddevice.py` fait déjà ce
+cycle ; la capture système devra faire de même.
+
+**Ce qui reste à mesurer.** Le cas observé est « le son part vers un autre sink, le
+sink surveillé passe en `SUSPENDED` ». Le cas **« le sink surveillé disparaît »**
+(casque USB débranché, BT déconnecté → le nœud PipeWire est détruit) n'a pas été
+observé et peut se comporter différemment : erreur PortAudio, voire flux tué. À
+trancher par un second passage (`--phases 3`), la phase 3 ayant été invalidée par un
+malentendu de protocole *et* par un bug du spike (moniteur résolu en phase 1 puis
+réutilisé 90 s plus tard, alors que la sortie par défaut avait changé entre-temps) —
+les deux sont corrigés.
+
+---
+
 Questions auxquelles le spike doit répondre avant d'écrire `capture_systeme_monitor.py` :
 nom exact et stabilité des entrées moniteur vues de PortAudio sur 26.04 ; `pactl`
 nécessaire ou non (⇒ `Depends: pulseaudio-utils` ou pas) ; taux natif rendu ;
@@ -210,10 +248,11 @@ Trivial et testable sans OS réel (chemin injectable).
   `/usr/bin/debriefmeet` (symlink), `/usr/share/applications/debriefmeet.desktop`,
   icônes hicolor. Versionnement identique aux autres OS
   (`0.2.0+AAAAMMJJ.hashgit` — le `+` est valide en version deb).
-- **`Depends`** : `ffmpeg`, **`libportaudio2`**, `pulseaudio-utils` (si `pactl` retenu
-  en §5.1), plus le minimum Qt que le bundle PySide6 ne couvre pas (typiquement
-  `libxcb-cursor0` ; liste exacte à figer au premier build en testant sur un
-  conteneur nu).
+- **`Depends`** : `ffmpeg`, **`libportaudio2`**, **`pulseaudio-utils`** (confirmé
+  nécessaire par le spike — cf. §5.1 Q2 : sans `pactl`, impossible d'identifier le
+  moniteur de la sortie active), plus le minimum Qt que le bundle PySide6 ne couvre
+  pas (typiquement `libxcb-cursor0` ; liste exacte à figer au premier build en testant
+  sur un conteneur nu).
 
   ⚠️ **`libportaudio2` n'est pas optionnel et se rate facilement.** Sous Linux,
   `pip install sounddevice` n'installe que le binding Python : la bibliothèque C
@@ -337,7 +376,9 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 
 | Risque | Parade |
 |--------|--------|
-| Nom/visibilité de la source `.monitor` via PortAudio variable selon la config PipeWire | Spike `spike/capture_monitor_linux/` (§5.1, étape 2 du §8) avant toute ligne d'adaptateur ; repli `pactl` |
+| ~~Nom/visibilité de la source `.monitor` via PortAudio~~ | **Levé** par le spike du 2026-08-12 (§5.1) : visibles sous le hostapi PulseAudio, nom = `<sink>.monitor`, résolus via `pactl` |
+| **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence |
+| Un sink qui **disparaît** (USB débranché, BT déconnecté) pourrait tuer le flux, contrairement à un sink simplement suspendu | Non mesuré — second passage `--phases 3` demandé au collègue (§5.1) |
 | Tray absent si l'extension AppIndicator est désactivée sur le poste cible | Vérifier au déploiement ; documenter dans la notice (`gnome-extensions enable ubuntu-appindicators…`) |
 | Casque Bluetooth : bascule de profil A2DP↔HFP quand le micro BT est utilisé (le monitor change de format) | Même famille que les cas BT Windows (docs/34 §2.3) : réouverture à chaud + logs ; recommander micro filaire/intégré en premier déploiement |
 | Python 3.13 non packagé dans l'archive 26.04 | PPA deadsnakes (constat au provisionnement) |

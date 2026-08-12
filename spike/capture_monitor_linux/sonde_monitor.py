@@ -204,6 +204,44 @@ def choisir_moniteur(journal: Journal, moniteurs: list[dict]) -> int | None:
     return moniteurs[0]["index"]
 
 
+def rafraichir_peripheriques(journal: Journal) -> None:
+    """Force PortAudio à re-scanner les périphériques.
+
+    PortAudio **fige sa table de périphériques à l'initialisation** : un casque
+    connecté après le lancement du process reste invisible de `query_devices()`.
+    C'est le même piège que celui déjà rencontré côté micro sur macOS (docs/25,
+    « table PortAudio figée au lancement ») — et il rend une simple relecture
+    inutile. Seul un cycle terminate/initialize rafraîchit la liste.
+
+    Conséquence directe pour l'adaptateur : la source `.monitor` d'une sortie
+    apparue en cours de réunion (casque BT allumé, dock branché) n'est atteignable
+    qu'après ce cycle."""
+    try:
+        sd._terminate()
+        sd._initialize()
+        journal.info("Table PortAudio rafraîchie (terminate/initialize)")
+    except Exception as exc:
+        journal.erreur(f"Rafraîchissement PortAudio impossible : {exc}")
+
+
+def resoudre_moniteur_courant(journal: Journal) -> int | None:
+    """Ré-inventorie et rend le moniteur de la sortie par défaut À CET INSTANT.
+
+    Indispensable entre deux phases : la sortie par défaut peut avoir changé depuis
+    l'inventaire initial (c'est arrivé lors du premier passage terrain, 2026-08-12 —
+    le casque BT avait été connecté entre les phases 2 et 3, et la phase 3 a
+    enregistré 63 s de silence parfait sur le moniteur devenu inactif)."""
+    rafraichir_peripheriques(journal)
+    moniteurs = [
+        {"index": i, "name": d["name"], "max_input_channels": d["max_input_channels"],
+         "default_samplerate": d["default_samplerate"]}
+        for i, d in enumerate(sd.query_devices())
+        if d["max_input_channels"] > 0 and _est_moniteur(d["name"])
+    ]
+    journal.info(f"Sortie par défaut à cet instant : {_pactl('get-default-sink')}")
+    return choisir_moniteur(journal, moniteurs)
+
+
 # ── Capture ──────────────────────────────────────────────────────────────────────
 
 class Enregistreur:
@@ -355,18 +393,19 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
     journal.info("C'est LA phase qui dimensionne la logique de réouverture à chaud de "
                  "l'adaptateur : on ne coupe jamais le flux, on observe.")
 
-    moniteur = Enregistreur(journal, index_moniteur, "moniteur")
-
     poursuivre = demander(
         journal,
-        "Il te faut un CASQUE USB ou BLUETOOTH pour cette étape",
+        "Prépare un casque USB ou BLUETOOTH — mais NE LE CONNECTE PAS ENCORE",
         [
             "On va observer ce qui se passe quand le son change de destination",
-            "pendant qu'on enregistre. Prends un casque USB (à brancher en USB) ou",
-            "un casque Bluetooth (à appairer/allumer le moment venu).",
+            "PENDANT qu'on enregistre. Il faut donc partir des haut-parleurs.",
             "",
-            "Si tu n'as ni l'un ni l'autre, saute cette étape : ce n'est pas grave,",
-            "les deux premières phases sont déjà utiles.",
+            "  ⚠ TRÈS IMPORTANT : à ce stade, le casque doit être ÉTEINT ou",
+            "    DÉBRANCHÉ. Ne l'allume pas, ne le connecte pas : le test te dira",
+            "    quand le faire, un peu plus loin.",
+            "",
+            "Si tu n'as ni casque USB ni casque Bluetooth, saute cette étape : ce",
+            "n'est pas grave, les deux premières phases sont déjà utiles.",
         ],
         optionnel=True,
     )
@@ -376,16 +415,44 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
 
     demander(
         journal,
-        "REMETS DU SON EN LECTURE sur les haut-parleurs, puis reviens ici",
+        "REMETS DU SON EN LECTURE sur les HAUT-PARLEURS, puis reviens ici",
         [
             "Même chose qu'à l'étape précédente : une vidéo YouTube ou un morceau",
             "de musique, son audible sur les haut-parleurs de l'ordinateur.",
             "Laisse-le jouer jusqu'à la fin de cette phase (environ 1 minute).",
         ],
     )
+
+    # Le moniteur est RE-RÉSOLU ici, et pas repris de la phase 1 : la sortie par
+    # défaut a pu changer entre-temps. C'est précisément ce qui a invalidé le premier
+    # passage terrain (2026-08-12) — le casque BT avait été connecté pendant l'attente,
+    # et la phase 3 a enregistré 63 s de silence sur le moniteur de l'ancienne sortie.
+    index_courant = resoudre_moniteur_courant(journal)
+    if index_courant is None:
+        journal.erreur("Aucun moniteur exploitable au moment de la phase 3 — abandon")
+        journal.reponse("Q4", "NON MESURÉE — plus aucun moniteur visible")
+        return
+    if index_courant != index_moniteur:
+        journal.info(f"Moniteur différent de celui de la phase 2 "
+                     f"([{index_moniteur}] → [{index_courant}]) : la sortie par défaut "
+                     f"a changé entre les deux phases")
+
+    moniteur = Enregistreur(journal, index_courant, "moniteur")
     moniteur.demarrer()
     avant = _pactl("get-default-sink")
     journal.info(f"Sortie par défaut au démarrage du flux : {avant}")
+    journal.info(f"État des sinks au démarrage :\n{_pactl('list', 'short', 'sinks') or '(vide)'}")
+
+    # Vérification immédiate : si le moniteur choisi est déjà muet alors qu'une musique
+    # est censée jouer, inutile de dérouler la phase — on le dit tout de suite.
+    time.sleep(2)
+    if moniteur.rms_recent() < 1e-4:
+        print()
+        print("  ⚠  Le moniteur ne capte rien alors qu'une musique devrait jouer.")
+        print("     Vérifie que le son sort bien des HAUT-PARLEURS (pas d'un casque")
+        print("     déjà connecté) et que la lecture est en cours, puis relance :")
+        print("         sh lancer.sh --phases 3")
+        journal.erreur("Moniteur muet au démarrage de la phase 3 — mesure non valable")
 
     arret = threading.Event()
     veilleur = threading.Thread(
@@ -409,7 +476,13 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
     )
     apres = _pactl("get-default-sink")
     journal.info(f"Sortie par défaut après branchement : {apres} "
-                 f"({'CHANGÉE' if apres != avant else 'inchangée'})")
+                 f"({'CHANGÉE' if apres != avant else 'INCHANGÉE — le casque n a pas pris la main'})")
+    journal.info(f"État des sinks après branchement :\n{_pactl('list', 'short', 'sinks') or '(vide)'}")
+    # La question décisive : le sink que l'on surveille existe-t-il encore ? Un sink
+    # simplement SUSPENDED rend du silence ; un sink DISPARU peut tuer le flux.
+    if avant and apres and avant != apres:
+        sinks = _pactl("list", "short", "sinks") or ""
+        journal.info(f"Ancien sink toujours présent : {'OUI' if avant in sinks else 'NON — NŒUD DISPARU'}")
     print("  ⏺  On continue d'enregistrer quelques secondes, ne touche à rien…")
     time.sleep(min(8, secondes))
 
