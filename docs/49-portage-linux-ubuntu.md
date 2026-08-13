@@ -397,7 +397,40 @@ démon audio n'est pas encore levé (cas réel : démarrage auto en tout début 
 graphique) obtient `False` et le repli, pas un crash. Aucun durcissement n'était
 nécessaire ; c'est le genre de conclusion qu'il faut établir plutôt que supposer.
 
-### 6.3 Scripts (miroirs de l'existant Windows)
+### 6.4 Première panne terrain du `.deb` (2026-08-13) — épuisement des descripteurs
+
+**Symptôme** (premier lancement réel, poste de l'utilisateur cible) : ~35 s après le
+début d'une réunion, cascade d'erreurs — `OSError: [Errno 24]` sur les SVG,
+`sqlite3.OperationalError: unable to open database file`, `QWaylandShmBuffer:
+failed: Too many open files`, tempête de `QPainter` — l'app devient inutilisable.
+Toutes ces erreurs sont des **victimes** : les 1024 descripteurs du process (limite
+Ubuntu par défaut) étaient épuisés.
+
+**Cause, prouvée par la mesure** (churn isolé sur le conteneur : 8 → 284 fds en
+500 appels, puis EMFILE) : `StoreCalendrier._connexion()` rendait une connexion
+sqlite jamais fermée explicitement — **le `with` de sqlite3 ne gère que la
+transaction, pas la fermeture** — et les connexions participent à des cycles de
+références, donc seul le GC générationnel les libérait, par rafales (~270 en
+attente en croisière, **3 fds chacune en WAL** : db + `-wal` + `-shm`).
+
+**Pourquoi seulement sur Linux, et seulement en réunion** : la limite soft macOS est
+~1 M (le même code fuit sur le Mac — mesuré — sans jamais se voir) ; et pendant
+l'enregistrement, la ligne « en cours » de l'Historique s'anime, or ses délégués de
+peinture interrogent le store BlueMind **à chaque frame** (`_etat_bluemind_pour` →
+`evenements_dans_plage`), soit ~60 connexions/s. 35 s ont suffi.
+
+**Correctif** : `_connexion()` devient un contextmanager qui `close()` en `finally`
+(les 11 sites d'appel inchangés) + test de régression qui mesure les fds via
+`/dev/fd` avec `gc.disable()` — le filet du GC retiré, la fuite est visible sur
+tous les OS ; vérifié rouge sur l'ancien code, et 5 fds constants sur 12 000
+opérations après correctif. Les icônes SVG relues à chaque frame ont été mesurées
+innocentes (aucun fd).
+
+**Leçon générale** : sur ce dépôt, toute ressource à descripteur (connexion,
+fichier, socket) doit être fermée déterministiquement — le ramasse-miettes n'est
+pas un mécanisme de fermeture, et macOS ne révélera jamais ce genre de fuite.
+
+### 6.5 Scripts (miroirs de l'existant Windows)
 
 - `scripts/build_app_linux_lxc.sh` — tar over ssh, gate pytest, PyInstaller,
   `build_deb.sh`, rapatriement de `dist/debriefmeet_<version>_amd64.deb`. Session
