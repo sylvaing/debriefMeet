@@ -159,14 +159,35 @@ Machine : Ubuntu, **Wayland/GNOME**, PipeWire, carte `sof-hda-dsp`, 4 sorties
 | **Q2** ✅ | **`pactl` est nécessaire.** La sortie par défaut vue de PortAudio est `[9] 'default'` — un périphérique ALSA générique qui n'identifie **aucun** sink. `pactl get-default-sink` rend le nom exact, et le moniteur est **exactement** `<nom-du-sink>.monitor`. | **`Depends: pulseaudio-utils` confirmé.** Le repli « premier moniteur de la liste » aurait choisi HDMI3 sur ce poste, soit une piste système muette : il ne doit **pas** être un repli silencieux. |
 | **Q3** ✅ | **2 canaux @ 48 000 Hz** (comme les sinks : `s24-32le 2ch 48000Hz`). | Contrat **identique à WASAPI** — downmix stéréo→mono, pas de rééchantillonnage propre à Linux. |
 | **Q5** ✅ | Moniteur : RMS **0,125**, crête 0,68 sur 15 s pendant une vidéo. Micro simultané : RMS 0,169 (crête 0,99997 — micro proche de la saturation, à surveiller côté AEC). | La voie `.monitor` est validée. |
-| **Q4** ⚠️ | **Partiellement répondue, et c'est déjà le résultat le plus important.** Le flux ouvert sur le moniteur d'un sink devenu inactif rend **du silence numérique parfait — 100 % d'échantillons nuls sur 63 s**, sans **aucune** erreur ni statut PortAudio. | Voir ci-dessous. |
+| **Q4** ✅ | Tranchée au second passage (2026-08-12 18:24, 798 s d'un seul tenant sur le moniteur de HDMI1, **jamais rouvert**). Voir le déroulé ci-dessous. | Surveillance active obligatoire, mais **aucune** gestion de flux mort. |
 
-**Ce que Q4 impose déjà.** Comme rien dans l'API ne signale la bascule, l'adaptateur
-**ne peut pas** détecter le problème depuis le flux : du silence parfait est
-indiscernable d'une réunion réellement silencieuse. Il faut donc **surveiller
-activement la sortie par défaut** (`pactl get-default-sink`, ou l'abonnement
-`pactl subscribe`) et rouvrir le flux dès qu'elle change. C'était la pire des trois
-hypothèses envisagées — et celle qui coûte le plus cher à découvrir en production.
+**Q4 — le déroulé mesuré** (flux ouvert à 18:25:11, taille du WAV exactement conforme
+à 798 s ⇒ aucune interruption) :
+
+| Fenêtre | Durée | Ce que rend le moniteur |
+|---------|-------|-------------------------|
+| 18:25:11 → 18:25:35 | 24 s | **Audible**, RMS 0,104 — le son joue sur HDMI1 |
+| 18:25:35 → 18:38:15 | **760 s** | **Silence numérique parfait, 100 % d'échantillons nuls** — le son est parti sur le casque Bluetooth, HDMI1 passe `IDLE` |
+| 18:38:19 → 18:38:29 | 10 s | **Audible à nouveau**, RMS 0,109 — le casque a été déconnecté, le son revient sur HDMI1 |
+
+Trois conclusions, toutes actionnables :
+
+1. **Le flux ne meurt jamais.** Il a survécu 13 minutes, dont un sink Bluetooth
+   apparu puis disparu, sans une seule erreur ni un seul statut PortAudio.
+2. **Il se « répare » tout seul** : le son est revenu sur le même flux, sans
+   réouverture, dès que la sortie par défaut est redevenue HDMI1 — et **5 secondes
+   avant** que l'utilisateur ne confirme l'action, ce qui exclut toute intervention
+   du script. Un moniteur reste donc valide tant que son sink existe, même resté
+   inactif un quart d'heure.
+3. **Mais rien ne signale la bascule.** Pendant 760 s, le flux a rendu des zéros
+   parfaits : indiscernable d'une réunion réellement silencieuse. L'adaptateur **ne
+   peut pas** détecter le problème depuis l'audio.
+
+⇒ **Surveiller activement la sortie par défaut** (`pactl get-default-sink`, ou
+l'abonnement `pactl subscribe`) et rouvrir sur le nouveau moniteur. En revanche, ni
+détection de silence, ni chien de garde sur la santé du flux, ni réouverture
+périodique « au cas où » : le flux est stable, c'est le *choix* du moniteur qui
+devient obsolète.
 
 **Piège supplémentaire, trouvé au passage : PortAudio fige sa table de périphériques
 à l'initialisation.** Le moniteur d'une sortie apparue *après* le démarrage (casque
@@ -175,14 +196,27 @@ fait un cycle `sd._terminate()` / `sd._initialize()`. C'est exactement le piège
 rencontré côté micro sur macOS (docs/25) — et `micro_sounddevice.py` fait déjà ce
 cycle ; la capture système devra faire de même.
 
-**Ce qui reste à mesurer.** Le cas observé est « le son part vers un autre sink, le
-sink surveillé passe en `SUSPENDED` ». Le cas **« le sink surveillé disparaît »**
-(casque USB débranché, BT déconnecté → le nœud PipeWire est détruit) n'a pas été
-observé et peut se comporter différemment : erreur PortAudio, voire flux tué. À
-trancher par un second passage (`--phases 3`), la phase 3 ayant été invalidée par un
-malentendu de protocole *et* par un bug du spike (moniteur résolu en phase 1 puis
-réutilisé 90 s plus tard, alors que la sortie par défaut avait changé entre-temps) —
-les deux sont corrigés.
+**Ce qui reste à mesurer — Q6 : le sink surveillé qui DISPARAÎT.** Tout ce qui
+précède porte sur un sink qui reste présent et passe `IDLE`. Le cas où le nœud
+PipeWire est **détruit** sous un flux ouvert n'a jamais été observé — et c'est le
+plus probable en réunion réelle : l'utilisateur porte un casque Bluetooth (on capture
+donc le moniteur de `bluez_output.*`) et le casque se déconnecte, batterie vide ou
+sortie de portée.
+
+Une **phase 4** l'instrumente, et elle est **entièrement automatique** : elle crée un
+sink virtuel (`module-null-sink`), ouvre son moniteur, détruit le sink sous le flux,
+puis compte les trames reçues et guette exception, statut PortAudio et échec à la
+fermeture. Aucune chorégraphie humaine — c'est précisément ce qui a fait échouer les
+deux premiers passages — aucun matériel, et le sink virtuel n'est **jamais** défini
+comme sortie par défaut (la configuration audio de la machine n'est pas touchée ; le
+module est déchargé même en cas d'erreur).
+
+> Historique des deux premiers passages, pour mémoire : le premier a été invalidé par
+> un malentendu de protocole (« il te faut un casque » compris comme « connecte-le »)
+> **et** par un bug du spike (moniteur résolu en phase 1 puis réutilisé 90 s plus
+> tard, alors que la sortie par défaut avait changé). Le second par un veilleur qui
+> cessait de journaliser après 45 s alors que la phase durait 13 min — la trace des
+> transitions a dû être reconstituée depuis le WAV. Les trois sont corrigés.
 
 ---
 
@@ -378,7 +412,7 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 |--------|--------|
 | ~~Nom/visibilité de la source `.monitor` via PortAudio~~ | **Levé** par le spike du 2026-08-12 (§5.1) : visibles sous le hostapi PulseAudio, nom = `<sink>.monitor`, résolus via `pactl` |
 | **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence |
-| Un sink qui **disparaît** (USB débranché, BT déconnecté) pourrait tuer le flux, contrairement à un sink simplement suspendu | Non mesuré — second passage `--phases 3` demandé au collègue (§5.1) |
+| Un sink qui **disparaît** (BT déconnecté en réunion) pourrait tuer le flux, contrairement à un sink resté présent | Phase 4 du spike, automatique et sans matériel (`module-null-sink`) — `sh lancer.sh --phases 4`, 20 s (§5.1 Q6) |
 | Tray absent si l'extension AppIndicator est désactivée sur le poste cible | Vérifier au déploiement ; documenter dans la notice (`gnome-extensions enable ubuntu-appindicators…`) |
 | Casque Bluetooth : bascule de profil A2DP↔HFP quand le micro BT est utilisé (le monitor change de format) | Même famille que les cas BT Windows (docs/34 §2.3) : réouverture à chaud + logs ; recommander micro filaire/intégré en premier déploiement |
 | Python 3.13 non packagé dans l'archive 26.04 | PPA deadsnakes (constat au provisionnement) |

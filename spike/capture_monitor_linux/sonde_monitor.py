@@ -313,11 +313,19 @@ class Enregistreur:
 
 
 def _surveiller(journal: Journal, enregistreurs: dict[str, Enregistreur],
-                secondes: int, arret: threading.Event) -> None:
-    """Logge le RMS de chaque flux une fois par seconde (trace continue à relire)."""
-    for _ in range(secondes):
+                secondes: int | None, arret: threading.Event) -> None:
+    """Logge le RMS de chaque flux une fois par seconde (trace continue à relire).
+
+    `secondes=None` = jusqu'à l'arrêt explicite. Indispensable pour les phases dont la
+    durée dépend de l'utilisateur : au premier passage terrain, le veilleur s'est tu
+    après 45 s alors que la phase a duré 13 min — toute la trace des transitions
+    manquait, et il a fallu la reconstituer depuis le WAV."""
+    restant = secondes
+    while restant is None or restant > 0:
         if arret.wait(1.0):
             return
+        if restant is not None:
+            restant -= 1
         mesures = " | ".join(f"{nom} RMS={e.rms_recent():.5f}" for nom, e in enregistreurs.items())
         journal.info(f"  {mesures}")
 
@@ -456,7 +464,7 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
 
     arret = threading.Event()
     veilleur = threading.Thread(
-        target=_surveiller, args=(journal, {"moniteur": moniteur}, secondes * 3, arret), daemon=True)
+        target=_surveiller, args=(journal, {"moniteur": moniteur}, None, arret), daemon=True)
     veilleur.start()
 
     print()
@@ -511,14 +519,123 @@ def phase_bascule(journal: Journal, sortie: Path, index_moniteur: int, secondes:
                           "PortAudio a-t-il remonté une erreur/un statut ?")
 
 
+# ── Phase 4 — le sink surveillé DISPARAÎT (Q6), sans matériel ni manipulation ───
+
+def phase_sink_disparu(journal: Journal, secondes: int) -> None:
+    """Q6 — que devient un flux dont le sink surveillé est DÉTRUIT sous ses pieds ?
+
+    Cas réel le plus probable en réunion : l'utilisateur porte un casque Bluetooth
+    (donc on capture le moniteur du sink `bluez_output.*`) et le casque se
+    déconnecte — batterie vide, sortie de portée. Le nœud PipeWire disparaît, ce qui
+    n'est PAS la même chose qu'un sink simplement inactif (mesuré en phase 3 : silence
+    numérique, flux intact).
+
+    Simulé avec `module-null-sink`, un sink virtuel qu'on crée puis détruit à volonté :
+    aucune manipulation humaine — les deux passages terrain précédents ont échoué
+    exactement là-dessus — et aucun matériel requis.
+
+    Le sink créé n'est **jamais** défini comme sortie par défaut : la configuration
+    audio de la machine n'est pas touchée, et le module est déchargé même en cas
+    d'erreur."""
+    journal.info("═══ Phase 4 — disparition du sink surveillé (automatique) ═══")
+
+    if shutil.which("pactl") is None:
+        journal.erreur("pactl absent — phase 4 impossible")
+        journal.reponse("Q6", "NON MESURÉE — pactl absent")
+        return
+
+    nom_sink = "debriefmeet_sonde"
+    id_module = _pactl("load-module", "module-null-sink", f"sink_name={nom_sink}")
+    if not id_module or not id_module.strip().isdigit():
+        journal.erreur(f"Création du sink virtuel impossible (retour : {id_module!r})")
+        journal.reponse("Q6", "NON MESURÉE — module-null-sink indisponible")
+        return
+    journal.info(f"Sink virtuel « {nom_sink} » créé (module {id_module.strip()})")
+
+    flux = None
+    try:
+        rafraichir_peripheriques(journal)
+        index = next((i for i, d in enumerate(sd.query_devices())
+                      if d["max_input_channels"] > 0 and nom_sink in d["name"]), None)
+        if index is None:
+            journal.erreur(f"Moniteur de « {nom_sink} » introuvable côté PortAudio "
+                           "après rafraîchissement")
+            journal.reponse("Q6", "NON MESURÉE — moniteur du sink virtuel invisible")
+            return
+        journal.info(f"Moniteur du sink virtuel : [{index}] {sd.query_devices(index)['name']!r}")
+
+        # On ne compte pas le son (le sink virtuel est muet) mais la VIE du flux :
+        # les rappels continuent-ils d'arriver après la destruction du sink ?
+        blocs = {"n": 0, "trames": 0}
+        incidents: list[str] = []
+
+        def _rappel(indata, frames, temps, statut):  # noqa: ARG001
+            blocs["n"] += 1
+            blocs["trames"] += frames
+            if statut:
+                incidents.append(f"statut PortAudio : {statut}")
+
+        flux = sd.InputStream(device=index, channels=2, samplerate=48_000,
+                              dtype="float32", callback=_rappel)
+        flux.start()
+        journal.info(f"Flux ouvert sur le moniteur virtuel — actif={flux.active}")
+
+        time.sleep(3)
+        avant = dict(blocs)
+        journal.info(f"Avant destruction : {avant['n']} rappels, {avant['trames']} trames, "
+                     f"actif={flux.active}")
+
+        journal.action(f"DESTRUCTION du sink « {nom_sink} » (simule un casque déconnecté)")
+        _pactl("unload-module", id_module.strip())
+        id_module = None  # déchargé : ne pas retenter dans le finally
+
+        for i in range(max(3, min(secondes, 10))):
+            time.sleep(1)
+            journal.info(f"  +{i+1}s après destruction : {blocs['n']} rappels cumulés, "
+                         f"{blocs['trames']} trames, actif={flux.active}, "
+                         f"incidents={len(incidents)}")
+
+        apres = dict(blocs)
+        vivant = apres["trames"] > avant["trames"]
+        journal.reponse(
+            "Q6",
+            f"sink détruit sous un flux ouvert → "
+            f"{'le flux CONTINUE de livrer des trames' if vivant else 'le flux NE LIVRE PLUS rien'}"
+            f" ; actif={flux.active} ; incidents PortAudio : "
+            f"{incidents or 'AUCUN'} ; trames {avant['trames']} → {apres['trames']}")
+    except Exception as exc:
+        # Une exception ICI est en soi la réponse : le flux meurt bruyamment.
+        journal.reponse("Q6", f"sink détruit sous un flux ouvert → EXCEPTION {exc!r} "
+                              "(l'adaptateur doit la rattraper et rouvrir)")
+        journal.erreur(traceback_court())
+    finally:
+        if flux is not None:
+            try:
+                flux.stop()
+                flux.close()
+                journal.info("Flux refermé sans erreur")
+            except Exception as exc:
+                journal.reponse("Q6bis", f"la FERMETURE du flux lève après disparition "
+                                         f"du sink : {exc!r}")
+        if id_module:
+            _pactl("unload-module", id_module.strip())
+            journal.info("Sink virtuel retiré (nettoyage)")
+
+
+def traceback_court() -> str:
+    import traceback
+    return traceback.format_exc()
+
+
 # ── Point d'entrée ───────────────────────────────────────────────────────────────
 
 def main() -> int:
     parseur = argparse.ArgumentParser(description=__doc__)
     parseur.add_argument("--secondes", type=int, default=15,
                          help="durée de la capture de la phase 2 (défaut : 15)")
-    parseur.add_argument("--phases", default="1,2,3",
-                         help="phases à jouer, séparées par des virgules (défaut : 1,2,3)")
+    parseur.add_argument("--phases", default="1,2,3,4",
+                         help="phases à jouer, séparées par des virgules (défaut : 1,2,3,4). "
+                              "La phase 4 est entièrement automatique.")
     args = parseur.parse_args()
     phases = {p.strip() for p in args.phases.split(",")}
 
@@ -550,6 +667,10 @@ def main() -> int:
                 phase_capture(journal, racine, index, args.secondes)
             if "3" in phases:
                 phase_bascule(journal, racine, index, args.secondes)
+        # Phase 4 indépendante des précédentes : elle crée son propre sink, donc elle
+        # tourne même si aucun moniteur matériel n'est exploitable.
+        if "4" in phases:
+            phase_sink_disparu(journal, args.secondes)
     except KeyboardInterrupt:
         journal.erreur("Interrompu par l'utilisateur (Ctrl+C)")
         code = 130
