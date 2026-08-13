@@ -436,7 +436,16 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
    **écrit et testé** (25 tests, gate LXC 1166 passed). **Reste** : validation d'une
    réunion complète 2 pistes sur machine graphique réelle, et vérifs
    tray/notifications (§5.4) au passage.
-5. **Packaging** : spec + `build_deb.sh` + `build_app_linux_lxc.sh` + fumée SSH.
+5. ✅ **Packaging** (2026-08-13) : `packaging/linux/` (spec PyInstaller, `.desktop`,
+   `build_deb.sh`, `build_app.sh`) + `scripts/build_app_linux_lxc.sh` +
+   `scripts/fumee_deb_lxc.sh` + `TestSpecLinux` (7 tests). **Premier build réussi du
+   premier coup** — PyInstaller 6.22 sur Python 3.14 confirmé en réel (décision L7
+   validée par l'acte) : `debriefmeet_0.3.0+20260813.e5d38bd_amd64.deb`, **120 Mo**,
+   gate pytest bloquante incluse au build. **Fumée verte** : Depends vérifiés
+   (libportaudio2 nommément), install par apt, `--version`, réinstall, purge sans
+   résidu. Le venv de build installe `.[linux,dev]` — l'extra `linux` est réduit à
+   `livekit` (AEC3) : pas de faster-whisper dans le bundle v1 (~100 Mo épargnés,
+   décision L1), paquets moteur en EXCLUDES du spec par ceinture-bretelles.
 6. **Livraison** : notice utilisateur (install `dpkg -i`/`apt install ./…`, où sont
    les données, comment exporter un diagnostic — miroir allégé de docs/35),
    installation chez le collègue, première réunion réelle, lecture des logs.

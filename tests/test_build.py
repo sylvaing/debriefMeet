@@ -676,3 +676,90 @@ class TestBenchmarkBundle:
         res = verifier_wheels("windows", legers)
         manquants = [p for p, ok in res.items() if not ok]
         assert not manquants, f"Sans wheel win_amd64 : {manquants}"
+
+
+class TestSpecLinux:
+    """Hygiène du spec PyInstaller, du .desktop et de la chaîne .deb Linux (docs/49
+    §6.1) — miroir de TestSpecWindows : lecture structurelle, aucun lancement de
+    PyInstaller ni de dpkg-deb, ces vérifications tournent partout en ms."""
+
+    SPEC = ROOT / "packaging" / "linux" / "debriefMeet.spec"
+    DESKTOP = ROOT / "packaging" / "linux" / "debriefmeet.desktop"
+    BUILD_DEB = ROOT / "packaging" / "linux" / "build_deb.sh"
+    BUILD_APP = ROOT / "packaging" / "linux" / "build_app.sh"
+
+    def _liste(self, nom: str) -> list[str]:
+        import ast
+
+        arbre = ast.parse(self.SPEC.read_text(encoding="utf-8"))
+        for noeud in arbre.body:
+            if isinstance(noeud, ast.Assign) and any(
+                    isinstance(c, ast.Name) and c.id == nom for c in noeud.targets):
+                return [e.value for e in noeud.value.elts]
+        raise AssertionError(f"{nom} introuvable au niveau module de {self.SPEC.name}")
+
+    def test_excludes_couvre_les_piles_des_autres_os(self):
+        """v1 Linux = distant seul (docs/49 L1) : ni moteur local, ni piles
+        macOS/Windows. L'exclusion est explicite pour qu'un paquet présent par
+        accident dans le venv de build ne gonfle pas le .deb en silence."""
+        excludes = self._liste("EXCLUDES")
+        for paquet in ("mlx", "pyannote", "torch", "faster_whisper", "ctranslate2",
+                       "soundcard"):
+            assert paquet in excludes, f"{paquet} doit être exclu du bundle Linux v1"
+
+    def test_aucun_ffmpeg_embarque(self):
+        """Décision L3 : `Depends: ffmpeg`, rien d'embarqué. Le mot ne doit apparaître
+        dans le spec qu'en documentation (docstring/commentaires), jamais en code."""
+        import ast
+
+        arbre = ast.parse(self.SPEC.read_text(encoding="utf-8"))
+        # clean=False : la valeur BRUTE, identique à la constante rencontrée par
+        # ast.walk (le nettoyage d'indentation ferait échouer la comparaison).
+        docstring = ast.get_docstring(arbre, clean=False) or ""
+        assert "ffmpeg" in docstring.lower(), "la décision L3 doit rester documentée"
+        for noeud in ast.walk(arbre):
+            if isinstance(noeud, ast.Constant) and isinstance(noeud.value, str):
+                if noeud.value == docstring:
+                    continue
+                assert "ffmpeg" not in noeud.value.lower(), (
+                    f"référence code à ffmpeg dans le spec Linux : {noeud.value!r}")
+
+    def test_livekit_collecte(self):
+        """L'AEC3 nettoie la piste micro retenue même en mode distant (docs/48) —
+        livekit doit être collecté (ses .so natives échappent à l'analyse statique)."""
+        import ast
+
+        arbre = ast.parse(self.SPEC.read_text(encoding="utf-8"))
+        constantes = [n.value for n in ast.walk(arbre)
+                      if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        assert "livekit" in constantes
+
+    def test_desktop_conforme_freedesktop(self):
+        contenu = self.DESKTOP.read_text(encoding="utf-8")
+        assert contenu.startswith("[Desktop Entry]")
+        for ligne in ("Type=Application", "Exec=/opt/debriefmeet/debriefMeet",
+                      "Icon=debriefmeet", "Terminal=false"):
+            assert ligne in contenu, f"{ligne} manquant dans debriefmeet.desktop"
+
+    def test_depends_du_deb(self):
+        """Chaque Depends a une raison mesurée (docs/49 §6.1). `libportaudio2`
+        surtout : la roue pip de sounddevice ne fournit PAS la bibliothèque C sous
+        Linux — crash à l'import vécu chez le premier utilisateur du spike."""
+        contenu = self.BUILD_DEB.read_text(encoding="utf-8")
+        ligne_depends = next(
+            (l for l in contenu.splitlines() if l.startswith("Depends:")), None)
+        assert ligne_depends is not None, "ligne Depends absente de build_deb.sh"
+        for dep in ("ffmpeg", "libportaudio2", "pulseaudio-utils", "libxcb-cursor0"):
+            assert dep in ligne_depends, f"Depends sans {dep}"
+
+    def test_le_build_teste_avant_de_geler(self):
+        """La gate pytest est bloquante AVANT PyInstaller, comme sur la VM Windows
+        (docs/32) : un build ne doit jamais sortir d'un arbre rouge."""
+        contenu = self.BUILD_APP.read_text(encoding="utf-8")
+        # "bin/pyinstaller" = l'invocation réelle — "pyinstaller" seul matcherait le
+        # `pip install … pyinstaller` de l'étape venv, avant la gate.
+        assert contenu.index("pytest") < contenu.index("bin/pyinstaller ")
+
+    def test_icone_source_presente(self):
+        assert (ROOT / "src" / "debrief_meet" / "ui" / "assets" / "icons"
+                / "app-icon-512.png").exists()

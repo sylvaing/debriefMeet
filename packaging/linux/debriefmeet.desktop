@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=debriefMeet
+Comment=Transcription vocale — dictée, réunion, journal
+Exec=/opt/debriefmeet/debriefMeet
+Icon=debriefmeet
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupNotify=false
