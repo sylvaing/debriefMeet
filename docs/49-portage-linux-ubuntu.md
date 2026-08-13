@@ -432,9 +432,10 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
    fabrique (schéma `_windows()` : WARNING + stub). Livrable : app lancée en mode
    distant sur un poste Linux graphique, réunion **micro seul** fonctionnelle de
    bout en bout (enregistrement → Voxtral → CR).
-4. **Capture système `.monitor`** (§5.1, informée par le spike) + validation réunion
-   complète 2 pistes sur machine graphique réelle (UTM arm64 acceptable pour itérer,
-   poste amd64 pour conclure). Vérifs tray/notifications (§5.4) au passage.
+4. 🔄 **Capture système `.monitor`** (§5.1) — `platform/linux/capture_systeme_monitor.py`
+   **écrit et testé** (25 tests, gate LXC 1166 passed). **Reste** : validation d'une
+   réunion complète 2 pistes sur machine graphique réelle, et vérifs
+   tray/notifications (§5.4) au passage.
 5. **Packaging** : spec + `build_deb.sh` + `build_app_linux_lxc.sh` + fumée SSH.
 6. **Livraison** : notice utilisateur (install `dpkg -i`/`apt install ./…`, où sont
    les données, comment exporter un diagnostic — miroir allégé de docs/35),

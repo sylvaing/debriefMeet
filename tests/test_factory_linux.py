@@ -6,7 +6,7 @@ from debrief_meet.platform.commun.micro_sounddevice import CaptureMicroSounddevi
 from debrief_meet.platform.factory import _linux
 from debrief_meet.platform.linux.demarrage_auto import DemarrageAutoLinux
 from debrief_meet.platform.linux.presse_papiers import PressePapiersLinux
-from debrief_meet.platform.stubs import RaccourcisStub, SystemeStub
+from debrief_meet.platform.stubs import RaccourcisStub
 
 
 def test_adaptateurs_ecrits_sont_bien_cables(qapp, mode_distant):
@@ -37,17 +37,12 @@ def test_mode_local_donne_un_stub_et_previent(qapp, mode_local, caplog):
     assert any("aucun moteur local n'existe sur Linux" in r.message for r in caplog.records)
 
 
-def test_capture_systeme_encore_en_stub_est_signalee(qapp, mode_distant, caplog):
-    """Tant que `capture_systeme_monitor.py` n'est pas écrit (docs/49 §5.1, après le
-    spike), le repli doit être un WARNING — jamais un silence : c'est le seul canal
-    de debug une fois livré. Ce test tombera quand l'adaptateur arrivera, et c'est
-    voulu : il faudra alors l'inverser."""
-    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        adaptateurs = _linux()
+def test_capture_systeme_est_l_adaptateur_monitor(qapp, mode_distant):
+    """docs/49 §5.1 : la capture système passe par les sources `.monitor` PipeWire.
+    Ce test remplace celui qui vérifiait le stub d'attente, retiré avec lui."""
+    from debrief_meet.platform.linux.capture_systeme_monitor import CaptureAudioSystemeMonitor
 
-    assert isinstance(adaptateurs.systeme, SystemeStub)
-    assert any("Capture audio système Linux pas encore implémentée" in r.message
-               for r in caplog.records)
+    assert isinstance(_linux().systeme, CaptureAudioSystemeMonitor)
 
 
 def test_raccourcis_globaux_hors_v1(qapp, mode_distant):

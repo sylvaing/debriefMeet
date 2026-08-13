@@ -202,12 +202,12 @@ def _linux() -> Adaptateurs:
         logger.warning("Micro indisponible (%s) — repli stub", exc)
         micro = MicroStub()
 
-    # Capture système : source `.monitor` PipeWire — écrite après le spike
-    # `spike/capture_monitor_linux/` (docs/49 §5.1, étape 4). Stub jusque-là : la
-    # réunion tourne en micro seul, ce qui est déjà un livrable de bout en bout.
-    systeme: CaptureAudioSysteme = SystemeStub()
-    logger.warning("Capture audio système Linux pas encore implémentée "
-                   "(docs/49 §5.1) — repli stub, réunion en micro seul")
+    try:
+        from debrief_meet.platform.linux.capture_systeme_monitor import CaptureAudioSystemeMonitor
+        systeme: CaptureAudioSysteme = CaptureAudioSystemeMonitor()
+    except ImportError as exc:
+        logger.warning("Capture système indisponible (%s) — repli stub", exc)
+        systeme = SystemeStub()
 
     try:
         from debrief_meet.platform.linux.presse_papiers import PressePapiersLinux
