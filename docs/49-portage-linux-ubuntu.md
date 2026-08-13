@@ -107,14 +107,33 @@ expose une source moniteur (`<sink>.monitor`) **visible de PortAudio via la couc
 pulse** → `sounddevice` suffit, pas besoin de la lib `soundcard` ni d'API PipeWire
 native. Stratégie transposée de Windows (docs/34 §2.3) :
 
-1. À `demarrer()` : résoudre le périphérique de sortie par défaut, ouvrir un
-   `InputStream` sur sa source `.monitor` (48 kHz, stéréo downmixée — même contrat
-   que WASAPI).
-2. Surveiller le périphérique de sortie par défaut (changement casque/HDMI/BT) :
-   réouverture à chaud sur le nouveau moniteur, **repli silence** (zéros au bon
-   taux) pendant la coupure — l'horloge de la piste système ne doit jamais
-   s'arrêter (contrat AEC/fusion, docs/48).
-3. Journaliser chaque bascule et chaque repli (L5 : les logs racontent la réunion).
+**Spécification arrêtée après le spike** (les 3 passages ont mesuré chaque point ;
+justifications détaillées dans « Résultats » ci-dessous) :
+
+1. À `demarrer()` : résoudre la sortie par défaut avec **`pactl get-default-sink`**,
+   en déduire le moniteur `<sink>.monitor`, et l'ouvrir parmi les périphériques
+   d'entrée du **hostapi PulseAudio** (48 kHz, stéréo → downmix mono, même contrat
+   que WASAPI). Si la résolution échoue, **journaliser en WARNING** — ne jamais
+   retomber silencieusement sur « le premier moniteur venu » : sur le poste testé,
+   ce repli aurait capturé une sortie HDMI inactive.
+2. **Rafraîchir la table PortAudio** (`sd._terminate()` / `sd._initialize()`) avant
+   toute (ré)ouverture : elle est figée à l'initialisation, donc le moniteur d'une
+   sortie apparue en cours de réunion est sinon invisible (même piège que docs/25,
+   déjà traité dans `micro_sounddevice.py`).
+3. **Surveiller la sortie par défaut** en cours d'enregistrement (sondage `pactl` ou
+   abonnement `pactl subscribe`) : à tout changement, rouvrir sur le nouveau
+   moniteur. Indispensable — quand le son part ailleurs, le flux continue de livrer
+   des **zéros parfaits**, indiscernables d'une réunion calme.
+4. **Chien de garde sur l'arrivée des trames** : plus aucune trame pendant N ms ⇒
+   flux mort (sink détruit), rouvrir. **Ne jamais se fier à `stream.active`**, qui
+   reste `True` sur un flux gelé, ni attendre une exception ou un statut PortAudio :
+   il n'en vient aucun.
+5. **Repli silence** pendant toute coupure ou réouverture, à hauteur du temps
+   réellement écoulé : l'horloge de la piste système ne doit jamais s'arrêter, sans
+   quoi les deux pistes se décalent exactement de la durée de la panne (contrat
+   AEC/fusion, docs/48).
+6. Journaliser chaque bascule, chaque réouverture et chaque repli (L5 : les logs
+   racontent la réunion).
 
 Résolution du nom du moniteur : par défaut PortAudio/pulse expose une entrée
 « Monitor of <sink> » ; sinon interroger `pactl get-default-sink` (paquet
@@ -183,11 +202,51 @@ Trois conclusions, toutes actionnables :
    parfaits : indiscernable d'une réunion réellement silencieuse. L'adaptateur **ne
    peut pas** détecter le problème depuis l'audio.
 
+Confirmé une seconde fois au troisième passage (2026-08-13, trace continue cette
+fois) : 15 s audible → **260 s de silence** → 15 s audible, sur un flux jamais
+rouvert.
+
 ⇒ **Surveiller activement la sortie par défaut** (`pactl get-default-sink`, ou
-l'abonnement `pactl subscribe`) et rouvrir sur le nouveau moniteur. En revanche, ni
-détection de silence, ni chien de garde sur la santé du flux, ni réouverture
-périodique « au cas où » : le flux est stable, c'est le *choix* du moniteur qui
-devient obsolète.
+l'abonnement `pactl subscribe`) et rouvrir sur le nouveau moniteur. Tant que le sink
+existe, aucune réouverture n'est nécessaire pour la *santé* du flux — c'est le
+*choix* du moniteur qui devient obsolète, pas le flux. **Mais ce raisonnement ne vaut
+que si le sink existe encore : voir Q6, qui impose un chien de garde.**
+
+#### Q6 — le sink surveillé DISPARAÎT (phase 4, automatique, 2026-08-13)
+
+Sink virtuel créé, moniteur ouvert, sink **détruit** sous le flux, puis 10 s
+d'observation :
+
+```
+Avant destruction : 4440 rappels, 142080 trames, actif=True
++1s … +10s        : 4440 rappels,  142080 trames, actif=True, incidents=0
+```
+
+**Le flux gèle en silence.** Plus une seule trame en 10 secondes, **`stream.active`
+reste `True`**, aucun statut PortAudio, aucune exception — et la fermeture se passe
+sans erreur. C'est un comportement **radicalement différent** de Q4 :
+
+| Cas | Le sink | Ce que fait le flux | Comment le détecter |
+|-----|---------|---------------------|---------------------|
+| Le son part ailleurs (Q4) | reste présent, passe `IDLE` | continue de livrer des **zéros** | `pactl` — le silence est indiscernable d'une réunion calme |
+| **Le sink disparaît (Q6)** | **détruit** | **plus aucune trame**, gel total | **chien de garde sur l'arrivée des trames** |
+
+Trois exigences pour l'adaptateur, dont deux que Q4 seule aurait fait manquer :
+
+1. **`stream.active` n'est pas un indicateur de santé** — il valait `True` sur un flux
+   mort. Ne jamais s'en servir.
+2. **Chien de garde sur l'arrivée des trames** : aucune trame pendant N ms en cours
+   d'enregistrement ⇒ le flux est mort, rouvrir sur le moniteur de la sortie par
+   défaut courante. C'est le seul signal disponible : ni exception, ni statut.
+3. **Combler le trou par du silence.** Pendant le gel, la piste système cesse
+   d'avancer alors que la piste micro continue : sans rembourrage à hauteur du temps
+   réellement écoulé, les deux pistes se décalent **exactement de la durée de la
+   panne**. C'est précisément l'alignement inter-pistes que docs/48 s'emploie à
+   maîtriser — le repli silence de docs/34 §2.3 (Windows) s'applique donc tel quel.
+
+Le scénario est loin d'être théorique : c'est celui du casque Bluetooth qui se
+déconnecte en pleine réunion, batterie vide ou sortie de portée — la piste système
+gèlerait sans un mot dans les logs.
 
 **Piège supplémentaire, trouvé au passage : PortAudio fige sa table de périphériques
 à l'initialisation.** Le moniteur d'une sortie apparue *après* le démarrage (casque
@@ -196,20 +255,8 @@ fait un cycle `sd._terminate()` / `sd._initialize()`. C'est exactement le piège
 rencontré côté micro sur macOS (docs/25) — et `micro_sounddevice.py` fait déjà ce
 cycle ; la capture système devra faire de même.
 
-**Ce qui reste à mesurer — Q6 : le sink surveillé qui DISPARAÎT.** Tout ce qui
-précède porte sur un sink qui reste présent et passe `IDLE`. Le cas où le nœud
-PipeWire est **détruit** sous un flux ouvert n'a jamais été observé — et c'est le
-plus probable en réunion réelle : l'utilisateur porte un casque Bluetooth (on capture
-donc le moniteur de `bluez_output.*`) et le casque se déconnecte, batterie vide ou
-sortie de portée.
-
-Une **phase 4** l'instrumente, et elle est **entièrement automatique** : elle crée un
-sink virtuel (`module-null-sink`), ouvre son moniteur, détruit le sink sous le flux,
-puis compte les trames reçues et guette exception, statut PortAudio et échec à la
-fermeture. Aucune chorégraphie humaine — c'est précisément ce qui a fait échouer les
-deux premiers passages — aucun matériel, et le sink virtuel n'est **jamais** défini
-comme sortie par défaut (la configuration audio de la machine n'est pas touchée ; le
-module est déchargé même en cas d'erreur).
+**Le spike est terminé** (3 passages, 2026-08-12 et 13) : les 6 questions sont
+tranchées, `capture_systeme_monitor.py` peut être écrit sans zone d'ombre.
 
 > Historique des deux premiers passages, pour mémoire : le premier a été invalidé par
 > un malentendu de protocole (« il te faut un casque » compris comme « connecte-le »)
@@ -377,10 +424,9 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 1. ✅ **Provisionner le LXC** (§6.2) + **gate pytest verte** en offscreen — c'est le
    smoke test de l'archi en couches. Fait le 2026-08-10 : **1141 passed, 21 skipped,
    0 échec** ; les 4 catégories de correctifs sont détaillées en §6.3.
-2. **Spike `spike/capture_monitor_linux/`** (§5.1) sur une Ubuntu 26.04 graphique
-   (UTM arm64 suffit) — parallélisable avec l'étape 1 (le LXC est headless, le
-   spike a besoin d'une session audio). Sortie : réponses aux 5 questions du §5.1,
-   consignées dans ce doc avant d'attaquer l'adaptateur.
+2. ✅ **Spike `spike/capture_monitor_linux/`** (§5.1) — joué en 3 passages sur le poste
+   du collègue (2026-08-12 et 13). **Les 6 questions sont tranchées** ; la
+   spécification de l'adaptateur au §5.1 est arrêtée sur la base de ces mesures.
 3. **Adaptateurs triviaux + retouches §5.5** : `presse_papiers`, `demarrage_auto`,
    `chemin_ffmpeg`, logs DEBUG, `infos_systeme` — et remplir `_linux()` dans la
    fabrique (schéma `_windows()` : WARNING + stub). Livrable : app lancée en mode
@@ -412,7 +458,7 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 |--------|--------|
 | ~~Nom/visibilité de la source `.monitor` via PortAudio~~ | **Levé** par le spike du 2026-08-12 (§5.1) : visibles sous le hostapi PulseAudio, nom = `<sink>.monitor`, résolus via `pactl` |
 | **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence |
-| Un sink qui **disparaît** (BT déconnecté en réunion) pourrait tuer le flux, contrairement à un sink resté présent | Phase 4 du spike, automatique et sans matériel (`module-null-sink`) — `sh lancer.sh --phases 4`, 20 s (§5.1 Q6) |
+| ~~Un sink qui **disparaît** pourrait tuer le flux~~ | **Mesuré** (Q6) : le flux **gèle en silence**, `active` reste `True`, aucune exception → chien de garde sur les trames + repli silence (§5.1) |
 | Tray absent si l'extension AppIndicator est désactivée sur le poste cible | Vérifier au déploiement ; documenter dans la notice (`gnome-extensions enable ubuntu-appindicators…`) |
 | Casque Bluetooth : bascule de profil A2DP↔HFP quand le micro BT est utilisé (le monitor change de format) | Même famille que les cas BT Windows (docs/34 §2.3) : réouverture à chaud + logs ; recommander micro filaire/intégré en premier déploiement |
 | Python 3.13 non packagé dans l'archive 26.04 | PPA deadsnakes (constat au provisionnement) |
