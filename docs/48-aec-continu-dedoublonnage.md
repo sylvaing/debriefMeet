@@ -3,8 +3,13 @@
 > **Statut : 🔄 étapes A, B et C-mesure implémentées** (2026-08-06, 1323 passed) —
 > dédoublonnage à la fusion (`_sans_doublons_inter_pistes`), AEC à ré-estimation
 > périodique + WARNING d'écho résiduel, mesure de l'offset d'ingestion à la 1ʳᵉ
-> tranche. Reste : validation terrain (§5, rejouer les paires opus du 2026-08-06 +
-> une vraie visio sans casque) et C-compensation si le modèle d'offset est confirmé.
+> tranche. **Validées en réunion réelle le 2026-08-10** (att médiane −6,5 dB, 0 doublon),
+> après 2 correctifs sur retours terrain (`0eb4f19` concordance de dérive, `4840c81`
+> faux positif du WARNING). **Rechute le 2026-08-18 → §8** : le délai calé se périme en
+> cours de réunion et le suivi incrémental met 20 min à rattraper — désormais
+> l'inefficacité constatée déclenche un **recalage complet**, et le dédoublonnage gagne un
+> critère d'**inclusion directionnelle** (1423 passed). Reste : rejouer une réunion réelle
+> avec ces correctifs, et C-compensation si le modèle d'offset est confirmé.
 > Spec rédigée le 2026-08-06 après diagnostic terrain le jour même (3 réunions
 > réelles sur le Mac de Sylvain + logs de Alix).
 > **Besoin :** en réunion sans casque, la voix des correspondants sort des
@@ -146,6 +151,13 @@ Dans `core/reunion.py`, horodater le **premier échantillon reçu** de chaque pi
   2026-08-06 (conservées sur le poste de Sylvain) dans un harnais hors-app
   (`spike/aec_terrain/`, à créer sur le modèle des spikes existants) : atténuation
   mesurée avant/après, et zéro doublon sur la fusion de la réunion de 11h01.
+- **Méthode de diagnostic post-mortem** (éprouvée le 2026-08-18, §8.1, sans rien ajouter
+  au dépôt) : `moi.opus` étant le micro **après AEC**, sa corrélation croisée avec
+  `systeme.opus` par fenêtres de 60 s mesure directement l'échec (0,01 quand l'AEC marche,
+  0,10-0,46 quand elle ne marche plus, et le lag réel en prime). Un FIR aux moindres carrés
+  sur ce même micro nettoyé dit ensuite si l'écho restant était **linéairement** annulable
+  — donc s'il s'agit d'un défaut d'alignement ou d'une non-linéarité — avec, comme contrôle
+  négatif gratuit, une fenêtre où l'AEC fonctionnait (0,0 dB retirable).
 
 ## 6. Ordre d'exécution & risques
 
@@ -171,6 +183,99 @@ Risques et garde-fous :
    audio) pour accélérer la convergence des réunions suivantes ? À trancher après
    les mesures C (si l'offset est bien dominé par la course au démarrage, un délai
    persistant n'a pas de sens).
-3. Le seuil de similarité 0,8 est-il robuste aux transcriptions très divergentes
-   des deux captations (micro réverbérant) ? À ajuster sur les logs DEBUG de
-   l'étape A avant de resserrer/relâcher.
+3. ~~Le seuil de similarité 0,8 est-il robuste aux transcriptions très divergentes
+   des deux captations (micro réverbérant) ?~~ **Répondu le 2026-08-18 (§8.3) : non.**
+   Le problème n'est pas la divergence des mots mais celle du **découpage** — un segment
+   est un fragment de l'autre et le ratio global s'écroule (0,74 et 0,38 mesurés sur des
+   doublons manifestes). Le seuil de 0,8 est conservé tel quel et **complété** par un
+   critère d'inclusion directionnel en mots. Nouvelle limite connue, elle aussi mesurée :
+   un doublon à 0,70 d'inclusion et un tour légitime à 0,71 sont indiscernables — aucun
+   critère lexical ne les séparera, seul le fait de ne pas avoir d'écho le fera.
+
+## 8. Rechute du 2026-08-18 — le délai calé se périme en cours de réunion
+
+Réunion « réunion de chantier » (53 min, micro interne du MacBook Air, sortie sur
+haut-parleurs). À partir de la ligne 260 de la transcription, la voix du
+correspondant apparaît **sur les deux pistes** : le contenu reste complet mais
+l'attribution ne vaut plus rien. Pas de rapport avec la diarisation — aucune n'a
+tourné (mode distant, 2 pistes Voxtral).
+
+### 8.1 Mesures
+
+| créneau | 14:35 | 14:40 | **14:45** | 14:50 | 14:55 | **15:00** | **15:05** | **15:10** | **15:15** | 15:20 | 15:25 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| atténuation moyenne (dB) | 16,2 | 31,3 | 3,5 | 5,1 | 9,0 | **0,6** | **0,9** | **1,4** | **0,7** | 5,2 | 4,2 |
+
+- Médiane sur la réunion : **1,7 dB** (contre −6,5 dB validés le 2026-08-10) ;
+  46 tranches sur 107 sous 1 dB.
+- Corrélation croisée micro **nettoyé** ↔ référence : 0,01 avant la minute 25, puis
+  **0,10 à 0,46 à un décalage stable de ~25 ms** jusqu'à la minute 45, puis 0,01 —
+  l'écho traverse l'AEC intact.
+- Un FIR 256 taps aux moindres carrés retire encore **4 à 5,6 dB** du micro nettoyé
+  dans cette fenêtre, contre **0,0 dB** à la minute 5 (contrôle négatif sur données
+  réelles) : le résidu est **linéairement prédictible** depuis la référence, donc ce
+  n'est ni une saturation ni une non-linéarité — c'est un défaut d'alignement.
+- Confirmation indépendante : la détection de silences voit un bloc d'activité micro
+  **continu de t=1557 s à t=2901 s** — le micro « parle » 22 minutes d'affilée.
+- Densité de duplication : 0 % avant la ligne 250, puis 33 → 41 → **68 → 71 %**
+  (lignes 350-450), retour à 0 % après la ligne 500.
+
+### 8.2 Cause
+
+Le délai est calé une fois, à la 1ʳᵉ tranche : **6135 éch (383 ms)**, qui est
+l'offset d'ingestion mesuré au même instant (+373 ms) — correct alors, mais mesuré
+alors qu'il n'y avait **pas encore d'écho** à annuler. Vers la minute 26 le trajet
+d'écho réel s'installe à ~25 ms : l'AEC soustrait dès lors une référence décalée de
+~400 ms, c'est-à-dire rien. Le suivi de dérive (§4.2) ne rattrape pas — sa garde de
+concordance, indispensable contre la fuite du 2026-08-07, exige deux mesures
+consécutives concordantes à la cadence d'une tranche : **deux ré-alignements
+seulement**, à 15:19 et 15:23 (6135 → 4462 → 1376 éch). Juste après, l'atténuation
+remonte à 5,2 puis 4,2 dB de moyenne : le bon geste est arrivé 20 minutes trop tard.
+
+Le WARNING « AEC inefficace » a bien été émis (15:03, −0,5 dB) — l'instrumentation de
+§4.2 a fait son travail — mais **rien ne l'écoutait** : `recalibrer()` n'était appelé
+que sur une reconnexion micro.
+
+### 8.3 Correctifs
+
+1. **`core/aec.py` — l'inefficacité déclenche un recalage complet.** Au bout de
+   `ECHO_RESIDUEL_TRANCHES`, on ne se contente plus de journaliser : le délai est
+   remesuré **sans partir du délai courant** (le suivi incrémental, lui, reste borné
+   par sa garde de concordance). Coût : le rebut du reliquat des buffers (< 1 s de
+   micro), payé au moment où l'AEC ne sert déjà plus à rien. Borné à
+   `RECALIBRAGES_AUTO_MAX = 3`, après quoi un WARNING terminal constate que l'écho
+   n'est pas un problème d'alignement. Le budget est neuf à chaque `demarrer()` et à
+   chaque `recalibrer()` manuel (chemin d'écho réellement différent).
+2. **`core/fichiers.py` — dédoublonnage par inclusion.** Le ratio global de §4.1 a
+   écarté 42 doublons sur cette réunion et laissé passer les autres : Voxtral ne
+   découpe pas l'écho aux mêmes frontières, donc un segment est souvent un **fragment**
+   de l'autre (ratios mesurés 0,74 et 0,38 sur des doublons manifestes ; l'heuristique
+   « junk » de difflib, active au-delà de 200 caractères, y contribue). S'ajoute donc
+   un critère d'inclusion **en mots**, `autojunk=False`, **dans un seul sens** : la
+   couverture du segment MICRO par le segment système. Mesurer celle du plus court des
+   deux ferait jeter 34 mots de l'utilisateur parce que 7 sont revenus en écho depuis
+   le poste d'en face (cas réel, réunions de juillet).
+   Seuil **0,75**, calibré sur les 73 réunions du poste : 14 des 16 doublons de la
+   fenêtre d'écho, **aucun tour légitime touché**. Ne pas descendre : un doublon manqué
+   plafonne à 0,70 et un tour parfaitement légitime de la même réunion en fait 0,71 —
+   indiscernables, et seul le second est irremplaçable.
+3. **`packaging/build_ffmpeg.sh` — filtres `aselect`/`asetpts`.** Découvert en
+   analysant ce diagnostic : la compaction des silences avant envoi à Voxtral
+   **échouait systématiquement dans l'app livrée** (exit 234, « envoi intégral » dans le
+   log), parce que le ffmpeg embarqué était compilé
+   `--enable-filter=aresample,aformat,anull`. Invisible en dev, où c'est le ffmpeg
+   Homebrew complet qui répond. Les deux filtres sont ajoutés, la validation du binaire
+   les **exige** (un binaire qui en manque est reconstruit, pas réutilisé) et le build
+   rejoue désormais les deux passes de `compacter_piste` avec la syntaxe exacte de
+   l'app. Vérifié en réel : la commande qui échouait à 15:30 produit 26 min 14 s
+   d'audio utile sur 53 min. Windows (build BtbN complet) et Linux (ffmpeg système) ne
+   sont pas concernés.
+
+### 8.4 Reste à faire
+
+- Rebuild `.app` + `.dmg` pour que le ffmpeg corrigé arrive sur le poste (le binaire
+  installé n'a pas les filtres).
+- Valider en réunion réelle que le recalage automatique se déclenche et rétablit
+  l'atténuation (chercher « recalage complet de l'alignement » dans le log).
+- Rappel terrain indépendant du code : micro interne + haut-parleurs = écho garanti,
+  un casque supprime le problème à la racine.

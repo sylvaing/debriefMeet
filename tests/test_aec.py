@@ -11,6 +11,7 @@ import pytest
 
 from debrief_meet.core.aec import (
     RECAL_SEUIL_ECH,
+    RECALIBRAGES_AUTO_MAX,
     MoteurAEC,
     ProcesseurAEC,
     SEUIL_RMS,
@@ -25,6 +26,13 @@ class _Identite(MoteurAEC):
 
     def traiter_trame(self, near: np.ndarray, far: np.ndarray) -> np.ndarray:
         return near.copy()
+
+
+class _Attenue(MoteurAEC):
+    """Atténue tout de ~26 dB — figure une AEC qui fait son travail."""
+
+    def traiter_trame(self, near: np.ndarray, far: np.ndarray) -> np.ndarray:
+        return (near.astype(np.float32) * 0.05).astype(np.int16)
 
 
 def _rms(x: np.ndarray) -> float:
@@ -256,9 +264,10 @@ def test_derive_declenche_un_realignement_confirme():
     assert abs(proc.delai_estime - d2) <= RECAL_SEUIL_ECH
 
 
-def test_echo_residuel_persistant_emet_un_warning_unique(caplog):
+def test_echo_residuel_persistant_alerte_et_recale(caplog):
     # Moteur identité = l'écho survit au nettoyage → au bout de 5 tranches où la
-    # sortie reste corrélée à la référence, un WARNING (unique) est émis.
+    # sortie reste corrélée à la référence, un WARNING est émis (une seule fois par
+    # cycle, pas à chaque tranche) et il annonce le recalage complet de l'alignement.
     import logging as _logging
     rng = np.random.default_rng(13)
     ref = rng.normal(0, 0.3, SR_AEC * 12 * 8).astype(np.float32)
@@ -270,6 +279,8 @@ def test_echo_residuel_persistant_emet_un_warning_unique(caplog):
             proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
     alertes = [r for r in caplog.records if "AEC inefficace" in r.getMessage()]
     assert len(alertes) == 1
+    assert "recalage complet" in alertes[0].getMessage()
+    assert proc._recalibrages_auto == 1
 
 
 def test_derive_residus_discordants_jamais_appliques(monkeypatch):
@@ -280,7 +291,11 @@ def test_derive_residus_discordants_jamais_appliques(monkeypatch):
     rng = np.random.default_rng(17)
     ref = rng.normal(0, 0.3, SR_AEC * 12 * 6).astype(np.float32)
     mic = _echo_decale(ref, 320)
-    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    # Moteur qui ATTÉNUE : sur le terrain l'AEC de Alix marchait (−14 dB), c'est le seul
+    # suivi de dérive qui partait en fuite. Avec un moteur identité, l'inefficacité
+    # constatée déclencherait — à raison — un recalage complet (cf. test dédié), et ce
+    # test-ci ne parlerait plus de ce qu'il documente.
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Attenue())
     proc.demarrer()
     proc.pousser(mic[:SR_AEC * 12], ref[:SR_AEC * 12])        # calibration réelle
     delai_initial = proc.delai_estime
@@ -321,10 +336,6 @@ def test_attenuation_forte_n_emet_pas_d_alerte(caplog):
     # annulé laisse un résidu corrélé détectable, la corrélation seule ne suffit pas.
     import logging as _logging
 
-    class _Attenue(MoteurAEC):
-        def traiter_trame(self, near, far):
-            return (near.astype(np.float32) * 0.05).astype(np.int16)   # ≈ −26 dB
-
     rng = np.random.default_rng(23)
     ref = rng.normal(0, 0.3, SR_AEC * 12 * 8).astype(np.float32)
     mic = _echo_decale(ref, 320)
@@ -334,3 +345,89 @@ def test_attenuation_forte_n_emet_pas_d_alerte(caplog):
         for debut in range(0, len(ref), SR_AEC * 12):
             proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
     assert not [r for r in caplog.records if "AEC inefficace" in r.getMessage()]
+
+
+class _SoustractionAlignee(MoteurAEC):
+    """Annule l'écho par simple soustraction de la référence — donc SEULEMENT si
+    l'appelant a correctement aligné les deux flux. Un délai calé qui se périme laisse
+    l'écho passer intact, exactement comme AEC3 sur le terrain du 2026-08-18."""
+
+    def traiter_trame(self, near: np.ndarray, far: np.ndarray) -> np.ndarray:
+        return (near.astype(np.int32) - (far.astype(np.int32) // 2)).astype(np.int16)
+
+
+def test_inefficacite_declenche_un_recalage_qui_retrouve_le_nouveau_delai(caplog, monkeypatch):
+    """Terrain 2026-08-18 : délai calé à 383 ms (= l'offset d'ingestion du moment), trajet
+    d'écho réel passé à ~30 ms → l'AEC ne soustrayait plus rien (−0,2 dB) pendant 22 min.
+    Le recalage déclenché par l'inefficacité doit retrouver le nouveau délai d'un coup et
+    l'annulation doit repartir.
+
+    Le suivi de dérive est neutralisé ici : c'est justement le cas où il n'a pas convergé
+    (2 ré-alignements en 20 min sur ~400 ms d'écart, log du 2026-08-18). Sur du bruit
+    blanc synthétique il rattraperait en 2 tranches et masquerait ce qu'on teste."""
+    import logging as _logging
+    monkeypatch.setattr(ProcesseurAEC, "_suivre_alignement", lambda self: None)
+    rng = np.random.default_rng(29)
+    ref = rng.normal(0, 0.3, SR_AEC * 12 * 12).astype(np.float32)
+    d1, d2 = 6135, 480                      # 383 ms → 30 ms : les valeurs mesurées
+    bascule = SR_AEC * 12 * 3
+    mic = np.concatenate([_echo_decale(ref, d1)[:bascule], _echo_decale(ref, d2)[bascule:]])
+    mic += rng.normal(0, 0.001, len(mic)).astype(np.float32)   # plancher de bruit réaliste
+
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         moteur=_SoustractionAlignee())
+    proc.demarrer()
+    proc.pousser(mic[:bascule], ref[:bascule])                # calibration sur l'écho à d1
+    assert abs(proc.delai_estime - d1) <= 2
+    assert proc.derniere_attenuation_db < -20                 # annulation effective
+
+    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
+        for debut in range(bascule, len(ref), SR_AEC * 12):
+            proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
+
+    recalages = [r for r in caplog.records if "recalage complet" in r.getMessage()]
+    assert len(recalages) == 1                                # une réaction, pas une rafale
+    assert abs(proc.delai_estime - d2) <= 2                   # nouveau délai retrouvé d'un coup
+    assert proc.derniere_attenuation_db < -20                 # l'annulation est repartie
+
+
+def test_recalages_automatiques_bornes(caplog):
+    """Un écho que l'alignement ne peut pas régler (ici : moteur identité) ne doit pas
+    faire recaler en boucle — chaque recalage jette du micro. Au-delà du budget, un
+    WARNING terminal et plus rien."""
+    import logging as _logging
+    rng = np.random.default_rng(31)
+    tranches = 6 * (RECALIBRAGES_AUTO_MAX + 2)       # de quoi épuiser le budget et au-delà
+    ref = rng.normal(0, 0.3, SR_AEC * 12 * tranches).astype(np.float32)
+    mic = _echo_decale(ref, 320)
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
+        for debut in range(0, len(ref), SR_AEC * 12):
+            proc.pousser(mic[debut:debut + SR_AEC * 12], ref[debut:debut + SR_AEC * 12])
+
+    messages = [r.getMessage() for r in caplog.records if "AEC inefficace" in r.getMessage()]
+    assert sum("recalage complet" in m for m in messages) == RECALIBRAGES_AUTO_MAX
+    assert sum("recalage automatique abandonné" in m for m in messages) == 1
+    assert messages[-1] == [m for m in messages if "abandonné" in m][0]   # terminal = dernier
+    assert proc._recalibrages_auto == RECALIBRAGES_AUTO_MAX
+
+
+def test_recalibrer_manuel_reouvre_le_budget_de_recalages():
+    """Un switch de micro à chaud = chemin d'écho réellement neuf : le budget consommé
+    par la session précédente ne doit pas condamner le nouveau."""
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         delai_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc._recalibrages_auto = RECALIBRAGES_AUTO_MAX
+    proc.recalibrer()
+    assert proc._recalibrages_auto == 0
+
+
+def test_demarrer_reouvre_le_budget_de_recalages():
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         delai_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc._recalibrages_auto = RECALIBRAGES_AUTO_MAX
+    proc.demarrer()
+    assert proc._recalibrages_auto == 0

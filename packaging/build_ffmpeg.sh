@@ -47,6 +47,20 @@ valider_binaire() {
     fi
     "$bin" -hide_banner -encoders 2>/dev/null | grep -q "libopus" \
         || err "encodeur libopus absent du binaire compilé."
+    # `aselect`/`asetpts` : compaction des silences avant envoi à Voxtral
+    # (core/mistral/silences.py). Absents du build d'origine → la compaction échouait
+    # DANS L'APP LIVRÉE et jamais en dev (ffmpeg Homebrew complet) : chaque transcription
+    # envoyait l'audio intégral, silences compris (constaté le 2026-08-18).
+    # `return 1` et non `err` : sur le chemin idempotent, un binaire dépourvu de ces
+    # filtres doit être RECONSTRUIT, pas faire échouer le script.
+    local dispo
+    dispo="$("$bin" -hide_banner -filters 2>/dev/null | awk '{print $2}')"
+    for filtre in aselect asetpts; do
+        if ! grep -qx "$filtre" <<< "$dispo"; then
+            echo "✗ filtre $filtre absent du binaire (compaction des silences cassée)" >&2
+            return 1
+        fi
+    done
     "$bin" -version 2>/dev/null | grep -q -- "--enable-gpl" \
         && err "le binaire est compilé --enable-gpl (inattendu, licence non conforme)."
     return 0
@@ -130,7 +144,7 @@ info "compilation de ffmpeg ${FFMPEG_VERSION} (LGPL minimal, libopus statique)�
         --enable-muxer=opus,ogg,wav,pcm_s16le \
         --enable-decoder=pcm_f32le,pcm_s16le,opus,libopus \
         --enable-encoder=pcm_s16le,libopus \
-        --enable-filter=aresample,aformat,anull \
+        --enable-filter=aresample,aformat,anull,aselect,asetpts \
         --enable-libopus \
         --pkg-config-flags="--static" \
         --extra-cflags="-I$OPUS_PREFIX/include" \
@@ -144,7 +158,7 @@ cp "$FFMPEG_SRC/ffmpeg" "$OUT"
 chmod +x "$OUT"
 
 info "validation du binaire produit…"
-valider_binaire "$OUT"
+valider_binaire "$OUT" || err "validation du binaire produit en échec (voir ci-dessus)."
 
 # ── 4. Test bout-en-bout : encode (commande core/fichiers.py) → décode (core/audio.py) ─
 # `lavfi` (génération de signal) appartient à avdevice, désactivé ici — on génère le
@@ -165,6 +179,18 @@ with open("'"$TMPT"'/in.f32", "wb") as f:
 "$OUT" -y -loglevel error -i "$TMPT/test.opus" -ac 1 -ar 16000 -f wav "$TMPT/decode.wav"
 [[ -s "$TMPT/test.opus" && -s "$TMPT/decode.wav" ]] || err "cycle encode/décode Opus en échec."
 info "cycle encode → décode Opus OK."
+
+# Compaction des silences (core/mistral/silences.py::compacter_piste) — les DEUX passes,
+# avec la syntaxe exacte de l'app. Ce que la vérification des filtres seule ne dit pas :
+# que la chaîne complète (aselect + asetpts + muxer wav + réencodage Opus) fonctionne.
+info "test réel compaction des silences (2 passes, commandes exactes de l'app)…"
+"$OUT" -y -loglevel error -i "$TMPT/test.opus" \
+    -af "aselect='between(t,0.000,0.400)+between(t,0.600,0.900)',asetpts=N/SR" \
+    -ac 1 -ar 16000 "$TMPT/compacte.wav"
+"$OUT" -y -loglevel error -i "$TMPT/compacte.wav" -c:a libopus -b:a 24k "$TMPT/compacte.opus"
+[[ -s "$TMPT/compacte.wav" && -s "$TMPT/compacte.opus" ]] \
+    || err "compaction des silences en échec (aselect/asetpts)."
+info "compaction des silences OK."
 
 # ── 5. Licence (LGPL 2.1 + mention libopus BSD) ─────────────────────────────────
 cat > "$LICENSE_OUT" <<EOF

@@ -56,8 +56,16 @@ QUALITE_CORR_MIN = 10.0               # pic/médiane mini pour un délai FIABLE 
 # deux fois (hystérésis) — la dérive fine reste absorbée par l'estimateur interne AEC3.
 RECAL_FENETRE_S = 12.0                # queue glissante near/far/nettoyé
 RECAL_SEUIL_ECH = int(0.080 * SR_AEC) # résidu toléré avant ré-alignement (80 ms)
-ECHO_RESIDUEL_TRANCHES = 5            # tranches consécutives d'écho résiduel avant WARNING
+ECHO_RESIDUEL_TRANCHES = 5            # tranches consécutives d'écho résiduel avant réaction
 ECHO_RESIDUEL_ATT_DB = 3.0            # atténuation (en valeur absolue) qui disculpe l'AEC
+# Terrain 2026-08-18 : le délai calé à la 1ʳᵉ tranche (383 ms, = l'offset d'ingestion du
+# moment) s'est périmé en cours de réunion — le vrai trajet d'écho est passé à ~25-30 ms.
+# Le suivi de dérive, borné par sa garde de concordance, a mis 20 minutes à rattraper les
+# ~400 ms d'écart : 22 minutes de réunion avec la voix distante dans la piste micro.
+# L'inefficacité constatée déclenche donc un RECALAGE COMPLET (délai remesuré sans
+# référence au délai courant), pas seulement un WARNING. Borné : au-delà, l'écho ne vient
+# pas d'un désalignement et recaler en boucle n'y changerait rien.
+RECALIBRAGES_AUTO_MAX = 3
 
 
 # ── Estimation du délai (cross-corrélation bornée) ───────────────────────────
@@ -175,6 +183,9 @@ class ProcesseurAEC:
         self._delai_force = None if delai_ms is None else int(round(delai_ms / 1000 * SR_AEC))
         self._moteur = moteur
         self._moteur_injecte = moteur is not None
+        # Hors `_reset_etat` : le budget de recalages doit SURVIVRE au recalage qu'il
+        # autorise, sinon il se réarme lui-même et la boucle est infinie.
+        self._recalibrages_auto = 0
         self._reset_etat()
 
     def _reset_etat(self) -> None:
@@ -202,6 +213,7 @@ class ProcesseurAEC:
         ne pollue la suivante (chemin d'écho différent)."""
         moteur = self._moteur if self._moteur_injecte else _MoteurAECLiveKit(ns=self._ns)
         self._reset_etat()
+        self._recalibrages_auto = 0
         self._moteur = moteur
         self._demarre = True
 
@@ -212,6 +224,13 @@ class ProcesseurAEC:
         cours est conservé : seul le calage (délai, buffers) est remis à zéro."""
         if not self._demarre:
             return
+        # Chemin d'écho réellement nouveau (autre micro) : budget de recalages neuf.
+        self._recalibrages_auto = 0
+        self._recaler_alignement()
+
+    def _recaler_alignement(self) -> None:
+        """Remet l'alignement à zéro (délai, buffers, queues, compteurs de surveillance)
+        en gardant l'APM et le budget de recalages automatiques."""
         self._reset_etat()
         self._demarre = True  # `_reset_etat` le remet à False — session déjà en cours ici
 
@@ -365,10 +384,19 @@ class ProcesseurAEC:
                f"(délai suivi {self._delai_estime} éch)")
 
     def _surveiller_efficacite(self) -> None:
-        """WARNING unique si l'écho SURVIT au nettoyage (docs/48 §4.2) : la sortie
-        nettoyée reste corrélée à la référence avec un pic franc sur plusieurs
-        tranches consécutives. L'échec de terrain d'août 2026 (−0,2 à −1 dB pendant
-        des réunions entières) n'était visible qu'en DEBUG — plus jamais ça."""
+        """Réagit quand l'écho SURVIT au nettoyage (docs/48 §4.2) : la sortie nettoyée
+        reste corrélée à la référence avec un pic franc sur plusieurs tranches
+        consécutives. L'échec de terrain d'août 2026 (−0,2 à −1 dB pendant des réunions
+        entières) n'était visible qu'en DEBUG — plus jamais ça.
+
+        La réaction est un RECALAGE COMPLET, pas seulement un WARNING : la cause mesurée
+        (terrain 2026-08-18) est un délai calé qui s'est périmé, et le suivi de dérive
+        incrémental met des dizaines de minutes à couvrir un écart de ~400 ms. Le recalage
+        remesure le délai sans partir du délai courant. Il coûte le rebut du reliquat des
+        buffers (< 1 s de micro, comme `recalibrer()` sur switch de micro) — payé au
+        moment où l'AEC ne sert déjà plus à rien. Borné à `RECALIBRAGES_AUTO_MAX` : si
+        l'écho résiste à plusieurs recalages, il n'est pas dû à l'alignement (écho non
+        linéaire, saturation) et recaler en boucle ne ferait que jeter du micro."""
         if (self._alerte_efficacite_emise
                 or len(self._queue_nettoye) < self._n_queue // 2
                 or _rms(self._queue_far) < REF_RMS_MIN):
@@ -384,14 +412,28 @@ class ProcesseurAEC:
             self._tranches_echo_residuel += 1
         else:
             self._tranches_echo_residuel = 0
-        if self._tranches_echo_residuel >= ECHO_RESIDUEL_TRANCHES:
+        if self._tranches_echo_residuel < ECHO_RESIDUEL_TRANCHES:
+            return
+        att_txt = f"{att:.1f}" if att is not None else "?"
+        if self._recalibrages_auto >= RECALIBRAGES_AUTO_MAX:
+            # Terminal : plus de recalage, et plus de WARNING (le log rotatif n'a pas à
+            # être noyé par une réunion entière d'écho non annulable).
             self._alerte_efficacite_emise = True
-            att = self._derniere_attenuation_db
             logger.warning(
-                "AEC inefficace : écho encore corrélé à la référence après nettoyage "
-                "sur %d tranches (délai calé %s éch, atténuation %s dB) — cf. docs/48",
-                ECHO_RESIDUEL_TRANCHES, self._delai_estime,
-                f"{att:.1f}" if att is not None else "?")
+                "AEC inefficace : écho toujours corrélé à la référence après %d recalages "
+                "complets (délai calé %s éch, atténuation %s dB) — ce n'est pas un défaut "
+                "d'alignement, recalage automatique abandonné ; casque recommandé "
+                "— cf. docs/48",
+                RECALIBRAGES_AUTO_MAX, self._delai_estime, att_txt)
+            return
+        self._recalibrages_auto += 1
+        logger.warning(
+            "AEC inefficace : écho encore corrélé à la référence après nettoyage sur %d "
+            "tranches (délai calé %s éch, atténuation %s dB) → recalage complet de "
+            "l'alignement (%d/%d) — cf. docs/48",
+            ECHO_RESIDUEL_TRANCHES, self._delai_estime, att_txt,
+            self._recalibrages_auto, RECALIBRAGES_AUTO_MAX)
+        self._recaler_alignement()
 
     def _maj_attenuation(self, brut: np.ndarray, nettoye: np.ndarray) -> None:
         """Indicateur d'atténuation (auto-vérif). Affiné en étape 3 (fenêtres de silence)."""

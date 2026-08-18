@@ -551,16 +551,30 @@ réelle est bien pire que gaspiller du quota, d'où le choix de compacter au lie
 trancher — et le critère de silence de `analyser_piste` (docs/27 : normaliser PUIS
 porter) reste inchangé.
 
-**Deux pièges, tous deux vérifiés en mesurant :**
+**Trois pièges, tous vérifiés en mesurant :**
 1. **Sortie Opus, pas WAV** — garder 60 % d'une piste de 98 min ferait un WAV > 100 Mo,
    soit un envoi pire que l'original compressé.
 2. **Deux passes ffmpeg obligatoires** (`aselect` → WAV, puis WAV → Opus). Sélectionner
    et encoder en Opus d'un seul coup produit un Ogg dont l'en-tête annonce **0,08 s
    pour 38 s d'audio** : un serveur qui s'y fie ne transcrirait que le début. Sans
    `asetpts`, à l'inverse, les silences reviennent (63 s au lieu de 8 s mesurés).
+3. **Le ffmpeg EMBARQUÉ doit avoir les filtres** — et il ne les avait pas. Le build
+   macOS est un `--disable-everything` avec activation sélective, arrêté à
+   `--enable-filter=aresample,aformat,anull` (docs/16 §5.5) ; `aselect` et `asetpts` n'en
+   faisaient pas partie. La compaction a donc **échoué à tous les coups dans l'app
+   livrée** dès sa mise en service (exit 234, « envoi intégral » dans le log du
+   2026-08-18 à 15:30), et **jamais en dev**, où c'est le ffmpeg Homebrew complet qui
+   répond — les chiffres de cette section ont été mesurés avec lui. Corrigé côté build
+   (docs/48 §8.3 : filtres ajoutés, exigés par la validation du binaire, et les 2 passes
+   rejouées à chaque build) ; le binaire déjà installé n'a pas les filtres, il faut un
+   nouveau `.app`. Windows (build BtbN complet) et Linux (ffmpeg système) n'étaient pas
+   concernés. **Règle à retenir : toute nouvelle invocation de ffmpeg dans le code oblige
+   à revisiter la liste des composants compilés** — le build ne connaît que les usages
+   qui existaient le jour où il a été écrit.
 
 La compaction est un **confort** : tout échec (ffmpeg absent, filtre invalide) retombe
-sur l'envoi intégral plutôt que de faire perdre le CR. Elle ne s'applique que si elle
+sur l'envoi intégral plutôt que de faire perdre le CR. C'est ce qui a rendu le piège 3
+indolore — et invisible : personne ne lit un WARNING quand le CR arrive quand même. Elle ne s'applique que si elle
 retire au moins 20 % de la piste (`FRACTION_UTILE`) — une piste normalement parlée part
 donc inchangée, sans ré-encodage.
 

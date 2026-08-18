@@ -594,12 +594,42 @@ class EcrivainReunion:
 _DEDUP_FENETRE_S = 3.0       # décalage inter-pistes mesuré ≤ 0,7 s + découpage des segments
 _DEDUP_SIMILARITE = 0.8
 _DEDUP_LONGUEUR_MIN = 25     # caractères normalisés — protège les « Oui. » légitimes
+# Second critère (terrain 2026-08-18) : Voxtral ne découpe pas l'écho aux mêmes frontières
+# que l'original, donc un segment est souvent un FRAGMENT de l'autre — cas où le ratio
+# global s'écroule alors que le texte est identique (0,74 et 0,38 mesurés sur des doublons
+# manifestes). On regarde donc aussi l'inclusion — mais dans UN SEUL SENS : le segment
+# micro doit être couvert par le segment système, jamais l'inverse. C'est toujours la copie
+# MICRO qu'on écarte : mesurer la couverture du plus court des deux ferait jeter 34 mots de
+# l'utilisateur parce que 7 d'entre eux sont revenus en écho par le poste d'en face
+# (mesuré sur les réunions de juillet 2026).
+# Seuil calibré sur les 73 réunions du poste : à 0,75 il écarte 14 des 16 doublons de la
+# fenêtre d'écho du 2026-08-18 sans toucher un seul tour légitime. Ne pas descendre plus
+# bas : un doublon manqué plafonne à 0,70 et un tour parfaitement légitime de la même
+# réunion en fait 0,71 — les deux sont indiscernables, et seul le second est irremplaçable.
+_DEDUP_INCLUSION = 0.75
+_DEDUP_INCLUSION_MOTS_MIN = 6   # sous ce compte, une simple relance suffirait à déclencher
 
 _MOTIF_NON_MOT = re.compile(r"[\W_]+", re.UNICODE)
 
 
 def _normalise_dedup(texte: str) -> str:
     return _MOTIF_NON_MOT.sub(" ", texte.lower()).strip()
+
+
+def _inclusion_dedup(mots_micro: "list[str]", mots_systeme: "list[str]") -> float:
+    """Part des mots du segment MICRO retrouvée, dans l'ordre, dans le segment système.
+
+    Sens unique et assumé (cf. commentaire des seuils) : 1,0 signifie « le micro ne dit
+    rien de plus que le système », le seul cas où écarter la copie micro ne perd rien.
+
+    Comparaison en MOTS et `autojunk=False` : sur des chaînes de caractères de plus de
+    200 signes, l'heuristique « junk » de difflib écarte les caractères fréquents et
+    effondre le score — c'est une des raisons du 0,38 mesuré sur un doublon manifeste."""
+    if len(mots_micro) < _DEDUP_INCLUSION_MOTS_MIN:
+        return 0.0
+    matcher = difflib.SequenceMatcher(None, mots_micro, mots_systeme, autojunk=False)
+    communs = sum(bloc.size for bloc in matcher.get_matching_blocks())
+    return communs / len(mots_micro)
 
 
 def _sans_doublons_inter_pistes(
@@ -609,20 +639,26 @@ def _sans_doublons_inter_pistes(
     """Segments micro sans ceux qui doublonnent un segment système (docs/48 §4.1).
 
     On écarte la copie MICRO (la piste système est la source dédiée de la voix
-    distante) ; dans le cas symétrique — écho renvoyé par le poste d'en face — les
-    deux copies sont quasi identiques, en garder une seule donne le même texte."""
-    systeme = [(debut, _normalise_dedup(texte)) for debut, texte in segments_participants]
+    distante) ; dans le cas symétrique — écho renvoyé par le poste d'en face — les deux
+    copies sont quasi identiques, en garder une seule donne le même texte. C'est pourquoi
+    le critère d'inclusion, lui, ne joue que dans un sens : si le micro dit *plus* que le
+    système, ce surplus est de la parole de l'utilisateur et il doit rester."""
+    systeme = [(debut, norme, norme.split())
+               for debut, norme in ((d, _normalise_dedup(t)) for d, t in segments_participants)]
     retenus: list[tuple[float, str]] = []
     for debut, texte in segments_moi:
         norme = _normalise_dedup(texte)
+        mots = norme.split()
         doublon = False
         if len(norme) >= _DEDUP_LONGUEUR_MIN:
-            for debut_sys, norme_sys in systeme:
+            for debut_sys, norme_sys, mots_sys in systeme:
                 if abs(debut_sys - debut) > _DEDUP_FENETRE_S:
                     continue
                 if len(norme_sys) < _DEDUP_LONGUEUR_MIN:
                     continue
-                if difflib.SequenceMatcher(None, norme, norme_sys).ratio() >= _DEDUP_SIMILARITE:
+                ratio = difflib.SequenceMatcher(None, norme, norme_sys).ratio()
+                if (ratio >= _DEDUP_SIMILARITE
+                        or _inclusion_dedup(mots, mots_sys) >= _DEDUP_INCLUSION):
                     logger.debug(
                         "Doublon inter-pistes écarté (micro %.1fs ≈ système %.1fs) : %.60s…",
                         debut, debut_sys, texte)

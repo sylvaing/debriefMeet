@@ -840,3 +840,65 @@ def test_dedup_textes_differents_conserves():
         moi=[(3.0, "Nous avons soixante-treize mille euros de factures en attente.")],
         participants=[(3.5, "Je fais un point de trésorerie et je vous envoie un mail récapitulatif.")])
     assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+def test_dedup_limite_le_fragment_court_reste_conserve():
+    """Limite ASSUMÉE du critère, mesurée sur la réunion du 2026-08-18.
+
+    Ce doublon (fragment court noyé dans un long segment système) plafonne à 0,70
+    d'inclusion, et un tour parfaitement légitime de la même réunion — « Oui, c'est censé
+    être une vitrine. », qui reformule le propos du correspondant — en fait 0,71. Les deux
+    sont indiscernables : aucun seuil ne les sépare. Il est placé au-dessus des deux, parce
+    qu'un doublon qui subsiste se voit et se corrige à la lecture, alors qu'un tour
+    supprimé est une information définitivement perdue."""
+    blocs = _entrelaces_(
+        moi=[(1700.0, "Mais tu vois, j'avais réfléchi en termes de séparation.")],
+        participants=[(1700.2, "Donc, en gros, voilà. Sinon, j'avais réfléchi en termes de "
+                               "séparation. En gros, vu qu'on va se retrouver avec une "
+                               "plateforme de démo qui va servir autant pour nous.")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+def test_dedup_reformulation_legitime_conservee():
+    """Le contre-exemple qui fixe le seuil : Sylvain reprend les mots du correspondant pour
+    les corriger (« démo technique » → « vitrine »). 0,71 d'inclusion, et c'est la chute de
+    l'échange — l'écarter changerait le sens du compte-rendu."""
+    blocs = _entrelaces_(
+        moi=[(300.0, "Oui, c'est censé être une vitrine.")],
+        participants=[(299.0, "Enfin, pas problématique, mais ça fait quand même un... "
+                              "C'est censé être une démo technique. Donc, tu vois, il "
+                              "manque quand même quelque chose.")])
+    assert [b[0] for b in blocs] == ["Participants", "Moi"]   # la réplique est conservée
+
+
+def test_dedup_reformulation_partielle_ecartee():
+    """Même propos, mots différents au milieu (0,74 de ratio mesuré sur le terrain) :
+    sous le seuil de similarité, mais couvert par le segment système."""
+    blocs = _entrelaces_(
+        moi=[(1695.0, "Potentiellement on est des machines qui soient réservées à nous pour "
+                      "les démos, alors une seule ce sera largement suffisant.")],
+        participants=[(1695.4, "Potentiellement qu'on ait des poules de machines qui soient "
+                               "réservées à nous pour les démos. Alors, une seule, ce sera "
+                               "largement suffisant. Et le reste pour les clients.")])
+    assert len(blocs) == 1 and blocs[0][0] == "Participants"
+
+
+def test_dedup_inclusion_jamais_dans_l_autre_sens():
+    """Écho renvoyé par le poste d'en face : un court fragment de MA phrase revient sur la
+    piste système. C'est toujours la copie micro qui serait écartée — donc ici on perdrait
+    30 mots de l'utilisateur pour 7 mots d'écho. La couverture se mesure sur le micro."""
+    blocs = _entrelaces_(
+        moi=[(40.0, "chez Olféo et avant chez le prestataire de sauvegarde je ne sais plus "
+                    "lequel mais bon ça c'est autre chose par contre si tu veux faire ça")],
+        participants=[(40.3, "Par contre, si tu veux faire ça,")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+def test_dedup_inclusion_ignore_les_segments_micro_tres_courts():
+    """Sous 6 mots, l'inclusion ne décide de rien : une relance banale se retrouve mot pour
+    mot dans n'importe quelle phrase longue du correspondant."""
+    blocs = _entrelaces_(
+        moi=[(12.0, "Oui, tout à fait, exactement.")],
+        participants=[(12.2, "Oui, tout à fait, exactement ce que je disais tantôt à propos "
+                             "du calendrier de déploiement chez le client.")])
+    assert [b[0] for b in blocs] == ["Moi", "Participants"]
