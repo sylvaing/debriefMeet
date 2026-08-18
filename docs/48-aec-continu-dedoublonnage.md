@@ -8,8 +8,11 @@
 > faux positif du WARNING). **Rechute le 2026-08-18 → §8** : le délai calé se périme en
 > cours de réunion et le suivi incrémental met 20 min à rattraper — désormais
 > l'inefficacité constatée déclenche un **recalage complet**, et le dédoublonnage gagne un
-> critère d'**inclusion directionnelle** (1423 passed). Reste : rejouer une réunion réelle
-> avec ces correctifs, et C-compensation si le modèle d'offset est confirmé.
+> critère d'**inclusion directionnelle** (1423 passed). **Contre-analyse du même jour
+> (§8.4)** : l'offset ne dérive pas, il **saute** (pertes d'échantillons de la chaîne
+> micro) — comblement des trous par silence dans le callback micro (= la
+> C-compensation, faite à la source) + exigence de qualité relevée pour bouger
+> l'alignement. Reste : rejouer une réunion réelle avec l'ensemble.
 > Spec rédigée le 2026-08-06 après diagnostic terrain le jour même (3 réunions
 > réelles sur le Mac de Sylvain + logs de Alix).
 > **Besoin :** en réunion sans casque, la voix des correspondants sort des
@@ -210,7 +213,9 @@ tourné (mode distant, 2 pistes Voxtral).
   46 tranches sur 107 sous 1 dB.
 - Corrélation croisée micro **nettoyé** ↔ référence : 0,01 avant la minute 25, puis
   **0,10 à 0,46 à un décalage stable de ~25 ms** jusqu'à la minute 45, puis 0,01 —
-  l'écho traverse l'AEC intact.
+  l'écho traverse l'AEC intact. ⚠️ Ce ~25 ms est mesuré **entre les fichiers**, or
+  `moi.opus` a perdu 343 ms en tête (le saut micro de la calibration, §8.4) : en
+  temps de capture, l'offset réel de cette fenêtre est **~315 ms**.
 - Un FIR 256 taps aux moindres carrés retire encore **4 à 5,6 dB** du micro nettoyé
   dans cette fenêtre, contre **0,0 dB** à la minute 5 (contrôle négatif sur données
   réelles) : le résidu est **linéairement prédictible** depuis la référence, donc ce
@@ -223,10 +228,13 @@ tourné (mode distant, 2 pistes Voxtral).
 ### 8.2 Cause
 
 Le délai est calé une fois, à la 1ʳᵉ tranche : **6135 éch (383 ms)**, qui est
-l'offset d'ingestion mesuré au même instant (+373 ms) — correct alors, mais mesuré
-alors qu'il n'y avait **pas encore d'écho** à annuler. Vers la minute 26 le trajet
-d'écho réel s'installe à ~25 ms : l'AEC soustrait dès lors une référence décalée de
-~400 ms, c'est-à-dire rien. Le suivi de dérive (§4.2) ne rattrape pas — sa garde de
+l'offset d'ingestion mesuré au même instant (+373 ms) — et il était **juste** : les
+tranches 4 à 22 (min 2-11) montrent −25 à −40 dB d'annulation, la preuve d'un verrou
+correct (première lecture corrigée par §8.4 : le calage initial n'était pas prématuré).
+Vers la minute 12, l'offset **saute de ~68 ms** (perte d'échantillons de la chaîne
+micro, §8.4) : la référence se met à arriver ~28 ms **après** l'écho (la marge de lead
+n'est que de 40 ms), le filtre devient non causal → **0 dB instantané**. Une AEC3
+tolère une référence en avance de ~200 ms, pas 10 ms de retard. Le suivi de dérive (§4.2) ne rattrape pas — sa garde de
 concordance, indispensable contre la fuite du 2026-08-07, exige deux mesures
 consécutives concordantes à la cadence d'une tranche : **deux ré-alignements
 seulement**, à 15:19 et 15:23 (6135 → 4462 → 1376 éch). Juste après, l'atténuation
@@ -271,11 +279,67 @@ que sur une reconnexion micro.
    d'audio utile sur 53 min. Windows (build BtbN complet) et Linux (ffmpeg système) ne
    sont pas concernés.
 
-### 8.4 Reste à faire
+### 8.4 Contre-analyse : l'offset ne dérive pas, il SAUTE (pertes d'échantillons micro)
+
+Analyse croisée indépendante de la même réunion (fichiers + journal AEC), qui corrige
+deux lectures de §8.1/§8.2 et ferme la question « dérive d'horloge » posée depuis §1.
+
+**La comptabilité boucle.** `moi.opus` fait 3189,13 s et a perdu 343 ms en tête (saut
+micro de la calibration) ; `systeme.opus` fait 3189,43 s → les deux chaînes ont livré
+le même volume d'échantillons à **12 ppm près** sur 53 min (0 ppm sur la réunion
+commerce du 17/08). **Il n'y a pas de dérive d'horloge** — la « dérive ~125 ppm » de
+§1 était l'accumulation de sauts, pas une horloge. Confirmation : le verrou de
+corrélation entre fichiers est **stable 20 min à −22/−34 ms** (min 26-45, qualités
+jusqu'à 132) — une dérive à 108 ppm l'aurait déplacé de 123 ms.
+
+**Trajectoire de l'offset de capture (micro↔système)** : 383 ms (calé, AEC à
+−25/−40 dB min 2-11) → **saut −68 ms** vers min 12 (≈ 315 ms, causalité cassée → 0 dB,
+la fenêtre d'écho de §8.1) → sauts **−105 ms** (min 46) et **−193 ms** (min 50, les
+deux mesurés par le suivi de dérive, qui a donc bien traqué des marches réelles) →
+~20-40 ms en fin de réunion ✓ = l'écart de durée des fichiers. Somme des marches
+≈ 345 ms. Le sens est toujours le même : **la chaîne micro perd des paquets
+d'échantillons**, la chaîne système jamais.
+
+**Mécanisme candidat** : le callback PortAudio est du Python — quand le MainThread
+tient le GIL (pousser AEC ~0,2 s/tranche, upload Mistral, UI), le wrapper du callback
+attend, le buffer HAL de Core Audio déborde et PortAudio **jette**. Le helper SCK,
+process séparé avec un pipe de 64 Ko, est immune — d'où l'asymétrie. À confirmer sur
+le terrain (les trous devraient coïncider avec les fins de tranche).
+
+**Correctifs (branche `aec-native`, complémentaires de §8.3 — aucun fichier commun) :**
+
+1. **Comblement des trous à la source** (`platform/commun/micro_sounddevice.py`, les
+   3 OS) : trou détecté par discontinuité de l'horodatage ADC des blocs
+   (`time_info.inputBufferAdcTime` — pas `paInputOverflow`, non garanti par tous les
+   host API et muet sur la taille), comblé par du silence de même durée. Le flux
+   micro reste juste à l'échantillon : l'offset inter-pistes **ne peut plus sauter**,
+   l'AEC ne se désaligne plus, et `moi.opus`/`systeme.opus` restent alignés (ce que
+   le dédoublonnage ne fait que masquer). C'est la **C-compensation de §4.3, faite à
+   la source**. Gardes : seuil 20 ms (gigue d'horodatage), plafond 10 s (horodatage
+   aberrant → resynchronisation sans fabriquer de silence), jamais de comblement si
+   l'API n'horodate pas, continuité remise à zéro à chaque nouveau flux. Incidents en
+   WARNING, 1 ligne par tranche maximum. Le recalage de §8.3 reste le filet pour les
+   autres causes de désalignement (changement de sortie, visio qui rebufferise).
+2. **`QUALITE_CORR_CALAGE = 25`** pour **bouger** l'alignement (calibration, suivi) :
+   mesuré sur cette réunion, sous une qualité ~25 les estimations de délai sont du
+   bruit réparti sur tout ±1500 ms ; à ≥ 25 toutes concordent sur le vrai verrou.
+   La **détection** d'écho résiduel (déclencheur du recalage §8.3) garde son seuil à
+   10 — la rendre plus exigeante affaiblirait le correctif qu'elle déclenche.
+
+**Au passage, deux métriques à lire avec précaution** : l'`att` par tranche est un
+rapport de RMS sur 30 s — en double parole, la voix de l'utilisateur domine le RMS et
+**masque l'annulation** (une médiane à −1,7 dB ne prouve pas un échec) ; les tranches
+« micro audible → sous le seuil de silence » sont de l'**écho seul correctement
+annulé** (−25/−40 dB, RMS système fort sur toutes), pas de la voix détruite.
+
+### 8.5 Reste à faire
 
 - Rebuild `.app` + `.dmg` pour que le ffmpeg corrigé arrive sur le poste (le binaire
   installé n'a pas les filtres).
 - Valider en réunion réelle que le recalage automatique se déclenche et rétablit
-  l'atténuation (chercher « recalage complet de l'alignement » dans le log).
+  l'atténuation (chercher « recalage complet de l'alignement » dans le log) — et que
+  les trous de capture sont bien comblés à la source (§8.4, chercher « trou(s) de
+  capture comblé(s) ») : si les trous tombent à ~0, le recalage ne devrait plus
+  jamais avoir à se déclencher.
 - Rappel terrain indépendant du code : micro interne + haut-parleurs = écho garanti,
   un casque supprime le problème à la racine.

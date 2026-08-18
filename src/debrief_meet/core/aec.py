@@ -48,7 +48,16 @@ MARGE_LEAD_MS_DEFAUT = 40             # réf précède l'écho (cf. spike : plat
 DELAI_MAX_MS = 1500
 CALIB_FENETRE_S = 12.0                # fenêtre de cross-corrélation pour caler le délai
 REF_RMS_MIN = 0.005                   # en deçà, le système est silencieux → pas d'écho à caler
-QUALITE_CORR_MIN = 10.0               # pic/médiane mini pour un délai FIABLE (sinon on diffère)
+QUALITE_CORR_MIN = 10.0               # pic/médiane mini pour DÉTECTER un écho corrélé
+# Pour BOUGER l'alignement (calibration, suivi de dérive), on exige plus : mesuré sur la
+# réunion du 2026-08-18 (fenêtres de 12 s), sous une qualité ~25 les estimations de délai
+# sont du bruit réparti sur tout ±DELAI_MAX_MS, alors qu'à ≥ 25 toutes concordent sur le
+# vrai verrou (qualités 25 à 132). Différer un calage = passthrough (voix jamais perdue) ;
+# caler sur du bruit = sur-soustraire. La détection d'écho résiduel (déclencheur du
+# recalage complet, §8.3) garde le seuil bas : rater un écho réel coûte plus cher qu'un
+# recalage de trop (borné à RECALIBRAGES_AUTO_MAX, et le recalage exige lui-même un pic
+# à QUALITE_CORR_CALAGE pour re-caler).
+QUALITE_CORR_CALAGE = 25.0
 
 # Suivi continu (docs/48 §4.2) : l'offset dérive (~125 ppm mesurés) → une calibration
 # one-shot se périme. Ré-estimation périodique sur une queue glissante des flux
@@ -267,7 +276,7 @@ class ProcesseurAEC:
     def _tenter_calibration(self) -> bool:
         """Cale le délai SI un écho franc est présent. True si calé, False si différé.
 
-        On ne cale que sur un pic de cross-corrélation net (`QUALITE_CORR_MIN`) avec un
+        On ne cale que sur un pic de cross-corrélation net (`QUALITE_CORR_CALAGE`) avec un
         système qui joue (`REF_RMS_MIN`) → jamais sur du bruit, ce qui éviterait de
         sur-soustraire et d'effacer la voix."""
         if self._delai_force is not None:
@@ -281,8 +290,8 @@ class ProcesseurAEC:
                 return False
             borne = int(DELAI_MAX_MS / 1000 * SR_AEC)
             delai, qualite = _caler_delai(self._buf_micro[:n], self._buf_ref[:n], borne)
-            if qualite < QUALITE_CORR_MIN:                 # pas de pic franc → pas d'écho fiable
-                _trace(f"calibration différée (qualité corr {qualite:.1f} < {QUALITE_CORR_MIN})")
+            if qualite < QUALITE_CORR_CALAGE:              # pas de pic franc → pas d'écho fiable
+                _trace(f"calibration différée (qualité corr {qualite:.1f} < {QUALITE_CORR_CALAGE})")
                 return False
             if abs(delai) >= int(borne * 0.95):
                 # Pic en butée de fenêtre = vraisemblablement un pic parasite dont le
@@ -353,7 +362,7 @@ class ProcesseurAEC:
             return
         delai, qualite = _caler_delai(self._queue_near, self._queue_far,
                                       int(DELAI_MAX_MS / 1000 * SR_AEC))
-        if qualite < QUALITE_CORR_MIN:
+        if qualite < QUALITE_CORR_CALAGE:
             self._dernier_residu = None
             return
         residu = delai - self._marge
