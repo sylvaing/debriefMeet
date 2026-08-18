@@ -33,6 +33,18 @@ class CaptureMicroSounddevice(CaptureMicro):
     WARMUP_S = 0.2  # secondes à jeter après ouverture du flux
     DELAI_FERMETURE_S = 0.3  # délai avant fermeture physique du flux
 
+    # Comblement des trous de capture (docs/48 §8) : PortAudio peut PERDRE des
+    # échantillons quand le callback est affamé (le wrapper Python attend le GIL
+    # tenu par le MainThread — pousser AEC ~0,2 s/tranche, upload Mistral, UI —
+    # et le buffer HAL déborde pendant ce temps). Chaque perte décale
+    # DÉFINITIVEMENT la piste micro par rapport à la piste système : l'AEC se
+    # désaligne (sauts de 65 à 193 ms mesurés le 2026-08-18, causalité cassée →
+    # 0 dB) et moi.opus/systeme.opus divergent d'autant. On détecte le trou par
+    # la discontinuité de l'horodatage ADC des blocs et on le comble par du
+    # silence de même durée — le flux reste juste à l'échantillon.
+    TROU_MIN_S = 0.020  # sous ce seuil : gigue d'horodatage, pas une perte
+    TROU_MAX_S = 10.0   # au-delà : horodatage aberrant → resynchroniser sans combler
+
     def __init__(self) -> None:
         self._buffer: list[tuple[np.ndarray, int]] = []  # (bloc, taux_natif_a_la_capture)
         self._verrou = threading.Lock()
@@ -40,6 +52,14 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._sr_flux = TAUX_CANONIQUE  # taux natif du flux actuellement ouvert
         self._fermer_event = threading.Event()
         self._thread_fermeture: threading.Thread | None = None
+        # Continuité ADC (docs/48 §8) : horodatage attendu du prochain bloc, sur
+        # l'horloge PortAudio du flux courant. Lu/écrit UNIQUEMENT par le thread
+        # callback (sérialisé) — pas de verrou ; remis à None à chaque nouveau flux.
+        self._adc_attendu: float | None = None
+        # Compteurs d'incidents, drainés à chaque tranche (sous _verrou).
+        self._overflows = 0
+        self._trous_combles = 0
+        self._silence_comble_s = 0.0
 
     @property
     def taux_echantillonnage(self) -> int:
@@ -151,12 +171,15 @@ class CaptureMicroSounddevice(CaptureMicro):
 
         with self._verrou:
             self._buffer = []
+            self._overflows = self._trous_combles = 0
+            self._silence_comble_s = 0.0
 
         self._attendre_fermeture_differee()
         self._rafraichir_portaudio(sd)
 
         self._stream = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(self._stream)
+        self._adc_attendu = None  # nouveau flux = nouvelle horloge PortAudio
         self._stream.start()
         self._logger_infos_flux(sd, self._stream, self._sr_flux)
 
@@ -194,6 +217,7 @@ class CaptureMicroSounddevice(CaptureMicro):
 
         nouveau = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(nouveau)
+        self._adc_attendu = None  # nouveau flux = nouvelle horloge PortAudio
         nouveau.start()
         self._logger_infos_flux(sd, nouveau, self._sr_flux)
 
@@ -264,10 +288,23 @@ class CaptureMicroSounddevice(CaptureMicro):
         suites sont recollées — un switch de périphérique en cours de tranche
         produit deux suites (ex. 48k puis 24k) qui se recollent en 16k homogène."""
         with self._verrou:
-            if not self._buffer:
-                return np.zeros(0, dtype=np.float32)
-            buffer = self._buffer
-            self._buffer = []
+            buffer, self._buffer = self._buffer, []
+            overflows, self._overflows = self._overflows, 0
+            trous, self._trous_combles = self._trous_combles, 0
+            comble_s, self._silence_comble_s = self._silence_comble_s, 0.0
+
+        if trous or overflows:
+            # WARNING assumé (docs/48 : « l'échec était dans les logs, mais en
+            # DEBUG ») — borné à 1 ligne par tranche, jamais par événement.
+            import logging
+            logging.getLogger(__name__).warning(
+                "Micro : %d trou(s) de capture comblé(s) par %.0f ms de silence, "
+                "%d overflow(s) PortAudio signalé(s) sur la tranche — continuité "
+                "des pistes préservée (docs/48 §8)",
+                trous, comble_s * 1000, overflows)
+
+        if not buffer:
+            return np.zeros(0, dtype=np.float32)
 
         morceaux: list[np.ndarray] = []
         suite_sr: int | None = None
@@ -286,5 +323,35 @@ class CaptureMicroSounddevice(CaptureMicro):
         return np.concatenate(morceaux).astype(np.float32)
 
     def _callback(self, indata, frames, time_info, status) -> None:
+        sr = self._sr_flux
+        silence = self._silence_de_comblement(frames, time_info, sr)
+        overflow = bool(getattr(status, "input_overflow", False))
         with self._verrou:
-            self._buffer.append((indata.copy().flatten(), self._sr_flux))
+            if overflow:
+                self._overflows += 1
+            if silence is not None:
+                self._buffer.append((silence, sr))
+                self._trous_combles += 1
+                self._silence_comble_s += len(silence) / sr
+            self._buffer.append((indata.copy().flatten(), sr))
+
+    def _silence_de_comblement(self, frames, time_info, sr) -> np.ndarray | None:
+        """Silence couvrant les échantillons perdus par PortAudio avant ce bloc, ou None.
+
+        Les blocs d'un flux sain sont contigus sur l'horloge ADC
+        (`time_info.inputBufferAdcTime`) : un saut en avant = des échantillons ont
+        été jetés en amont (buffer HAL débordé pendant que le callback attendait le
+        GIL, cf. commentaire de classe). On ne s'appuie PAS sur `paInputOverflow` :
+        le drapeau n'est pas garanti par tous les host API, l'horodatage si — et il
+        donne la taille exacte du trou. Hors service si l'API ne fournit pas
+        d'horodatage (adc ≤ 0) : on ne comble jamais à l'aveugle.
+        Appelé uniquement depuis le thread callback (`_adc_attendu` sans verrou)."""
+        adc = float(getattr(time_info, "inputBufferAdcTime", 0.0) or 0.0)
+        attendu = self._adc_attendu
+        self._adc_attendu = adc + frames / sr if adc > 0 else None
+        if attendu is None or adc <= 0:
+            return None
+        manque = adc - attendu
+        if not (self.TROU_MIN_S <= manque <= self.TROU_MAX_S):
+            return None
+        return np.zeros(int(round(manque * sr)), dtype=np.float32)

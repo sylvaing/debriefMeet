@@ -396,3 +396,146 @@ def test_redemarrer_logge_aussi_les_infos_du_nouveau_flux(micro_sans_warmup, mon
 
     messages = [r.message for r in caplog.records]
     assert any("peripherique-3" in m and "44100" in m for m in messages)
+
+
+# ── Comblement des trous de capture (docs/48 §8) ─────────────────────────────
+#
+# PortAudio perd des échantillons quand le callback est affamé (GIL) ; chaque
+# perte décale la piste micro par rapport à la piste système et désaligne l'AEC.
+# Le trou est détecté par discontinuité d'horodatage ADC et comblé par du silence.
+
+class _TimeInfo:
+    def __init__(self, adc):
+        self.inputBufferAdcTime = adc
+
+
+class _Flags:
+    def __init__(self, input_overflow=False):
+        self.input_overflow = input_overflow
+
+
+def _pousser_bloc_adc(micro, n_echantillons, adc, valeur=1.0, overflow=False):
+    bloc = np.ones((n_echantillons, 1), dtype=np.float32) * valeur
+    micro._callback(bloc, n_echantillons, _TimeInfo(adc), _Flags(overflow))
+
+
+@pytest.fixture()
+def micro_16k(micro_sans_warmup, monkeypatch):
+    """Micro démarré sur un périphérique natif 16 kHz : pas de rééchantillonnage,
+    les comptes d'échantillons des tests sont exacts."""
+    faux = _FauxSounddevice(index_valide=1, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro_sans_warmup.demarrer(1)
+    return micro_sans_warmup
+
+
+def test_trou_adc_comble_par_du_silence(micro_16k):
+    """0,1 s captée, 50 ms perdues, 0,1 s captée → 0,25 s rendues, silence au milieu."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.15)  # attendu 10.1 → trou de 50 ms
+
+    audio = micro_16k.recuperer_echantillons()
+
+    assert len(audio) == 1600 + 800 + 1600
+    assert np.all(audio[:1600] == 1.0)
+    assert np.all(audio[1600:2400] == 0.0)  # le trou, comblé
+    assert np.all(audio[2400:] == 1.0)
+
+
+def test_blocs_contigus_aucun_comblement(micro_16k):
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.1)  # exactement contigu
+
+    assert len(micro_16k.recuperer_echantillons()) == 3200
+
+
+def test_gigue_sous_le_seuil_ignoree(micro_16k):
+    """Un écart de 5 ms est de la gigue d'horodatage, pas une perte — rien d'inséré."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.105)
+
+    assert len(micro_16k.recuperer_echantillons()) == 3200
+
+
+def test_trou_aberrant_resynchronise_sans_combler(micro_16k):
+    """Un saut de 60 s est un horodatage aberrant : on ne fabrique pas une minute
+    de silence, mais la continuité repart du nouvel horodatage."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=70.0)   # aberrant → pas de comblement
+    _pousser_bloc_adc(micro_16k, 1600, adc=70.1)   # contigu au précédent
+
+    assert len(micro_16k.recuperer_echantillons()) == 4800
+
+
+def test_horodatage_indisponible_pas_de_comblement(micro_16k):
+    """Host API sans horodatage ADC (0.0) ou time_info absent : jamais de
+    comblement à l'aveugle — comportement d'avant docs/48 §8, inchangé."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=0.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=0.0)
+    micro_16k._callback(np.ones((1600, 1), dtype=np.float32), 1600, None, None)
+
+    assert len(micro_16k.recuperer_echantillons()) == 4800
+
+
+def test_redemarrage_reinitialise_la_continuite_adc(micro_16k, monkeypatch):
+    """Nouveau flux = nouvelle horloge PortAudio : le premier bloc du nouveau flux
+    ne doit pas être comparé à l'horodatage de l'ancien (comblement fantôme)."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=100.0)
+
+    micro_16k.redemarrer(1)
+    _pousser_bloc_adc(micro_16k, 1600, adc=0.5)  # horloge repartie de ~zéro
+
+    assert len(micro_16k.recuperer_echantillons()) == 3200
+
+
+def test_incidents_journalises_en_warning_par_tranche(micro_16k, caplog):
+    """Docs/48 : « l'échec était dans les logs, mais en DEBUG » — plus jamais ça.
+    Une seule ligne par tranche, avec trous, durée comblée et overflows."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.15, overflow=True)  # trou de 50 ms
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro_16k.recuperer_echantillons()
+
+    (msg,) = [r.message for r in caplog.records if "trou(s) de capture" in r.message]
+    assert "1 trou(s)" in msg and "50 ms" in msg and "1 overflow(s)" in msg
+
+
+def test_pas_de_journal_sans_incident(micro_16k, caplog):
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.1)
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro_16k.recuperer_echantillons()
+
+    assert not [r for r in caplog.records if "trou(s) de capture" in r.message]
+
+
+def test_overflow_sans_horodatage_compte_quand_meme(micro_16k, caplog):
+    """paInputOverflow levé mais ADC indisponible : impossible de dimensionner le
+    trou (rien d'inséré), mais l'incident est journalisé — la perte reste visible."""
+    micro_16k._callback(np.ones((1600, 1), dtype=np.float32), 1600,
+                        _TimeInfo(0.0), _Flags(input_overflow=True))
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        audio = micro_16k.recuperer_echantillons()
+
+    assert len(audio) == 1600
+    (msg,) = [r.message for r in caplog.records if "trou(s) de capture" in r.message]
+    assert "0 trou(s)" in msg and "1 overflow(s)" in msg
+
+
+def test_compteurs_remis_a_zero_entre_tranches(micro_16k, caplog):
+    """Les incidents d'une tranche ne fuient pas dans la suivante."""
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.0)
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.15)
+    micro_16k.recuperer_echantillons()
+
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.35)  # contigu (attendu 10.25+0.1)… non : trou !
+    _pousser_bloc_adc(micro_16k, 1600, adc=10.45)  # contigu au précédent
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro_16k.recuperer_echantillons()
+
+    (msg,) = [r.message for r in caplog.records if "trou(s) de capture" in r.message]
+    assert "1 trou(s)" in msg  # celui de CETTE tranche seulement, pas 2
