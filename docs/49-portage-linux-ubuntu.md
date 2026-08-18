@@ -432,6 +432,15 @@ innocentes (aucun fd).
 fichier, socket) doit être fermée déterministiquement — le ramasse-miettes n'est
 pas un mécanisme de fermeture, et macOS ne révélera jamais ce genre de fuite.
 
+**Suite (2026-08-18)** : le test de régression, écrit autour de `os.listdir("/dev/fd")`,
+a fait **échouer la gate VM Windows** — ce chemin n'existe pas là-bas, et ni la gate
+Mac ni la gate LXC ne pouvaient le voir. Il a été scindé en deux : un test
+**portable** qui vérifie l'invariant réel (`sqlite3.connect` tracé, toute connexion
+créée doit lever `ProgrammingError` à l'usage, donc être fermée) et un test de
+mesure du **symptôme** (comptage de descripteurs) gardé par
+`skipif(not os.path.isdir("/dev/fd"))`. Les deux échouent bien sur le code d'avant
+correctif. Rappel utile : **une gate verte sur deux OS ne dit rien du troisième**.
+
 ### 6.5 Intégration GNOME — 3 défauts d'interface (2026-08-14)
 
 Relevés au premier usage réel, tous **invisibles sur macOS par construction** :

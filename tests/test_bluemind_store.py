@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+import pytest
+
 from debrief_meet.core.bluemind.store import Evenement, StoreCalendrier
 
 
@@ -96,19 +100,57 @@ def test_schema_reouverture_idempotente(tmp_path):
     assert store2.nombre_evenements() == 0
 
 
-def test_les_connexions_sont_fermees_deterministiquement(tmp_path):
+def test_les_connexions_sont_fermees_deterministiquement(tmp_path, monkeypatch):
     """Régression de la panne du 2026-08-13 (docs/49 §6.4) : `with sqlite3.connect()`
-    ne ferme PAS la connexion, et les connexions participent à des cycles de
-    références — seul le GC générationnel les libérait, par rafales (~270 fds en
-    attente en croisière, 3 par connexion WAL). Sur Ubuntu (limite 1024), les
-    délégués de l'Historique interrogeant ce store à chaque frame d'animation ont
-    épuisé les descripteurs du poste du premier utilisateur Linux en ~35 s.
+    ne ferme PAS la connexion — le `with` de sqlite3 ne gère que la transaction — et
+    les connexions participent à des cycles de références, donc seul le GC
+    générationnel les libérait, par rafales. Sur Ubuntu (limite 1024 descripteurs),
+    les délégués de l'Historique interrogeant ce store à chaque frame d'animation ont
+    épuisé ceux du poste du premier utilisateur Linux en ~35 s.
 
-    `gc.disable()` retire le filet qui masquait la fuite sur macOS : si une
-    connexion n'est pas fermée déterministiquement, ce test la voit. `/dev/fd`
-    existe sur macOS et Linux (pas de /proc sur Mac)."""
+    On teste l'invariant lui-même — « aucune connexion ouverte ne survit à l'appel » —
+    en traçant `sqlite3.connect` : une connexion fermée lève `ProgrammingError` dès
+    qu'on s'en sert. Portable partout, contrairement au comptage de `/dev/fd` qui
+    n'existe pas sous Windows (ce qui a fait échouer la gate VM le 2026-08-18)."""
+    import sqlite3
+
+    creees: list[sqlite3.Connection] = []
+    vrai_connect = sqlite3.connect
+
+    def _tracer(*args, **kwargs):
+        conn = vrai_connect(*args, **kwargs)
+        creees.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", _tracer)
+
+    store = StoreCalendrier(tmp_path / "cal.db")
+    for _ in range(50):
+        store.evenements_dans_plage(0, 10**15)
+
+    assert creees, "aucune connexion tracée — le test ne prouverait rien"
+    encore_ouvertes = []
+    for conn in creees:
+        try:
+            conn.execute("SELECT 1")
+        except sqlite3.ProgrammingError:
+            pass          # fermée : c'est l'attendu
+        else:
+            encore_ouvertes.append(conn)
+
+    assert not encore_ouvertes, (
+        f"{len(encore_ouvertes)}/{len(creees)} connexions encore ouvertes — "
+        "elles retiennent 3 descripteurs chacune en WAL (db, -wal, -shm)")
+
+
+@pytest.mark.skipif(not os.path.isdir("/dev/fd"),
+                    reason="/dev/fd absent (Windows) — cf. le test d'invariant ci-dessus")
+def test_aucun_descripteur_ne_fuit(tmp_path):
+    """Ceinture et bretelles : mesure le SYMPTÔME réel (des descripteurs qui
+    s'accumulent), là où la plateforme permet de les compter. `gc.disable()` retire
+    le filet qui masquait la fuite sur macOS — sans lui, le ramasse-miettes
+    générationnel la rattrape et le test ne voit rien."""
     import gc
-    import os
 
     store = StoreCalendrier(tmp_path / "cal.db")
     gc.disable()
