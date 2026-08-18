@@ -109,3 +109,16 @@ def test_distant_pas_de_case_forcer_voxtral(qapp, tmp_path, mode_distant):
     assert not hasattr(vue, "_check_forcer_voxtral")
     assert cfg.get("mistral_source_transcription") == "auto"
     assert vue._edit_cle is not None      # la clé API reste configurable, et obligatoire
+
+
+def test_duree_max_reglable_et_persiste(qapp, tmp_path):
+    """Le message d'erreur du pipeline renvoie vers ce réglage : il doit exister."""
+    cfg = _config(tmp_path)
+    vue = RemoteIAView(cfg)
+    assert vue._spin_duree_max.value() == 180
+
+    vue._spin_duree_max.setValue(240)
+
+    relu = Config(chemin=tmp_path / "config.json")
+    relu.charger()
+    assert relu.get("mistral_duree_max_min") == 240

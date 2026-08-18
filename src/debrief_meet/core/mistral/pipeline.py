@@ -156,7 +156,7 @@ def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
     if piste is None or analyse is None or analyse.silencieuse:
         return None
     return transcrire_fichier(client, piste, modele, langue, context_bias,
-                              precedente_entiere=precedente_entiere)
+                              precedente_entiere=precedente_entiere, plan=analyse.plan)
 
 
 def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Config",
@@ -173,14 +173,19 @@ def _transcrire_via_voxtral(chemin_md: Path, client: ClientMistral, config: "Con
     analyse_moi = analyser_piste(piste_moi) if piste_moi else None
     analyse_systeme = analyser_piste(piste_systeme) if piste_systeme else None
 
+    # Durée de la RÉUNION = la plus longue des pistes, jamais leur somme : les deux
+    # sont enregistrées simultanément, donc les additionner double le compte et divise
+    # par deux la limite réelle. Vécu le 2026-08-18 : une réunion de 98 min refusée
+    # comme « 197 min », et le chiffre affiché ne correspondait à rien que
+    # l'utilisatrice pouvait reconnaître.
     duree_max = config.get("mistral_duree_max_min")
-    duree_totale_min = sum(
-        a.duree_s / 60 for a in (analyse_moi, analyse_systeme) if a is not None and not a.silencieuse
-    )
-    if duree_max is not None and duree_totale_min > duree_max:
+    duree_reunion_min = max(
+        (a.duree_s / 60 for a in (analyse_moi, analyse_systeme) if a is not None), default=0.0)
+    if duree_max is not None and duree_reunion_min > duree_max:
         raise ErreurMistral(
             f"Réunion trop longue pour la transcription cloud "
-            f"({duree_totale_min:.0f} min > limite {duree_max} min configurée dans les préférences).")
+            f"({duree_reunion_min:.0f} min > limite {duree_max} min réglée dans "
+            "Préférences › IA en ligne).")
 
     langue = config.get("langue")
     modele = config.get("mistral_modele_transcription")

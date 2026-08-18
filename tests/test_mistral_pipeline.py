@@ -44,8 +44,9 @@ def _configurer(config_tmp, **overrides):
     return config_tmp
 
 
-def _piste(tmp_path, suffixe, silencieuse=False):
-    valeurs = np.zeros(16000, dtype=np.int16) if silencieuse else np.full(16000, 3000, dtype=np.int16)
+def _piste(tmp_path, suffixe, silencieuse=False, duree_s=1.0):
+    n = int(16000 * duree_s)
+    valeurs = np.zeros(n, dtype=np.int16) if silencieuse else np.full(n, 3000, dtype=np.int16)
     wavfile.write(tmp_path / f"{suffixe}.wav", 16000, valeurs)
 
 
@@ -123,7 +124,8 @@ def test_piste_systeme_informee_du_sort_de_la_piste_moi(tmp_path, config_tmp, mo
 
     appels: list[tuple[str, bool | None]] = []
 
-    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None):
+    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None,
+                         plan=None):
         appels.append((piste.stem, precedente_entiere))
         return TranscriptionMistral(texte=f"texte {piste.stem}", decoupee=(piste.stem == "moi"))
 
@@ -144,7 +146,8 @@ def test_piste_systeme_sait_que_moi_est_passee_entiere(tmp_path, config_tmp, mon
 
     appels: list[tuple[str, bool | None]] = []
 
-    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None):
+    def _faux_transcrire(client, piste, modele, langue, context_bias, precedente_entiere=None,
+                         plan=None):
         appels.append((piste.stem, precedente_entiere))
         return TranscriptionMistral(texte=f"texte {piste.stem}")
 
@@ -238,6 +241,38 @@ def test_garde_fou_duree_max_leve_avant_tout_appel_reseau(tmp_path, config_tmp):
         pipeline.generer_cr_reunion(md, config_tmp)
 
     assert route_transcription.call_count == 0
+
+
+@respx.mock
+def test_garde_fou_mesure_la_reunion_et_non_la_somme_des_pistes(tmp_path, config_tmp):
+    """Régression du 2026-08-18 : les deux pistes étant enregistrées SIMULTANÉMENT,
+    les additionner divisait par deux la limite réelle — une réunion de 98 min était
+    refusée comme « 197 min »."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi", duree_s=60.0)
+    _piste(tmp_path, "systeme", duree_s=60.0)
+    # 1 min par piste : la réunion dure 1 min (limite atteinte, pas dépassée), alors
+    # que la somme des deux ferait 2 min et déclencherait le refus.
+    _configurer(config_tmp, mistral_duree_max_min=1)
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "bonjour"}))
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    chemin_cr = pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert chemin_cr.exists()
+
+
+@respx.mock
+def test_message_du_garde_fou_designe_le_reglage_reel(tmp_path, config_tmp):
+    """Le message renvoyait l'utilisateur vers un réglage absent de l'interface."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp, mistral_duree_max_min=0)
+
+    with pytest.raises(ErreurMistral, match="IA en ligne"):
+        pipeline.generer_cr_reunion(md, config_tmp)
 
 
 # ── Erreurs — pas de fichier partiel ─────────────────────────────────────────────

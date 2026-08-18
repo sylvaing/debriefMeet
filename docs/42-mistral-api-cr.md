@@ -528,6 +528,57 @@ eux aussi, en séquentiel.
 > « jamais de découpage ». Un seuil de sécurité (ex. découper au-delà de ~90 min sans même
 > tenter) est acceptable si on veut éviter un premier appel voué à l'échec.
 
+### 10.2 Compaction des silences avant envoi (`silences.py`, 2026-08-18)
+
+Distinct du découpage : on ne coupe pas en morceaux, on **retire les silences** d'une
+piste avant de l'envoyer, et on remet ensuite les horodatages dans la timeline
+d'origine (`PlanCompaction.vers_original`) pour que la fusion Moi/Participants reste
+juste.
+
+**Déclencheur terrain.** En réunion **physique**, la piste système ne contient que des
+bips de notification : mesuré chez une utilisatrice, **19 s sonores sur 98 min**, en
+12 événements de 1 à 2 s. Ces 98 min partaient intégralement chez Voxtral — du quota
+pour rien, et 98 min de quasi-silence offertes à l'hallucination (docs/22), dont le
+texte inventé aurait été étiqueté « Participants » dans une réunion où personne
+n'était à distance. Après compaction : **43 s / 64 Ko** au lieu de 98 min / 1,7 Mo.
+
+**On ne jette jamais une piste.** Un critère de proportion (« moins de 1 % de temps
+sonore ⇒ piste ignorée ») a été étudié puis **rejeté** : une intervention visio d'une
+minute dans une réunion de 98 min ne pèse que 0,61 à 0,97 % du temps (duty cycle de
+parole mesuré : 78 à 97 %), elle aurait donc été jetée **avec ses propos**. Une durée
+absolue ne discrimine pas mieux (19 s de bips ≈ 20 s de parole). Perdre de la parole
+réelle est bien pire que gaspiller du quota, d'où le choix de compacter au lieu de
+trancher — et le critère de silence de `analyser_piste` (docs/27 : normaliser PUIS
+porter) reste inchangé.
+
+**Deux pièges, tous deux vérifiés en mesurant :**
+1. **Sortie Opus, pas WAV** — garder 60 % d'une piste de 98 min ferait un WAV > 100 Mo,
+   soit un envoi pire que l'original compressé.
+2. **Deux passes ffmpeg obligatoires** (`aselect` → WAV, puis WAV → Opus). Sélectionner
+   et encoder en Opus d'un seul coup produit un Ogg dont l'en-tête annonce **0,08 s
+   pour 38 s d'audio** : un serveur qui s'y fie ne transcrirait que le début. Sans
+   `asetpts`, à l'inverse, les silences reviennent (63 s au lieu de 8 s mesurés).
+
+La compaction est un **confort** : tout échec (ffmpeg absent, filtre invalide) retombe
+sur l'envoi intégral plutôt que de faire perdre le CR. Elle ne s'applique que si elle
+retire au moins 20 % de la piste (`FRACTION_UTILE`) — une piste normalement parlée part
+donc inchangée, sans ré-encodage.
+
+### 10.3 Garde-fou de durée : la réunion, pas la somme des pistes (2026-08-18)
+
+`mistral_duree_max_min` comparait la limite à la **somme** des durées des deux pistes.
+Or elles sont enregistrées **simultanément** : les additionner double le compte et
+divise par deux la limite réelle. Une réunion de 98 min a ainsi été refusée comme
+« 197 min », un chiffre que l'utilisatrice ne pouvait rapprocher de rien. On compare
+désormais au **maximum** des pistes, c'est-à-dire à la durée de la réunion.
+
+Le message renvoyait de plus vers « les préférences » alors que le réglage **n'existait
+pas dans l'interface** : il est désormais dans Préférences › IA en ligne (15 à 600 min),
+et le message nomme cette section.
+
+> À noter : c'est ce bug qui a **empêché** l'envoi des 98 min de quasi-silence décrit
+> en §10.2 — il a rendu service par accident. Les deux correctifs vont donc ensemble.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle
