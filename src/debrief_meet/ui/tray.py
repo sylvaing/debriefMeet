@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 
 from PySide6.QtCore import Qt, Signal
@@ -27,6 +28,13 @@ from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.theme import C
 
 logger = logging.getLogger(__name__)
+
+# Sous Linux, le tray passe par le protocole StatusNotifierItem : l'hôte (GNOME et
+# son extension AppIndicator) n'appelle jamais `Activate`, il se contente d'afficher
+# le menu ATTACHÉ à l'indicateur. Sans `setContextMenu()`, ni le clic gauche ni le
+# clic droit ne produisent quoi que ce soit — constaté chez le premier utilisateur
+# Linux, qui n'avait accès à aucune action.
+_LINUX = sys.platform.startswith("linux")
 
 _TAILLE_ICONE_MENU = 14
 
@@ -153,9 +161,11 @@ class IconeTray(QSystemTrayIcon):
         self.setToolTip("debriefMeet")
 
     def _construire_menu(self) -> None:
-        # Pas de `setContextMenu()` : sur macOS, un menu attaché s'ouvre au clic
-        # gauche ET droit (limite Qt documentée, cf. IMPLEMENTATION_SPEC §8). Le
-        # menu est affiché manuellement sur clic droit (`_on_activation`).
+        # macOS : PAS de `setContextMenu()` — un menu attaché s'y ouvre au clic gauche
+        # ET droit (limite Qt documentée, cf. IMPLEMENTATION_SPEC §8) ; le menu est
+        # affiché manuellement sur clic droit (`_on_activation`).
+        # Linux : c'est l'inverse, `setContextMenu()` est OBLIGATOIRE (cf. `_LINUX`).
+        # L'attache se fait en fin de méthode, une fois le menu peuplé.
         menu = QMenu()
         menu.setObjectName("trayMenu")
         self._menu = menu
@@ -200,6 +210,12 @@ class IconeTray(QSystemTrayIcon):
         action_quitter.setDefaultWidget(ligne_quitter)
         menu.addAction(action_quitter)
 
+        if _LINUX:
+            # Conséquence assumée : sous GNOME le clic gauche ouvre le menu au lieu
+            # d'ouvrir la fenêtre. C'est la convention du bureau, et « Ouvrir
+            # debriefMeet » est le `defaultAction` du menu (en tête, en gras).
+            self.setContextMenu(menu)
+
     def _on_mode_change(self, mode: Mode) -> None:
         self._actualiser_libelles(mode)
         logger.debug("Tray: mode → %s", mode.name)
@@ -216,7 +232,9 @@ class IconeTray(QSystemTrayIcon):
     def _on_activation(self, raison: QSystemTrayIcon.ActivationReason) -> None:
         if raison == QSystemTrayIcon.ActivationReason.Trigger:
             self._afficher_fenetre_principale()
-        elif raison == QSystemTrayIcon.ActivationReason.Context:
+        elif raison == QSystemTrayIcon.ActivationReason.Context and not _LINUX:
+            # Sous Linux le menu est attaché : l'hôte l'affiche lui-même, un popup
+            # manuel en ouvrirait un second par-dessus.
             self._menu.popup(QCursor.pos())
 
     def _actualiser_icone(self, etat: EtatVisuel) -> None:

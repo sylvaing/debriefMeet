@@ -41,7 +41,7 @@ ssh_lxc 'set -eu
     # libportaudio2 : la roue pip de sounddevice ne la fournit pas sous Linux —
     # crash a l import chez le premier utilisateur du spike (docs/49 §6.1). Toute
     # regression de ce champ doit faire echouer la fumee, pas le poste cible.
-    for dep in ffmpeg libportaudio2 pulseaudio-utils; do
+    for dep in ffmpeg libportaudio2 pulseaudio-utils libgtk-3-0t64 adwaita-icon-theme; do
         case "$DEPS" in *"$dep"*) ;; *) echo "✗ Depends sans $dep"; exit 1;; esac
     done
 

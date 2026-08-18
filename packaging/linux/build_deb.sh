@@ -54,13 +54,18 @@ TAILLE_KO="$(du -sk "$STAGING" | cut -f1)"
 #                    par défaut (spike Q2 : PortAudio ne rend que "default")
 #   libxcb-cursor0   requis par le plugin Qt xcb (session X11) non couvert par le
 #                    bundle PySide6
+#   libgtk-3-0t64    le bundle embarque platformthemes/libqgtk3.so, qui lie
+#                    libgtk-3/libgdk-3/libgdk_pixbuf : sans elles, Qt ignore le thème
+#                    d'icônes du bureau et le décorateur Wayland ne trouve plus ses
+#                    boutons (« Failed to find an svg icon for window-close-symbolic »)
+#   adwaita-icon-theme  fournit précisément ces icônes symboliques
 cat > "$STAGING/DEBIAN/control" <<FIN
 Package: debriefmeet
 Version: $VERSION
 Architecture: amd64
 Maintainer: Sylvain Garcia <sylvain.garcia@bluemind.net>
 Installed-Size: $TAILLE_KO
-Depends: ffmpeg, libportaudio2, pulseaudio-utils, libxcb-cursor0
+Depends: ffmpeg, libportaudio2, pulseaudio-utils, libxcb-cursor0, libgtk-3-0t64, adwaita-icon-theme
 Section: sound
 Priority: optional
 Description: Transcription vocale de réunions (dictée, réunion, journal)

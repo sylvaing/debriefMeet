@@ -159,9 +159,15 @@ def test_ouvrir_debriefmeet_est_l_action_par_defaut(qapp, tmp_path):
     assert tray._menu.defaultAction().text() == "Ouvrir debriefMeet"
 
 
-def test_pas_de_menu_contextuel_qt_attache(qapp, tmp_path):
-    """Ne pas utiliser `setContextMenu()` — sur macOS ça ouvrirait le menu au clic
-    gauche aussi (cf. commentaire de `_construire_menu`)."""
+def test_pas_de_menu_contextuel_qt_attache(qapp, tmp_path, monkeypatch):
+    """Ne pas utiliser `setContextMenu()` **hors Linux** — sur macOS ça ouvrirait le
+    menu au clic gauche aussi (cf. commentaire de `_construire_menu`). La règle est
+    inversée sous Linux, où l'attache est la seule façon d'avoir un menu : forcé ici
+    plutôt que laissé au hasard de la plateforme d'exécution, pour que le test dise
+    la même chose sur le Mac et sur la gate LXC."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", False)
     machine = MachineEtats()
     cfg = _config(tmp_path)
     fenetre = FenetrePrincipale(machine, cfg)
@@ -182,6 +188,11 @@ def test_clic_gauche_ouvre_la_fenetre(qapp, tmp_path):
 
 
 def test_clic_droit_affiche_le_menu(qapp, tmp_path, monkeypatch):
+    """Popup manuel : le chemin macOS/Windows. Sous Linux le menu est attaché et
+    l'hôte l'affiche lui-même (cf. `test_clic_droit_ne_double_pas_le_menu_sous_linux`)."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", False)
     machine = MachineEtats()
     cfg = _config(tmp_path)
     fenetre = FenetrePrincipale(machine, cfg)
@@ -223,3 +234,49 @@ def test_distant_actualiser_libelles_survit_a_un_mode_absent(qapp, tmp_path, mod
         assert not tray._actions_modes[Mode.REUNION].isEnabled()
     finally:
         fenetre._recording_controller._timer.stop()
+
+
+# ── Intégration GNOME : le menu doit être ATTACHÉ sous Linux ──────────────────
+
+def test_menu_attache_sous_linux(qapp, tmp_path, monkeypatch):
+    """Sous Linux le tray passe par StatusNotifierItem : l'hôte n'appelle jamais
+    `Activate`, il affiche le menu attaché. Sans `setContextMenu()`, ni le clic
+    gauche ni le clic droit ne font quoi que ce soit — l'utilisateur n'a accès à
+    AUCUNE action (constaté sur le poste du premier utilisateur Linux)."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", True)
+    machine = MachineEtats()
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    tray = IconeTray(machine, _config(tmp_path), fenetre_principale=fenetre)
+
+    assert tray.contextMenu() is tray._menu
+
+
+def test_menu_non_attache_ailleurs(qapp, tmp_path, monkeypatch):
+    """macOS : un menu attaché s'ouvrirait au clic gauche ET droit — il reste donc
+    affiché à la main. Ce test verrouille les deux moitiés de la règle."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", False)
+    machine = MachineEtats()
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    tray = IconeTray(machine, _config(tmp_path), fenetre_principale=fenetre)
+
+    assert tray.contextMenu() is None
+
+
+def test_clic_droit_ne_double_pas_le_menu_sous_linux(qapp, tmp_path, monkeypatch):
+    """Le menu étant attaché, un popup manuel en ouvrirait un SECOND par-dessus."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", True)
+    machine = MachineEtats()
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    tray = IconeTray(machine, _config(tmp_path), fenetre_principale=fenetre)
+
+    popups: list[object] = []
+    monkeypatch.setattr(tray._menu, "popup", lambda pos: popups.append(pos))
+    tray._on_activation(QSystemTrayIcon.ActivationReason.Context)
+
+    assert popups == []

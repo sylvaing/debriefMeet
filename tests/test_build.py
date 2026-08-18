@@ -749,7 +749,8 @@ class TestSpecLinux:
         ligne_depends = next(
             (l for l in contenu.splitlines() if l.startswith("Depends:")), None)
         assert ligne_depends is not None, "ligne Depends absente de build_deb.sh"
-        for dep in ("ffmpeg", "libportaudio2", "pulseaudio-utils", "libxcb-cursor0"):
+        for dep in ("ffmpeg", "libportaudio2", "pulseaudio-utils", "libxcb-cursor0",
+                    "libgtk-3-0t64", "adwaita-icon-theme"):
             assert dep in ligne_depends, f"Depends sans {dep}"
 
     def test_le_build_teste_avant_de_geler(self):

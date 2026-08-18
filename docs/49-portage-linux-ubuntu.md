@@ -432,7 +432,37 @@ innocentes (aucun fd).
 fichier, socket) doit être fermée déterministiquement — le ramasse-miettes n'est
 pas un mécanisme de fermeture, et macOS ne révélera jamais ce genre de fuite.
 
-### 6.5 Scripts (miroirs de l'existant Windows)
+### 6.5 Intégration GNOME — 3 défauts d'interface (2026-08-14)
+
+Relevés au premier usage réel, tous **invisibles sur macOS par construction** :
+
+| Symptôme | Cause | Correctif |
+|----------|-------|-----------|
+| Icône du tray illisible (gris ardoise sur bandeau noir) | `TRAY_IDLE = #3D4351` est un « template » : macOS le **reteint** lui-même via `setIsMask(True)`, ce qui le rend correct en clair comme en sombre. **Sous Linux ce drapeau est ignoré** — la couleur est prise telle quelle. | `TRAY_IDLE_BARRE_SOMBRE = #FFFFFF`, icône **pleine** (un contour blanc de 6 % d'épaisseur reste illisible à 22 px) |
+| Aucune action ni au clic gauche ni au clic droit | Le tray passe par **StatusNotifierItem** : l'hôte GNOME n'appelle jamais `Activate`, il affiche le menu **attaché**. Or `_construire_menu` évitait délibérément `setContextMenu()` — indispensable sur macOS, où un menu attaché s'ouvrirait aux deux clics. Résultat sous Linux : `activated` ne part jamais, l'utilisateur n'a accès à **rien**. | `setContextMenu()` sous Linux uniquement ; popup manuel neutralisé là-bas (il ouvrirait un second menu) |
+| Fenêtre sans contour, invisible sur fond blanc | Sous Wayland, GNOME impose les décorations côté client et le plugin Qt `adwaita` **ne dessine aucune ombre portée**, contrairement aux applications GTK natives. Fond `#FFFFFF` sur fond blanc ⇒ plus de limite visible. | Liseré 1 px `C.BORDER` sur le widget central — indépendant du plugin de décoration, donc valable Wayland **et** X11 |
+
+⚠️ **La règle ne se dérive pas de `colorScheme()`.** La tentation serait de choisir la
+couleur du tray d'après `QGuiApplication.styleHints().colorScheme()` : ce serait faux,
+il rapporte la préférence claire/sombre de l'**application**, alors que le bandeau
+supérieur d'Ubuntu est noir **y compris en thème clair**.
+
+**`Depends` complétés** : `libgtk-3-0t64` et `adwaita-icon-theme`. Le bundle embarque
+`platformthemes/libqgtk3.so`, qui lie `libgtk-3`/`libgdk-3`/`libgdk_pixbuf` — sans
+elles, Qt ignore le thème d'icônes du bureau et le décorateur Wayland ne trouve plus
+ses boutons (`Failed to find an svg icon for "window-close-symbolic"` dans le premier
+diagnostic terrain). Elles étaient présentes par chance sur le poste cible, pas par
+contrat.
+
+**La gate LXC a de nouveau payé** : elle a fait tomber deux tests préexistants
+(`test_pas_de_menu_contextuel_qt_attache`, `test_clic_droit_affiche_le_menu`) qui
+encodaient la règle macOS comme universelle. Ils épinglent désormais explicitement la
+plateforme simulée, plutôt que de dépendre de la machine d'exécution. Les trois
+correctifs sont gatés par plateforme et couverts dans les deux sens (Linux **et**
+autres), y compris une vérification **par les pixels** que l'icône du REPOS est bien
+claire sur bandeau sombre.
+
+### 6.6 Scripts (miroirs de l'existant Windows)
 
 - `scripts/build_app_linux_lxc.sh` — tar over ssh, gate pytest, PyInstaller,
   `build_deb.sh`, rapatriement de `dist/debriefmeet_<version>_amd64.deb`. Session

@@ -7,6 +7,7 @@ plus d'onglet « Historique » global ni d'écran d'enregistrement plein écran
 """
 from __future__ import annotations
 
+import sys
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
@@ -45,6 +46,11 @@ from debrief_meet.ui.wavemark import wavemark_icon
 # la pile : en édition lite les pages Dictée et Journal n'existent pas (docs/44), donc
 # `_index_pages` traduit l'identifiant en index réel rendu par `addWidget()`.
 PAGE_REUNION, PAGE_DICTEE, PAGE_JOURNAL, PAGE_PREFERENCES = range(4)
+
+# Liseré autour de la fenêtre : nécessaire seulement là où le gestionnaire de
+# fenêtres n'apporte pas d'ombre portée (Wayland/GNOME, cf. `_construire`). macOS et
+# Windows dessinent la leur, un liseré y ferait doublon.
+_BORDURE_FENETRE = sys.platform.startswith("linux")
 
 
 class FenetrePrincipale(QMainWindow):
@@ -92,12 +98,22 @@ class FenetrePrincipale(QMainWindow):
         toolbar = self._construire_toolbar()
 
         centre = QWidget(self)
+        centre.setObjectName("fenetreCentre")
         layout = QVBoxLayout(centre)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(toolbar)
         layout.addWidget(self._pages, 1)
         self.setCentralWidget(centre)
+        if _BORDURE_FENETRE:
+            # Sous Wayland, GNOME impose les décorations côté client et le plugin Qt
+            # `adwaita` ne dessine AUCUNE ombre portée, contrairement aux applications
+            # GTK natives : notre fenêtre blanche devient alors indiscernable d'un
+            # fond blanc (constaté chez le premier utilisateur Linux). On trace donc
+            # notre propre liseré — indépendant du plugin de décoration, donc valable
+            # sous Wayland comme sous X11.
+            centre.setStyleSheet(
+                f"#fenetreCentre {{ border: 1px solid {C.BORDER}; }}")
 
         # Référence conservée : un RecordingController sans propriétaire est
         # éligible au GC (cf. sa docstring), ce qui couperait ses connexions.

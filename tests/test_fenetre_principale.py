@@ -122,3 +122,33 @@ def test_distant_les_pages_restantes_restent_atteignables(qapp, machine, tmp_pat
         assert fenetre._index_pages[PAGE_PREFERENCES] == 1
     finally:
         fenetre._recording_controller._timer.stop()
+
+
+# ── Liseré de fenêtre sous Wayland (docs/49) ──────────────────────────────────
+
+def test_bordure_dessinee_quand_le_wm_n_en_fournit_pas(qapp, tmp_path, monkeypatch):
+    """Sous Wayland, GNOME impose les décorations côté client et le plugin Qt
+    `adwaita` ne dessine aucune ombre portée : une fenêtre blanche devient
+    indiscernable d'un fond blanc (constaté chez le premier utilisateur Linux). On
+    trace donc notre propre liseré, indépendant du plugin de décoration."""
+    from debrief_meet.ui import fenetre_principale as mod
+    from debrief_meet.ui.theme import C
+
+    monkeypatch.setattr(mod, "_BORDURE_FENETRE", True)
+    fenetre = mod.FenetrePrincipale(MachineEtats(), _config(tmp_path))
+    feuille = fenetre.centralWidget().styleSheet()
+
+    assert "#fenetreCentre" in feuille, "le sélecteur doit viser le widget central seul"
+    assert "border: 1px solid" in feuille
+    assert C.BORDER in feuille
+
+
+def test_pas_de_bordure_la_ou_le_wm_en_dessine_une(qapp, tmp_path, monkeypatch):
+    """macOS et Windows dessinent leur propre cadre et leur ombre : un liseré y
+    ferait doublon."""
+    from debrief_meet.ui import fenetre_principale as mod
+
+    monkeypatch.setattr(mod, "_BORDURE_FENETRE", False)
+    fenetre = mod.FenetrePrincipale(MachineEtats(), _config(tmp_path))
+
+    assert fenetre.centralWidget().styleSheet() == ""

@@ -33,7 +33,11 @@ class C:  # ----- Couleurs (hex) -----
     INFO = "#3B5BDB"; INFO_BG = "#EEF1FE"
     DANGER = "#B42318"; DANGER_BG = "#FEF3F2"
     # Icône tray par état d'activité
-    TRAY_IDLE = "#3D4351"        # contour monochrome (template)
+    TRAY_IDLE = "#3D4351"        # contour monochrome — barre CLAIRE (macOS/Windows)
+    # Barre SOMBRE (GNOME : le bandeau supérieur est noir y compris en thème clair,
+    # donc ce n'est PAS un choix à dériver du `colorScheme` de l'application).
+    # #3D4351 y était invisible : constaté sur le poste du premier utilisateur Linux.
+    TRAY_IDLE_BARRE_SOMBRE = "#FFFFFF"
     TRAY_RECORDING = "#FF3B30"; TRAY_TRANSCRIBE = "#FF9500"
     TRAY_DONE = "#34C759"; TRAY_ERROR = "#8E8E93"
 
