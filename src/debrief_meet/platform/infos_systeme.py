@@ -20,6 +20,10 @@ def _est_windows() -> bool:
     return sys.platform == "win32"
 
 
+def _est_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
 def _version_lib(nom_distribution: str) -> str:
     try:
         return importlib.metadata.version(nom_distribution)
@@ -105,14 +109,62 @@ def _gpu_windows() -> str:
         return f"indisponible ({exc})"
 
 
+def _ram_go_linux() -> str:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for ligne in f:
+                if ligne.startswith("MemTotal:"):
+                    return str(round(int(ligne.split()[1]) / (1024**2), 1))
+        return "indisponible (MemTotal absent)"
+    except Exception as exc:
+        return f"indisponible ({exc})"
+
+
+def _distro_linux() -> str:
+    """Nom lisible de la distribution — `platform.platform()` ne rend que le noyau."""
+    try:
+        with open("/etc/os-release", encoding="utf-8") as f:
+            for ligne in f:
+                if ligne.startswith("PRETTY_NAME="):
+                    return ligne.split("=", 1)[1].strip().strip('"')
+        return "indisponible (PRETTY_NAME absent)"
+    except Exception as exc:
+        return f"indisponible ({exc})"
+
+
+def _session_linux() -> str:
+    """Wayland ou X11, et quel bureau — détermine ce qui est possible côté tray et
+    raccourcis globaux (docs/49 L2), donc à avoir sous les yeux dans tout diagnostic."""
+    type_session = os.environ.get("XDG_SESSION_TYPE") or "inconnu"
+    bureau = os.environ.get("XDG_CURRENT_DESKTOP") or "inconnu"
+    return f"{type_session} ({bureau})"
+
+
+def _serveur_audio_linux() -> str:
+    """Serveur audio réellement en place (PipeWire attendu sur 26.04) — la capture
+    système repose sur ses sources `.monitor` (docs/49 §5.1)."""
+    try:
+        resultat = subprocess.run(["pactl", "info"], capture_output=True, text=True, timeout=5)
+        if resultat.returncode != 0:
+            return f"indisponible (pactl code {resultat.returncode})"
+        champs = [ligne.strip() for ligne in resultat.stdout.splitlines()
+                  if ligne.startswith(("Server Name:", "Server Version:", "Default Sink:"))]
+        return " | ".join(champs) or "indisponible (champs absents)"
+    except FileNotFoundError:
+        return "indisponible (pactl absent)"
+    except Exception as exc:
+        return f"indisponible ({exc})"
+
+
 def collecter_infos_systeme() -> dict:
     """OS, CPU, RAM, GPU, versions libs, périphériques audio.
 
     Ne lève jamais : chaque rubrique en échec vaut "indisponible (<exc>)"."""
     entrees, sorties = _peripheriques_audio()
     windows = _est_windows()
+    linux = _est_linux()
 
-    return {
+    infos = {
         "os": platform.platform(),
         # Placé haut et avant `faster_whisper` : le paquet est présent dans le bundle
         # unifié quel que soit le mode, mais son usage réel (moteur construit ou non)
@@ -121,7 +173,7 @@ def collecter_infos_systeme() -> dict:
         "machine": platform.machine(),
         "processeur": platform.processor() or "indisponible",
         "coeurs": str(os.cpu_count() or "indisponible"),
-        "ram_go": _ram_go_windows() if windows else "non collecté",
+        "ram_go": _ram_go_windows() if windows else (_ram_go_linux() if linux else "non collecté"),
         "gpu": _gpu_windows() if windows else "non collecté",
         "python": platform.python_version(),
         "pyside6": _version_lib("PySide6"),
@@ -132,3 +184,12 @@ def collecter_infos_systeme() -> dict:
         "peripheriques_audio_entree": entrees,
         "peripheriques_audio_sortie": sorties,
     }
+
+    # Rubriques Linux ajoutées seulement là où elles ont un sens : sur les autres OS,
+    # elles ne feraient qu'allonger l'en-tête de session avec des « non collecté ».
+    if linux:
+        infos["distribution"] = _distro_linux()
+        infos["session"] = _session_linux()
+        infos["serveur_audio"] = _serveur_audio_linux()
+
+    return infos

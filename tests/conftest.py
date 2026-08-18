@@ -27,6 +27,29 @@ def _forcer_mode(monkeypatch, valeur: str) -> None:
 
 
 @pytest.fixture
+def sounddevice_dispo():
+    """Module `sounddevice` importé, ou test sauté si PortAudio ne s'initialise pas.
+
+    `pytest.importorskip` ne suffit PAS : sur une machine sans serveur audio (le
+    conteneur LXC de build, docs/49 §6.2), l'import lui-même lève une
+    `sounddevice.PortAudioError` (« PulseAudio_Initialize: Can't connect to server »)
+    — pas une `ImportError`. Les tests concernés ne testent de toute façon que de la
+    logique au-dessus de `query_devices`, qu'ils bouchonnent ; ils tournent en entier
+    sur le Mac et la VM Windows.
+
+    L'application, elle, n'a pas besoin de cette garde : tous ses imports de
+    `sounddevice` sont paresseux et `CaptureMicroSounddevice.disponible()` attrape
+    déjà `Exception` — un poste dont le démon audio n'est pas encore levé (démarrage
+    auto en début de session) obtient False, pas un crash.
+    """
+    try:
+        import sounddevice as sd
+    except Exception as exc:  # noqa: BLE001 — PortAudioError n'est pas une ImportError
+        pytest.skip(f"sounddevice indisponible sur cette machine : {exc}")
+    return sd
+
+
+@pytest.fixture
 def mode_local(monkeypatch):
     """Épingle le mode local — pour les tests dont le SUJET est une fonctionnalité
     absente en distant (moteur local, diarization, Dictée/Journal)."""

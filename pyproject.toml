@@ -34,8 +34,11 @@ windows = [
     "livekit>=1.1",      # AEC3 — wheel py3-none-win_amd64 confirmé sur PyPI (docs/30 §5.2, docs/34 §7)
     "soundcard",         # loopback WASAPI — sounddevice/PortAudio ne sait pas le faire (docs/34 §2)
 ]
+# v1 Linux = mode distant seul (docs/49 L1) : pas de moteur local, donc pas de
+# faster-whisper — l'embarquer gonflerait le .deb de ~100 Mo pour un moteur que
+# `_linux()` ne construit jamais. À réintroduire avec le mode local (docs/49 §4.3).
 linux = [
-    "faster-whisper",
+    "livekit>=1.1",      # AEC3 — nettoie la piste micro retenue même en mode distant (docs/48)
 ]
 dev = [
     "pytest>=7.0",

@@ -357,13 +357,20 @@ def chemin_ffmpeg() -> str | None:
     `console=False` (Windows) hérite d'un PATH minimal, donc `shutil.which`
     échouerait même si ffmpeg est installé sur la machine. Emplacement embarqué
     selon l'OS : `vendor/ffmpeg` (macOS, docs/16 §5.5) ou `ffmpeg/ffmpeg.exe`
-    (Windows, docs/41). En dev, repli sur le PATH courant."""
+    (Windows, docs/41).
+
+    **Linux : rien n'est embarqué** (docs/49 L3) — le `.deb` déclare `Depends: ffmpeg`,
+    donc le binaire est garanti présent dans `/usr/bin`, et une app lancée depuis le
+    menu GNOME hérite d'un PATH standard : le piège « PATH minimal » de macOS/Windows
+    ne s'applique pas. Même chemin de résolution qu'en dev.
+
+    En dev (tous OS), repli sur le PATH courant."""
     import shutil
     import sys
 
     from debrief_meet.core.ressources import chemin_ressource, est_figee
 
-    if est_figee():
+    if est_figee() and not sys.platform.startswith("linux"):
         if sys.platform == "win32":
             embarque = chemin_ressource("ffmpeg", "ffmpeg.exe")
         else:

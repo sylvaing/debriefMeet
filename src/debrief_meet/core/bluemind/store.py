@@ -4,9 +4,22 @@ Une connexion par appel (ouverte/fermée à chaque méthode) : plus simple et pl
 que le partage d'une connexion entre le thread de sync (écriture) et le thread UI
 (lecture) — évite tout piège `check_same_thread` pour un volume de données qui reste
 minuscule (le calendrier d'un utilisateur sur quelques mois). WAL activé pour que la
-lecture ne soit jamais bloquée par une écriture en cours."""
+lecture ne soit jamais bloquée par une écriture en cours.
+
+⚠️ La fermeture doit être DÉTERMINISTE (`_connexion` est un contextmanager qui
+`close()`) : `with sqlite3.connect(...)` seul ne ferme PAS la connexion (le `with`
+de sqlite3 ne gère que la transaction), et compter sur le ramasse-miettes ne suffit
+pas — les connexions participent à des cycles de références, donc seul le GC
+générationnel les libère, par rafales. Mesuré le 2026-08-13 : ~270 fds en attente de
+collecte en régime de croisière (3 fds par connexion en WAL : db + -wal + -shm).
+Invisible sur macOS (limite soft ~1 M) ; sur Ubuntu (limite 1024), avec les délégués
+de l'Historique qui interrogent ce store À CHAQUE FRAME de l'animation
+d'enregistrement (~60 connexions/s), le poste du premier utilisateur Linux a épuisé
+ses descripteurs en ~35 s de réunion — SVG, sqlite et tampons Wayland tombant alors
+en cascade (docs/49 §6.4)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -74,11 +87,23 @@ class StoreCalendrier:
         self._chemin.parent.mkdir(parents=True, exist_ok=True)
         self._initialiser_schema()
 
-    def _connexion(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connexion(self):
+        """Connexion transactionnelle FERMÉE à la sortie (cf. docstring du module).
+
+        Contextmanager plutôt qu'un retour direct : les 11 sites d'appel gardent la
+        même écriture `with self._connexion() as conn:`, mais gagnent le `close()`
+        déterministe que le `with` de sqlite3 ne fournit pas. Le `with conn` interne
+        conserve la sémantique transactionnelle d'origine (commit si succès,
+        rollback si exception)."""
         conn = sqlite3.connect(str(self._chemin), timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _initialiser_schema(self) -> None:
         with self._connexion() as conn:

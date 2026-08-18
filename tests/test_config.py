@@ -11,10 +11,12 @@ from debrief_meet.core.config import Config, VERSION_COURANTE, _DEFAUTS
 
 class TestDefauts:
     def test_valeurs_defaut_presentes(self, config_tmp):
-        # Logs ON par défaut sur Windows uniquement (décision D5, docs/31 §3.1) —
-        # ce test tourne aussi sur la VM Windows (build gate docs/32), l'attendu
+        # Logs ON par défaut sur Windows (décision D5, docs/31 §3.1) ET sur Linux
+        # (décision L5, docs/49) : dans les deux cas l'utilisateur est distant et les
+        # logs sont le seul canal de debug. macOS reste off (dev local). Ce test
+        # tourne sur les trois plateformes (gates VM Windows et LXC Linux), l'attendu
         # dépend donc de la plateforme d'exécution.
-        logs_attendus = sys.platform == "win32"
+        logs_attendus = sys.platform == "win32" or sys.platform.startswith("linux")
         assert config_tmp.get("modele") == "large-v3-turbo"
         assert config_tmp.get("langue") is None
         assert config_tmp.get("intervalle_reunion") == 30

@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+from debrief_meet.platform.linux.presse_papiers import PressePapiersLinux
+
+
+def test_copier_puis_lire_aller_retour(qapp):
+    pp = PressePapiersLinux()
+    pp.copier("texte de test")
+    assert pp.lire() == "texte de test"
+
+
+def test_ne_logge_jamais_le_texte_copie(qapp, caplog):
+    """Règle docs/31 §3.7.1 : aucun texte transcrit dans les logs — la dictée et la
+    copie de transcription passent toutes les deux par ici."""
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="debrief_meet"):
+        PressePapiersLinux().copier("secret à ne jamais journaliser")
+
+    # `getMessage()` applique les arguments : c'est le texte réellement écrit dans le
+    # fichier de log, pas le gabarit `%s`.
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("secret" in m for m in messages)
+    # La longueur, elle, doit bien être tracée (utile au diagnostic).
+    assert any("copier(30 chars)" in m for m in messages)

@@ -15,8 +15,8 @@ def test_ne_leve_jamais_et_rubriques_attendues_presentes():
         assert cle in infos
 
 
-def test_sounddevice_qui_leve_devient_indisponible(monkeypatch):
-    import sounddevice as sd
+def test_sounddevice_qui_leve_devient_indisponible(monkeypatch, sounddevice_dispo):
+    sd = sounddevice_dispo
 
     def _leve(*a, **kw):
         raise RuntimeError("PortAudio cassé")
@@ -46,3 +46,64 @@ def test_rubriques_windows_ne_levent_pas_meme_sans_windll(monkeypatch):
 def test_version_lib_inconnue_indisponible():
     from debrief_meet.platform.infos_systeme import _version_lib
     assert "indisponible" in _version_lib("ce-paquet-n-existe-pas-du-tout")
+
+
+# ── Rubriques Linux (docs/49 §5.5) ───────────────────────────────────────────
+
+def test_rubriques_linux_absentes_hors_linux(monkeypatch):
+    """Ne pas allonger l'en-tête de session des autres OS avec des « non collecté »."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    infos = collecter_infos_systeme()
+    for cle in ("distribution", "session", "serveur_audio"):
+        assert cle not in infos
+
+
+def test_rubriques_linux_presentes_et_sans_levee(monkeypatch):
+    """Sur Mac, /proc/meminfo, /etc/os-release et pactl n'existent pas — les branches
+    Linux doivent se replier sur "indisponible (...)" sans jamais faire échouer tout
+    l'en-tête de session."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    infos = collecter_infos_systeme()
+    for cle in ("distribution", "session", "serveur_audio", "ram_go"):
+        assert cle in infos
+        assert isinstance(infos[cle], str) and infos[cle]
+
+
+def test_ram_linux_lit_memtotal(monkeypatch, tmp_path):
+    from debrief_meet.platform import infos_systeme
+
+    faux = tmp_path / "meminfo"
+    faux.write_text("MemTotal:       16316420 kB\nMemFree:  2000 kB\n", encoding="utf-8")
+    ouvrir_reel = open
+    monkeypatch.setattr("builtins.open",
+                        lambda f, *a, **kw: ouvrir_reel(faux if f == "/proc/meminfo" else f,
+                                                        *a, **kw))
+    assert infos_systeme._ram_go_linux() == "15.6"
+
+
+def test_session_linux_expose_wayland_ou_x11(monkeypatch):
+    """Wayland vs X11 conditionne tray et raccourcis globaux (docs/49 L2) : l'info
+    doit être dans tout diagnostic, pas à déduire."""
+    from debrief_meet.platform import infos_systeme
+
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+    assert infos_systeme._session_linux() == "wayland (ubuntu:GNOME)"
+
+
+def test_session_linux_variables_absentes(monkeypatch):
+    from debrief_meet.platform import infos_systeme
+
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    assert infos_systeme._session_linux() == "inconnu (inconnu)"
+
+
+def test_serveur_audio_sans_pactl(monkeypatch):
+    from debrief_meet.platform import infos_systeme
+
+    def _absent(*a, **kw):
+        raise FileNotFoundError("pactl")
+
+    monkeypatch.setattr("subprocess.run", _absent)
+    assert "pactl absent" in infos_systeme._serveur_audio_linux()

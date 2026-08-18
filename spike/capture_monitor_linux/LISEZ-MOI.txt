@@ -1,0 +1,85 @@
+TEST DE CAPTATION DU SON SYSTÈME — Ubuntu
+=========================================
+
+Merci de prendre 5 minutes pour ce test. Il prépare l'enregistrement des
+réunions dans debriefMeet sous Linux : on a besoin de savoir comment TON
+Ubuntu expose le son qui sort des haut-parleurs.
+
+Le test n'installe rien sur ton système, ne modifie aucun réglage, et
+n'envoie rien sur Internet. Tout reste sur ta machine jusqu'à ce que TU
+renvoies le fichier de résultat.
+
+
+CE QU'IL FAUT PRÉPARER
+----------------------
+
+1. De quoi faire du son pendant quelques minutes : une vidéo YouTube
+   ouverte dans ton navigateur, ou un fichier de musique. Peu importe
+   quoi, du moment que ça dure au moins 2 minutes.
+
+2. Un casque USB ou Bluetooth, à portée de main mais PAS ENCORE branché.
+   Si tu n'en as pas, ce n'est pas bloquant : le test te proposera de
+   sauter cette partie.
+
+3. Le son de l'ordinateur non coupé, à un volume audible.
+
+
+COMMENT LANCER
+--------------
+
+Une seule dépendance à installer au préalable (elle permet à Python de
+lire le son ; elle n'est pas toujours présente sur Ubuntu) :
+
+    sudo apt install libportaudio2
+
+Ouvre ensuite un terminal dans le dossier qu'on t'a envoyé, puis :
+
+    sh lancer.sh
+
+Si un message te dit qu'il manque autre chose (« python3-venv » par
+exemple), lance la commande qu'il affiche puis relance « sh lancer.sh ».
+Le test vérifie ces prérequis avant de commencer et te donne la commande
+exacte : tu ne peux pas te tromper.
+
+
+COMMENT ÇA SE PASSE
+-------------------
+
+Le test t'indique quoi faire, une action à la fois, et attend que tu
+appuies sur Entrée. Tu n'as jamais à deviner ce qu'il attend : suis les
+consignes affichées à l'écran.
+
+Il y a trois étapes :
+
+  1. Il liste les périphériques audio (rien à faire).
+
+  2. Il enregistre une quinzaine de secondes pendant que ta vidéo joue.
+     Il te demandera de PARLER À VOIX HAUTE quelques mots pendant ce
+     temps (compte jusqu'à dix, par exemple).
+
+  3. Il continue d'enregistrer pendant que tu BRANCHES puis DÉBRANCHES
+     ton casque. C'est l'étape la plus importante : ne mets pas la vidéo
+     en pause, laisse tout tourner et suis simplement les consignes.
+
+
+CE QU'IL FAUT RENVOYER
+----------------------
+
+À la fin, le test affiche le chemin d'UN SEUL fichier .zip. C'est
+celui-là qu'il faut renvoyer à Sylvain, rien d'autre.
+
+Il contient le journal technique de la mesure et les courts
+enregistrements audio faits pendant les étapes 2 et 3 : la musique ou la
+vidéo que tu as jouée, et les quelques mots que tu as prononcés. Rien
+d'autre n'est capté, et rien n'est enregistré en dehors de ces
+moments-là. Si tu préfères ne pas envoyer l'audio, tu peux ouvrir le zip
+et n'envoyer que le fichier « sonde.log » — dis-le simplement, on fera
+avec.
+
+
+SI ÇA NE MARCHE PAS
+-------------------
+
+Ce n'est pas grave, et ça nous apprend quelque chose aussi. Renvoie ce
+que le terminal affiche (copier-coller du texte), même si c'est une
+erreur : c'est déjà une information utile.

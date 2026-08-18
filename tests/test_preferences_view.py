@@ -590,10 +590,10 @@ def test_distant_un_seul_editeur_de_raccourci(qapp, tmp_path, mode_distant):
 
 # ── Sélecteur de micro : libellés distinguables (docs/44 §8.7) ────────────────
 
-def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch):
+def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch, sounddevice_dispo):
     """Le même casque Bluetooth apparaissait 3 fois à l'identique (MME, DirectSound,
     WASAPI) — choix impossible pour l'utilisatrice, constaté le 2026-08-04."""
-    import sounddevice as sd
+    sd = sounddevice_dispo
 
     peripheriques = [
         {"name": "Headset (casque Bluetooth)", "max_input_channels": 1, "hostapi": 0},
@@ -616,9 +616,9 @@ def test_selecteur_micro_distingue_les_api_audio(qapp, tmp_path, monkeypatch):
     assert len(set(libelles)) == len(libelles), "aucun libellé ne doit être ambigu"
 
 
-def test_selecteur_micro_survit_a_une_api_illisible(qapp, tmp_path, monkeypatch):
+def test_selecteur_micro_survit_a_une_api_illisible(qapp, tmp_path, monkeypatch, sounddevice_dispo):
     """Le suffixe est décoratif : son échec ne doit pas vider le sélecteur."""
-    import sounddevice as sd
+    sd = sounddevice_dispo
 
     monkeypatch.setattr(sd, "query_devices",
                         lambda i=None: [{"name": "Micro", "max_input_channels": 1, "hostapi": 0}]
@@ -630,10 +630,10 @@ def test_selecteur_micro_survit_a_une_api_illisible(qapp, tmp_path, monkeypatch)
     assert "Micro" in libelles
 
 
-def test_defaut_indique_le_peripherique_resolu(qapp, tmp_path, monkeypatch):
+def test_defaut_indique_le_peripherique_resolu(qapp, tmp_path, monkeypatch, sounddevice_dispo):
     """« par défaut » ne disait pas ce qu'il résolvait — c'est ce qui a masqué le fait
     qu'un micro interne était enregistré alors qu'un casque était branché."""
-    import sounddevice as sd
+    sd = sounddevice_dispo
 
     monkeypatch.setattr(sd, "query_devices",
                         lambda i=None: {"name": "Microphone Array (Realtek)", "max_input_channels": 4, "hostapi": 0}

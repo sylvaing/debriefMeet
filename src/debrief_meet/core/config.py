@@ -20,6 +20,10 @@ VERSION_COURANTE = 3
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
 _WINDOWS = sys.platform == "win32"
+# Linux : même situation que Windows — l'utilisateur cible est un collègue en
+# production sur une machine à laquelle le développeur n'a pas accès, les logs sont
+# le seul canal de debug (docs/49 L5). macOS reste off par défaut (dev local).
+_LOGS_PAR_DEFAUT = _WINDOWS or sys.platform.startswith("linux")
 
 _DEFAUTS: dict[str, Any] = {
     "version": VERSION_COURANTE,
@@ -50,10 +54,11 @@ _DEFAUTS: dict[str, Any] = {
     "lexique_corrections": _lexique.corrections_par_defaut(),
     "lexique_actif": True,
     "demarrage_auto": False,
-    # Windows : logs DEBUG activés par défaut (décision D5) — seul canal de debug tant
-    # qu'aucune machine Windows de dev n'est disponible. macOS/Linux inchangés.
-    "logs_actifs": _WINDOWS,
-    "logs_debug": _WINDOWS,
+    # Windows (docs/30 D5) et Linux (docs/49 L5) : logs DEBUG activés par défaut —
+    # seul canal de debug tant qu'aucune machine de dev de cet OS n'est disponible.
+    # macOS inchangé (logs off par défaut).
+    "logs_actifs": _LOGS_PAR_DEFAUT,
+    "logs_debug": _LOGS_PAR_DEFAUT,
     "notifications": True,
     # Défauts Windows Ctrl+Alt+D/R/J (décision D3) — Meta = touche Windows, réservée par
     # l'OS pour beaucoup de combos, on ne la met pas dans les défauts Windows.

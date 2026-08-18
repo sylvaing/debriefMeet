@@ -94,3 +94,33 @@ def test_schema_reouverture_idempotente(tmp_path):
     StoreCalendrier(chemin)
     store2 = StoreCalendrier(chemin)  # ne doit pas lever (CREATE TABLE IF NOT EXISTS)
     assert store2.nombre_evenements() == 0
+
+
+def test_les_connexions_sont_fermees_deterministiquement(tmp_path):
+    """Régression de la panne du 2026-08-13 (docs/49 §6.4) : `with sqlite3.connect()`
+    ne ferme PAS la connexion, et les connexions participent à des cycles de
+    références — seul le GC générationnel les libérait, par rafales (~270 fds en
+    attente en croisière, 3 par connexion WAL). Sur Ubuntu (limite 1024), les
+    délégués de l'Historique interrogeant ce store à chaque frame d'animation ont
+    épuisé les descripteurs du poste du premier utilisateur Linux en ~35 s.
+
+    `gc.disable()` retire le filet qui masquait la fuite sur macOS : si une
+    connexion n'est pas fermée déterministiquement, ce test la voit. `/dev/fd`
+    existe sur macOS et Linux (pas de /proc sur Mac)."""
+    import gc
+    import os
+
+    store = StoreCalendrier(tmp_path / "cal.db")
+    gc.disable()
+    try:
+        gc.collect()
+        avant = len(os.listdir("/dev/fd"))
+        for _ in range(300):
+            store.evenements_dans_plage(0, 10**15)
+        apres = len(os.listdir("/dev/fd"))
+    finally:
+        gc.enable()
+
+    assert apres <= avant + 5, (
+        f"fuite de descripteurs : {avant} → {apres} en 300 requêtes "
+        "(les connexions sqlite ne sont pas fermées à la sortie)")
