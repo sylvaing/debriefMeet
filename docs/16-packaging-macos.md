@@ -229,16 +229,30 @@ pas brew).
    (`f32le`/`s16le`) : utiliser `./configure --list-demuxers`/`--list-muxers`
    comme référence, pas la sortie runtime ; muxers `opus,ogg,wav,pcm_s16le` ;
    decoders `pcm_f32le,pcm_s16le,opus,libopus` ; encoders `pcm_s16le,libopus` ;
-   filters `aresample,aformat,anull`) — **itérer avec les tests réels ci-dessous
-   comme oracle** plutôt que de sur-raffiner la liste a priori.
+   filters `aresample,aformat,anull,aselect,asetpts`) — **itérer avec les tests réels
+   ci-dessous comme oracle** plutôt que de sur-raffiner la liste a priori.
+   ⚠️ `aselect,asetpts` ont été **ajoutés le 2026-08-18** : la compaction des silences
+   avant envoi à Voxtral (docs/42 §10.2, mise en service en août) en dépend, et personne
+   n'avait revisité cette liste — elle échouait donc à tous les coups dans l'app livrée,
+   et jamais en dev où répond le ffmpeg Homebrew complet. **Toute nouvelle invocation de
+   ffmpeg dans le code oblige à revenir ici** : ce build ne connaît que les usages qui
+   existaient le jour où il a été écrit, et un composant manquant ne se voit qu'en
+   production.
    Validation obligatoire du binaire produit :
    - `otool -L ffmpeg` → uniquement `/usr/lib` + frameworks système (pas de
      `/opt/homebrew`) ;
    - `./ffmpeg -hide_banner -encoders | grep libopus` → présent ;
+   - `./ffmpeg -hide_banner -filters` → `aselect` et `asetpts` présents. `return 1` et
+     non `err` dans `valider_binaire` : sur le chemin idempotent, un binaire déjà là mais
+     dépourvu de ces filtres doit être **reconstruit**, pas réutilisé — c'est ce qui
+     rattrape automatiquement un `packaging/vendor/ffmpeg` d'avant le 2026-08-18 ;
    - `./ffmpeg -version` → configuration **sans** `--enable-gpl` ;
    - test réel bout-en-bout : encode WAV→`.opus` avec la commande exacte de
      `core/fichiers.py`, puis décode avec celle de `core/audio.py`, et relire
-     un `.opus` **historique** existant.
+     un `.opus` **historique** existant ;
+   - test réel de compaction : les **deux passes** de `compacter_piste`
+     (`aselect`+`asetpts` → WAV, puis WAV → Opus) avec la syntaxe exacte de l'app. La
+     seule présence des filtres ne dit pas que la chaîne complète fonctionne.
 2. **Script de build** : `packaging/build_ffmpeg.sh` — télécharge les sources
    (ffmpeg + libopus, **versions et checksums SHA-256 épinglés**), compile
    libopus statique puis ffmpeg, dépose le binaire en `packaging/vendor/ffmpeg`
@@ -287,10 +301,14 @@ libopus 1.6.1 statique — checksums SHA-256 dans `build_ffmpeg.sh`) :
 - signé dans l'app produite avec l'identité stable (`build_app.sh` §5.2),
   `Authority=debriefMeet Local` confirmé via `codesign -dv`.
 
-Deux pièges de configure corrigés en cours de route (documentés dans le point 1
-ci-dessus après coup) : `--disable-postproc` n'existe plus en ffmpeg 8.1.x, et
-les demuxers/muxers raw PCM doivent être activés sous leur nom **interne**
-(`pcm_f32le`, `pcm_s16le`) et non le nom court affiché par `ffmpeg -demuxers`.
+Trois pièges de configure (documentés dans le point 1 ci-dessus après coup) :
+`--disable-postproc` n'existe plus en ffmpeg 8.1.x ; les demuxers/muxers raw PCM
+doivent être activés sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`) et non le nom
+court affiché par `ffmpeg -demuxers` ; et la liste des filtres **se périme** quand le
+code gagne un usage de ffmpeg (`aselect,asetpts` ajoutés le 2026-08-18, cf. point 1).
+Les deux premiers cassaient le build, bruyamment. Le troisième ne cassait que
+l'exécution **chez l'utilisateur**, silencieusement : c'est le seul des trois qui a
+vécu des semaines sans être vu.
 
 ### 5.6 Doc & clôture
 
