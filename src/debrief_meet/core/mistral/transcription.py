@@ -7,6 +7,10 @@ sécurité**, déclenchés uniquement sur échec — jamais le chemin normal. De
 2026-08-05, le quota (429) déclenche aussi le découpage : en tier gratuit, une piste
 longue peut dépasser à elle seule la fenêtre tokens/minute (74 min refusées, alors
 que le spike était passé à 37,6 min).
+
+Depuis le 2026-08-18, les **silences sont retirés avant l'envoi** quand cela retire
+une part significative de la piste (`silences.py`, §10.2) — une piste système de
+réunion physique tient alors en quelques dizaines de secondes au lieu de 98 minutes.
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ from debrief_meet.core.mistral.client import (
     ErreurReseauMistral,
 )
 from debrief_meet.core.mistral.decoupage import LIMITE_SEGMENT_S, decouper_piste
+from debrief_meet.core.mistral.silences import PlanCompaction, compacter_piste, plan_compaction
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +68,11 @@ class TranscriptionMistral:
 
 @dataclass
 class AnalysePiste:
-    """Durée + détection de silence — un seul décodage sert aux deux (§7.4)."""
+    """Durée, détection de silence et plan de compaction — un seul décodage sert aux
+    trois (§7.4). `plan` est None si le décodage a échoué."""
     duree_s: float
     silencieuse: bool
+    plan: PlanCompaction | None = None
 
 
 def _mime(chemin: Path) -> str:
@@ -87,7 +94,9 @@ def analyser_piste(chemin: Path) -> AnalysePiste:
         return AnalysePiste(duree_s=0.0, silencieuse=False)
     if not len(audio):
         return AnalysePiste(duree_s=0.0, silencieuse=True)
-    return AnalysePiste(duree_s=len(audio) / 16_000, silencieuse=preparer_asr(audio) is None)
+    return AnalysePiste(duree_s=len(audio) / 16_000,
+                        silencieuse=preparer_asr(audio) is None,
+                        plan=plan_compaction(audio))
 
 
 def _jetons_context_bias(noms: list[str]) -> list[str]:
@@ -154,8 +163,48 @@ def _transcrire_entier(client: ClientMistral, chemin: Path, modele: str,
 def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
                       langue: str | None = None,
                       context_bias: list[str] | None = None,
-                      precedente_entiere: bool | None = None) -> TranscriptionMistral:
-    """Transcrit un fichier audio **entier** (chemin normal, §7.1).
+                      precedente_entiere: bool | None = None,
+                      plan: PlanCompaction | None = None) -> TranscriptionMistral:
+    """Transcrit une piste, silences retirés si cela vaut le coup (§10.2).
+
+    `plan` vient de `analyser_piste` (aucun décodage supplémentaire). Quand il est
+    `utile`, on envoie un WAV ne contenant que les plages sonores puis on remet les
+    horodatages dans la timeline d'origine : une piste système de réunion physique
+    passe ainsi de 98 min à quelques dizaines de secondes (mesuré : 43 s), ce qui
+    économise du quota et réduit d'autant la surface d'hallucination sur du
+    quasi-silence (docs/22). La compaction est un **confort** : tout échec (ffmpeg
+    absent, erreur de filtre) retombe sur l'envoi intégral plutôt que de faire
+    perdre le CR. Les replis ci-dessous s'appliquent ensuite à ce qui est envoyé."""
+    if plan is not None and plan.utile:
+        try:
+            with tempfile.TemporaryDirectory(prefix="mistral_compact_") as tmp:
+                compacte = compacter_piste(chemin, Path(tmp), plan)
+                logger.info(
+                    "Silences retirés de %s : %.0f min → %.0f s envoyées (%d plage(s))",
+                    chemin.name, plan.duree_totale_s / 60, plan.duree_gardee_s, len(plan.plages))
+                res = _transcrire_avec_replis(client, compacte, modele, langue,
+                                              context_bias or [], precedente_entiere)
+            return _remettre_horodatages(res, plan)
+        except Exception as exc:  # noqa: BLE001 — jamais au prix du CR (cf. docstring)
+            logger.warning("Compaction des silences impossible pour %s (%s) — envoi intégral",
+                           chemin.name, exc)
+    return _transcrire_avec_replis(client, chemin, modele, langue, context_bias or [],
+                                   precedente_entiere)
+
+
+def _remettre_horodatages(res: TranscriptionMistral,
+                          plan: PlanCompaction) -> TranscriptionMistral:
+    """Replace les segments d'une transcription compactée dans la timeline d'origine."""
+    for seg in res.segments:
+        seg.debut = plan.vers_original(seg.debut)
+        seg.fin = plan.vers_original(seg.fin)
+    return res
+
+
+def _transcrire_avec_replis(client: ClientMistral, chemin: Path, modele: str,
+                            langue: str | None, context_bias: list[str],
+                            precedente_entiere: bool | None) -> TranscriptionMistral:
+    """Envoi entier puis cascade de replis.
 
     Repli automatique : format refusé (4xx) → transcodage WAV puis réessai ; erreur
     réseau persistante (timeout malgré les reprises du client) → découpage (§10).
@@ -175,7 +224,6 @@ def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
       retry — réessayer en aveugle coûtait 30 s pour rien.
     Les segments du découpage, eux, gardent les retries du client (20/40/60 s) :
     leur 429 est toujours transitoire."""
-    context_bias = context_bias or []
     if precedente_entiere is False:
         logger.warning("Piste précédente découpée — découpage direct pour %s", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)

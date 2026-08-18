@@ -54,8 +54,22 @@ Diarizer **la seule piste `systeme.opus`** ferait passer le transcript distant d
 et, combiné aux noms des invités BlueMind déjà injectés dans le prompt du CR,
 mistral-large aurait de bonnes chances d'**attribuer les propos nominativement** —
 comblant la principale limite du mode distant face au mode local (pyannote), sans
-aucune dépendance locale. La piste `moi.opus` n'a pas besoin de diarization (un
-seul locuteur, par construction).
+aucune dépendance locale.
+
+### 3.1 Réunion PHYSIQUE : c'est `moi.opus` qu'il faut diariser (2026-08-18)
+
+L'affirmation « `moi.opus` n'a pas besoin de diarization, un seul locuteur par
+construction » était **fausse** et vaut d'être corrigée ici, car elle inverse la
+priorité. En réunion physique (tout le monde dans la même salle, aucune visio), il
+n'y a **pas** de son système à capter : le micro enregistre la pièce, donc *tous* les
+participants, et la piste système ne contient que quelques bips de notification —
+mesuré chez une utilisatrice : 19 s sonores sur 98 min (cf. `silences.py`).
+
+Le transcript est alors un **bloc unique étiqueté « Moi »** contenant la parole de
+trois personnes. C'est exactement le cas où la séparation des locuteurs apporte le
+plus, et aujourd'hui **rien ne le couvre en mode distant** (en mode local, pyannote
+le ferait). Diariser la piste micro est donc au moins aussi utile que diariser la
+piste système, et sans doute plus fréquent en pratique.
 
 ## 4. Questions à instruire avant tout chantier
 

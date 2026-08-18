@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -137,6 +138,25 @@ class RemoteIAView(QWidget):
             lambda _i: self._definir("mistral_modele_cr", self._combo_modele_cr.currentData()))
         bloc_cr.addWidget(self._combo_modele_cr)
         lay.addLayout(bloc_cr)
+
+        # Le message d'erreur du pipeline renvoie ici : il doit y avoir quelque chose à
+        # régler (le garde-fou était invisible dans l'UI jusqu'au 2026-08-18).
+        bloc_duree = QVBoxLayout()
+        bloc_duree.setSpacing(6)
+        bloc_duree.addWidget(_libelle_champ("Durée maximale d'une réunion envoyée"))
+        self._spin_duree_max = QSpinBox()
+        self._spin_duree_max.setMaximumWidth(180)
+        self._spin_duree_max.setRange(15, 600)
+        self._spin_duree_max.setSuffix(" min")
+        self._spin_duree_max.setValue(int(self._config.get("mistral_duree_max_min") or 180))
+        self._spin_duree_max.setToolTip(
+            "Garde-fou contre un envoi géant accidentel (un enregistrement oublié la "
+            "nuit). C'est la durée de la réunion qui compte, pas le cumul des deux "
+            "pistes. 180 min correspond à la limite de 3 h par requête de Voxtral.")
+        self._spin_duree_max.valueChanged.connect(
+            lambda v: self._definir("mistral_duree_max_min", v))
+        bloc_duree.addWidget(self._spin_duree_max)
+        lay.addLayout(bloc_duree)
 
         # Inerte en mode distant : il n'y a jamais de transcription locale à ignorer, et
         # `mistral_source_transcription="auto"` y est déjà équivalent à "voxtral"

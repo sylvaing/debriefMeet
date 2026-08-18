@@ -9,6 +9,7 @@ from scipy.io import wavfile
 
 from debrief_meet.core.mistral import transcription as t
 from debrief_meet.core.mistral.client import ClientMistral
+from debrief_meet.core.mistral.silences import PlanCompaction
 
 URL = "https://api.mistral.ai"
 
@@ -357,3 +358,90 @@ def test_segments_gardent_les_retries_429(tmp_path, monkeypatch):
     assert "premier segment" in resultat.texte
     assert "second segment" in resultat.texte
     assert route.call_count == 4
+
+
+# ── compaction des silences avant envoi (§10.2, terrain 2026-08-18) ─────────────
+
+def _plan_utile():
+    """Deux plages sonores dans une piste de 200 s (cas « réunion physique »)."""
+    return PlanCompaction(plages=((10.0, 20.0), (100.0, 130.0)), duree_totale_s=200.0)
+
+
+@respx.mock
+def test_compaction_envoie_le_fichier_compacte_et_replace_les_horodatages(tmp_path, monkeypatch):
+    chemin = _wav_audible(tmp_path, "systeme.wav")
+    compacte = _wav_audible(tmp_path, "systeme_compacte.opus")
+    monkeypatch.setattr(t, "compacter_piste", lambda src, dossier, plan: compacte)
+
+    envoyes: list[str] = []
+
+    def _reponse(requete):
+        envoyes.append(requete.content.decode("utf-8", "replace"))
+        return httpx.Response(200, json={"text": "salut",
+                                         "segments": [{"start": 5.0, "end": 12.0, "text": "salut"}]})
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(side_effect=_reponse)
+    client = ClientMistral(URL, "cle")
+
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest", plan=_plan_utile())
+
+    assert "systeme_compacte.opus" in envoyes[0], "c'est la piste compactée qui part"
+    # 5 s et 12 s dans la timeline compactée → 15 s et 102 s dans l'originale
+    # (1re plage de 10 s, puis reprise à 100 s) : sans ce report, la fusion placerait
+    # des propos de la 100e seconde au début de la réunion.
+    assert resultat.segments[0].debut == pytest.approx(15.0)
+    assert resultat.segments[0].fin == pytest.approx(102.0)
+
+
+@respx.mock
+def test_plan_inutile_envoie_la_piste_telle_quelle(tmp_path, monkeypatch):
+    chemin = _wav_audible(tmp_path, "moi.wav")
+    monkeypatch.setattr(t, "compacter_piste",
+                        lambda *a, **k: pytest.fail("aucune compaction attendue"))
+    plan_plein = PlanCompaction(plages=((0.0, 195.0),), duree_totale_s=200.0)
+
+    envoyes: list[str] = []
+
+    def _reponse(requete):
+        envoyes.append(requete.content.decode("utf-8", "replace"))
+        return httpx.Response(200, json={"text": "ok", "segments": [{"start": 1.0, "end": 2.0,
+                                                                     "text": "ok"}]})
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(side_effect=_reponse)
+    client = ClientMistral(URL, "cle")
+
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest", plan=plan_plein)
+
+    assert "moi.wav" in envoyes[0]
+    assert resultat.segments[0].debut == pytest.approx(1.0), "horodatages inchangés"
+
+
+@respx.mock
+def test_echec_de_compaction_retombe_sur_l_envoi_integral(tmp_path, monkeypatch):
+    """La compaction est un confort : elle ne doit jamais faire perdre le CR."""
+    chemin = _wav_audible(tmp_path, "systeme.wav")
+
+    def _explose(*_a, **_k):
+        raise OSError("ffmpeg indisponible")
+
+    monkeypatch.setattr(t, "compacter_piste", _explose)
+
+    envoyes: list[str] = []
+
+    def _reponse(requete):
+        envoyes.append(requete.content.decode("utf-8", "replace"))
+        return httpx.Response(200, json={"text": "malgré tout"})
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(side_effect=_reponse)
+    client = ClientMistral(URL, "cle")
+
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest", plan=_plan_utile())
+
+    assert resultat.texte == "malgré tout"
+    assert "systeme.wav" in envoyes[0]
+
+
+def test_analyser_piste_fournit_le_plan(tmp_path):
+    analyse = t.analyser_piste(_wav_audible(tmp_path, secondes=3.0))
+    assert analyse.plan is not None
+    assert analyse.plan.duree_totale_s == pytest.approx(3.0, abs=0.1)
