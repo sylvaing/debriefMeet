@@ -1,9 +1,11 @@
 # Phase 6 — Portage Linux (Ubuntu 26.04 LTS)
 
-> **Statut : 📝 SPEC à implémenter** (rédigée le 2026-08-10, décisions arbitrées avec
-> Sylvain le 2026-08-10). Doc unique — le périmètre v1 (mode distant seul, sans
-> raccourcis globaux) est assez réduit pour ne pas justifier l'éclatement en 6 docs
-> comme la Phase 5 Windows (docs/30→35). À exécuter dans l'ordre du §8.
+> **Statut : ✅ IMPLÉMENTÉ et VALIDÉ SUR LE TERRAIN** (spec rédigée le 2026-08-10,
+> livraison validée chez l'utilisateur cible le 2026-08-13, fusionné dans `main`).
+> Doc unique — le périmètre v1 (mode distant seul, sans raccourcis globaux) est assez
+> réduit pour ne pas justifier l'éclatement en 6 docs comme la Phase 5 Windows
+> (docs/30→35). Ordre d'exécution suivi : §8. Reste hors périmètre v1 : notice
+> utilisateur, raccourcis globaux (portail XDG), mode local (§4.3).
 
 ---
 
@@ -479,9 +481,12 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
    résidu. Le venv de build installe `.[linux,dev]` — l'extra `linux` est réduit à
    `livekit` (AEC3) : pas de faster-whisper dans le bundle v1 (~100 Mo épargnés,
    décision L1), paquets moteur en EXCLUDES du spec par ceinture-bretelles.
-6. **Livraison** : notice utilisateur (install `dpkg -i`/`apt install ./…`, où sont
-   les données, comment exporter un diagnostic — miroir allégé de docs/35),
-   installation chez le collègue, première réunion réelle, lecture des logs.
+6. 🔄 **Livraison** — **validée sur le terrain le 2026-08-13** : le `.deb` corrigé
+   (`…cd5620c…`, après le correctif §6.4) **fonctionne chez le collègue**. Le
+   portage est donc opérationnel de bout en bout sur la machine cible, ce qui a
+   justifié la fusion dans `main`. **Reste** : la notice utilisateur (install
+   `apt install ./…`, où vivent les données, comment exporter un diagnostic —
+   miroir allégé de docs/35), et l'usage en conditions réelles dans la durée.
 
 ## 9. Tests et Definition of Done
 
