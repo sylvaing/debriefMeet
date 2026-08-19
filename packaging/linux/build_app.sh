@@ -39,4 +39,11 @@ rm -rf dist/debriefMeet
 echo "[5/5] Assemblage du .deb..."
 sh packaging/linux/build_deb.sh || exit 1
 
+# Menage : les intermediaires PyInstaller (~1,6 Go) et l arbre de staging du .deb ne
+# servent plus une fois le paquet ecrit, et ils s accumulent d un build a l autre. Le
+# conteneur (7,8 Go) est arrive a saturation le 2026-08-19, faisant echouer la fumee
+# sur un « No space left on device » qui n avait rien a voir avec le paquet.
+rm -rf build/work build/deb
+echo "    espace libre : $(df -h / | awk "NR==2 {print \$4}")"
+
 echo "=== Build termine avec succes ==="
