@@ -100,7 +100,6 @@ class FenetrePrincipale(QMainWindow):
         centre = QWidget(self)
         centre.setObjectName("fenetreCentre")
         layout = QVBoxLayout(centre)
-        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(toolbar)
         layout.addWidget(self._pages, 1)
@@ -112,8 +111,15 @@ class FenetrePrincipale(QMainWindow):
             # fond blanc (constaté chez le premier utilisateur Linux). On trace donc
             # notre propre liseré — indépendant du plugin de décoration, donc valable
             # sous Wayland comme sous X11.
+            #
+            # ⚠️ Les marges de 1 px ne sont PAS cosmétiques : à marges nulles, les
+            # widgets enfants peignent par-dessus le liseré et seul le bord haut
+            # survit (livré ainsi le 2026-08-18, invisible sur les côtés).
+            layout.setContentsMargins(1, 1, 1, 1)
             centre.setStyleSheet(
-                f"#fenetreCentre {{ border: 1px solid {C.BORDER}; }}")
+                f"#fenetreCentre {{ border: 1px solid {C.CONTOUR_FENETRE}; }}")
+        else:
+            layout.setContentsMargins(0, 0, 0, 0)
 
         # Référence conservée : un RecordingController sans propriétaire est
         # éligible au GC (cf. sa docstring), ce qui couperait ses connexions.

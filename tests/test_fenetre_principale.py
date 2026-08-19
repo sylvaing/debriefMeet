@@ -140,7 +140,54 @@ def test_bordure_dessinee_quand_le_wm_n_en_fournit_pas(qapp, tmp_path, monkeypat
 
     assert "#fenetreCentre" in feuille, "le sélecteur doit viser le widget central seul"
     assert "border: 1px solid" in feuille
-    assert C.BORDER in feuille
+    assert C.CONTOUR_FENETRE in feuille
+    # Sans marges, les enfants recouvrent le liseré (cf. test des 4 bords).
+    assert fenetre.centralWidget().layout().contentsMargins().left() == 1
+
+
+def _couleurs_des_bords(fenetre) -> dict[str, str]:
+    image = fenetre.centralWidget().grab().toImage()
+    h, w = image.height(), image.width()
+    return {
+        "haut": image.pixelColor(w // 2, 0).name(),
+        "bas": image.pixelColor(w // 2, h - 1).name(),
+        "gauche": image.pixelColor(0, h // 2).name(),
+        "droite": image.pixelColor(w - 1, h // 2).name(),
+    }
+
+
+def test_liseré_visible_sur_les_quatre_bords(qapp, tmp_path, monkeypatch):
+    """Vérification par les PIXELS, pas par la feuille de style : la première version
+    livrée posait bien un `border:` mais laissait les marges à zéro, si bien que les
+    widgets enfants peignaient par-dessus — seul le bord haut survivait, et le défaut
+    est revenu tel quel chez l'utilisateur (2026-08-18)."""
+    from debrief_meet.ui import fenetre_principale as mod
+    from debrief_meet.ui.theme import C
+
+    monkeypatch.setattr(mod, "_BORDURE_FENETRE", True)
+    fenetre = mod.FenetrePrincipale(MachineEtats(), _config(tmp_path))
+    # `grab()` rend le widget sans l'afficher : surtout PAS de `show()` ici — une
+    # fenêtre laissée visible fait entrer un test ultérieur dans une boucle
+    # d'événements imbriquée dont il ne ressort pas (suite bloquée > 10 min).
+    fenetre.resize(400, 300)
+
+    attendu = C.CONTOUR_FENETRE.lower()
+    bords = _couleurs_des_bords(fenetre)
+    assert all(v == attendu for v in bords.values()), (
+        f"liseré absent ou recouvert sur un bord : {bords} (attendu {attendu} partout)")
+
+
+def test_liseré_contraste_avec_un_fond_blanc(qapp, tmp_path):
+    """Le liseré existe pour distinguer la fenêtre d'un fond blanc : une teinte trop
+    proche du blanc ne résoudrait rien (le `C.BORDER` du premier essai était à peine
+    perceptible)."""
+    from debrief_meet.ui.theme import C
+
+    from PySide6.QtGui import QColor
+
+    contour = QColor(C.CONTOUR_FENETRE)
+    assert max(contour.red(), contour.green(), contour.blue()) < 210, (
+        f"{C.CONTOUR_FENETRE} est trop clair pour se détacher d'un fond blanc")
 
 
 def test_pas_de_bordure_la_ou_le_wm_en_dessine_une(qapp, tmp_path, monkeypatch):

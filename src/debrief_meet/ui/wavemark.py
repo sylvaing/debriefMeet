@@ -53,8 +53,19 @@ def _dessiner(painter: QPainter, hex_color: str, filled: bool) -> None:
         _dessiner_barres(painter, couleur)
 
 
-def wavemark_icon(size: int, hex_color: str, filled: bool = True) -> QIcon:
-    """Icône WaveMark : carré arrondi plein (`filled`) ou en contour (« template »)."""
+def wavemark_icon(size: int, hex_color: str, filled: bool = True,
+                  masque: bool | None = None) -> QIcon:
+    """Icône WaveMark : carré arrondi plein (`filled`) ou en contour.
+
+    ⚠️ En **plein**, les barres sont peintes en blanc sur le carré coloré : demander
+    `filled=True` avec une couleur blanche produit donc un **carré blanc uni**, sans
+    la marque (livré par erreur le 2026-08-18 sur la barre GNOME). Une icône
+    monochrome claire s'obtient en **contour**, pas en plein.
+
+    `masque` : force `setIsMask`, qui indique à macOS de reteindre l'icône selon sa
+    barre de menus. Par défaut il suit `not filled` — le contour EST le template
+    macOS. On le force à False pour un contour déjà à la bonne couleur (barre sombre
+    Linux), afin que l'intention reste lisible même si le drapeau y est ignoré."""
     ratio = _ratio_ecran()
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
     pixmap.setDevicePixelRatio(ratio)
@@ -68,5 +79,5 @@ def wavemark_icon(size: int, hex_color: str, filled: bool = True) -> QIcon:
     painter.end()
 
     icone = QIcon(pixmap)
-    icone.setIsMask(not filled)
+    icone.setIsMask((not filled) if masque is None else masque)
     return icone

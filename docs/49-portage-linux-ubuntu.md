@@ -451,6 +451,27 @@ Relevés au premier usage réel, tous **invisibles sur macOS par construction** 
 | Aucune action ni au clic gauche ni au clic droit | Le tray passe par **StatusNotifierItem** : l'hôte GNOME n'appelle jamais `Activate`, il affiche le menu **attaché**. Or `_construire_menu` évitait délibérément `setContextMenu()` — indispensable sur macOS, où un menu attaché s'ouvrirait aux deux clics. Résultat sous Linux : `activated` ne part jamais, l'utilisateur n'a accès à **rien**. | `setContextMenu()` sous Linux uniquement ; popup manuel neutralisé là-bas (il ouvrirait un second menu) |
 | Fenêtre sans contour, invisible sur fond blanc | Sous Wayland, GNOME impose les décorations côté client et le plugin Qt `adwaita` **ne dessine aucune ombre portée**, contrairement aux applications GTK natives. Fond `#FFFFFF` sur fond blanc ⇒ plus de limite visible. | Liseré 1 px `C.BORDER` sur le widget central — indépendant du plugin de décoration, donc valable Wayland **et** X11 |
 
+**Deux de ces correctifs ont dû être repris (2026-08-18, 2ᵉ passage)** — le premier
+essai était vérifié par la feuille de style et non par le rendu :
+
+* **L'icône est devenue un carré blanc uni.** `wavemark_icon` peint les barres en
+  **blanc sur le carré coloré** : demander « plein » avec du blanc efface donc la
+  marque. Il fallait garder le **contour**, simplement en blanc. Mesuré : 18 % de
+  pixels opaques pour le contour contre **92 %** pour un plein — un test compare
+  désormais cette proportion, il aurait suffi à l'attraper.
+* **Le liseré n'était visible qu'en haut.** Le `border:` était bien posé, mais les
+  marges du layout restaient à zéro : les widgets enfants peignaient par-dessus.
+  Ajout de `setContentsMargins(1, 1, 1, 1)`, et couleur dédiée `CONTOUR_FENETRE`
+  (`#B0B7C0`) — `C.BORDER` (`#E7E9EE`) était trop proche du blanc pour résoudre le
+  problème qu'il devait résoudre. Un test relève maintenant la couleur des **quatre
+  bords** du rendu.
+
+> Leçon : pour un défaut **visuel**, un test qui lit la feuille de style ne prouve
+> rien. Les deux régressions ont été rattrapées en rendant le widget (`grab()`) et en
+> comptant des pixels. ⚠️ Rendre **sans `show()`** : une fenêtre laissée visible fait
+> entrer un test ultérieur dans une boucle d'événements imbriquée dont il ne ressort
+> pas (suite bloquée plus de 10 minutes).
+
 ⚠️ **La règle ne se dérive pas de `colorScheme()`.** La tentation serait de choisir la
 couleur du tray d'après `QGuiApplication.styleHints().colorScheme()` : ce serait faux,
 il rapporte la préférence claire/sombre de l'**application**, alors que le bandeau

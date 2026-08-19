@@ -26,6 +26,10 @@ class C:  # ----- Couleurs (hex) -----
     # Surfaces & bordures
     SURFACE = "#FFFFFF"; SUNKEN = "#F6F7F9"; HEADER = "#FBFBFC"
     HOVER = "#FAFAFB"; BORDER = "#E7E9EE"; BORDER_SOFT = "#EFF1F4"; DIVIDER = "#F1F2F5"
+    # Contour de la fenêtre là où le gestionnaire de fenêtres ne dessine pas d'ombre
+    # (Wayland/GNOME). Volontairement plus contrasté que BORDER : il doit rester
+    # visible SUR FOND BLANC, ce qui est tout le problème qu'il résout.
+    CONTOUR_FENETRE = "#B0B7C0"
     # États sémantiques (texte/icône + fond pastille)
     REC = "#FF3B30"; REC_BG = "#FFECEA"
     SUCCESS = "#1F9D6B"; SUCCESS_BG = "#E7F6EF"
