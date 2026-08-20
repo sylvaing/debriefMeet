@@ -1,11 +1,14 @@
 # 50 — Dialogues : défilement, suivi de fenêtre, listes de participants
 
-> **Statut : À FAIRE — rien n'est codé, mais les arbitrages sont pris.** Constaté et
-> instruit le 2026-08-20 sur le Mac de Sylvain, à partir de deux captures du dialogue
-> « Associer à un événement » ouvert sur un événement à **~34 invités**
-> (« CAIH - Daily Meeting »). Les 4 points ouverts ont été **tranchés le même jour**
-> (§6) : le chantier est prêt à être implémenté dans une session dédiée, sans nouvelle
-> question bloquante.
+> **Statut : ✅ IMPLÉMENTÉ le 2026-08-20** — les 4 décisions du §6 sont appliquées,
+> **1456 passed, 0 échec** (contre 1440 avant le chantier : +16 tests). Vérifié en rendu
+> réel (captures hors dépôt) sur les trois cas : 34 invités, 3 invités, confirmation sans
+> corps. Reste les **vérifications manuelles** du §4, qui demandent l'app lancée et un
+> vrai calendrier BlueMind.
+>
+> Constaté et instruit le même jour sur le Mac de Sylvain, à partir de deux captures du
+> dialogue « Associer à un événement » ouvert sur un événement à **~34 invités**
+> (« CAIH - Daily Meeting »).
 >
 > **Portée :** le gabarit de dialogue partagé (`ui/dialogues.py`) et les dialogues
 > BlueMind qui affichent des listes de participants. Aucun impact sur le cœur métier,
@@ -97,9 +100,9 @@ censé désactiver.
 
 ---
 
-## 3. Le chantier (décisions du §6 appliquées)
+## 3. Le chantier (décisions du §6 — toutes implémentées)
 
-### 3.1 Défilement dans le gabarit (priorité 1)
+### 3.1 Défilement dans le gabarit (priorité 1) — ✅ fait
 
 Enrober `zone_corps` d'un `QScrollArea` dans `DialogueGabarit` — **en-tête et pied
 restent fixes hors du défilement**, ce qui garantit que les boutons sont toujours
@@ -116,7 +119,7 @@ barre horizontale `AlwaysOff`, fond transparent (la carte est blanche).
 Bénéfice : la classe de bug disparaît pour **tous** les dialogues du gabarit, pas
 seulement l'association BlueMind.
 
-### 3.2 Tout cocher / tout décocher (priorité 2)
+### 3.2 Tout cocher / tout décocher (priorité 2) — ✅ fait
 
 Purement local à
 [`ui/bluemind_association.py:169-183`](../src/debrief_meet/ui/bluemind_association.py#L169).
@@ -128,7 +131,7 @@ mettant à jour à chaque case cochée.
 Le compteur prend tout son sens avec le nouveau défaut partiel (§3.5) : il rend visible,
 sans dérouler la liste, combien d'invités partiront dans le CR.
 
-### 3.3 Suivi de la fenêtre : refonte en overlay enfant (priorité 3) — **décision D3**
+### 3.3 Suivi de la fenêtre : refonte en overlay enfant (priorité 3) — **décision D3**, ✅ fait
 
 `CarteFlottante` cesse d'être une fenêtre de premier niveau : la carte devient un
 **widget enfant de la fenêtre hôte**, posé par-dessus, occupant tout son rectangle. Le
@@ -169,7 +172,7 @@ un rendu parfait. Points d'attention à traiter dans la session d'implémentatio
 Les tests existants qui instancient un dialogue sans l'afficher doivent continuer à
 passer : la construction ne doit pas dépendre de la présence d'une fenêtre hôte visible.
 
-### 3.4 Lisibilité des lignes de participants — **décision D1 : élargir la carte**
+### 3.4 Lisibilité des lignes de participants — **décision D1 : élargir la carte**, ✅ fait
 
 `largeur_carte` de `DialogAssociationBluemind` passe de **440 à 580 px** ; la
 `QCheckBox` mono-ligne est conservée telle quelle. Une infobulle portant le texte
@@ -183,7 +186,7 @@ en gris) reste la porte de sortie si la troncature réapparaît en usage réel.
 
 `bluemind_details.py` garde sa largeur actuelle : ses libellés passent déjà à la ligne.
 
-### 3.5 Défaut de cochage à seuil — **décision D2**
+### 3.5 Défaut de cochage à seuil — **décision D2**, ✅ fait
 
 Aujourd'hui **tous** les invités sont pré-cochés
 ([`ui/bluemind_association.py:181`](../src/debrief_meet/ui/bluemind_association.py#L181)).
@@ -225,9 +228,12 @@ pathologique — Sylvain a décoché les trois quarts à la main.
   point du chantier qui ne sera pas prouvé par un test automatisé.
 - **Déplacement/redimensionnement** de la fenêtre principale avec un dialogue ouvert,
   sur les 3 OS si possible (le rendu de l'ombre et du voile change de support).
-- **Modalité** (§3.3 point 2) : vérifier explicitement ce qui reste cliquable pendant
-  qu'un dialogue est ouvert, et trancher si le comportement diffère de l'actuel.
-- Dialogues montés depuis les **Préférences** (fenêtre hôte différente de la principale).
+- **Modalité** (§3.3 point 2) : vérifier ce qui reste cliquable pendant qu'un dialogue
+  est ouvert. ⚠️ Le risque s'est révélé **théorique** — l'app n'a qu'une seule fenêtre
+  (`FenetrePrincipale`) et les Préférences en sont une *page*, pas une fenêtre : il n'y a
+  aucune autre fenêtre à laisser cliquable. Restent le menu du tray (déjà accessible
+  auparavant) et les `QProgressDialog` transitoires, qui ne coexistent pas avec un
+  dialogue du gabarit.
 
 ---
 
@@ -272,3 +278,51 @@ Aucun reliquat : les 4 points sont clos, valeur de N comprise.
   overlay enfant, `bluemind_details` inclus. Le document devient exécutable en l'état.
 - **2026-08-20** — seuil de pré-cochage fixé à **N = 8** par Sylvain (l'agent proposait
   12). Plus aucune question ouverte.
+- **2026-08-20** — chantier **implémenté** (§8) : 1456 passed, 0 échec ; rendus vérifiés
+  sur 34 invités, 3 invités et confirmation sans corps.
+
+---
+
+## 8. Journal d'implémentation (2026-08-20)
+
+Fichiers touchés : `ui/dialogues.py` (gabarit), `ui/bluemind_association.py`,
+`tests/test_dialogues.py` (nouveau, 10 tests), `tests/test_bluemind_association_dialog.py`
+(+6 tests). `ui/bluemind_details.py` n'a **pas** été modifié : le correctif du gabarit le
+répare tel quel (vérifié en rendu, sa liste défile et « Fermer » reste atteignable).
+
+### 8.1 Ce que le plan n'avait pas prévu
+
+1. **Le fond du corps défilant sortait gris.** Ni `setAutoFillBackground(False)` ni une
+   palette blanche n'y changent rien : la feuille de style globale (`QWidget { … }` de
+   `theme.qss`) prime sur la palette, et le viewport se peignait en `Base`. Styler le
+   `QScrollArea` lui-même règle le fond mais bascule **tout son sous-arbre** sur le rendu
+   « stylesheet » — la barre de défilement y perd sa glissière. Solution retenue : la
+   feuille de style est posée sur le **viewport seul**. Invisible sur macOS (style natif),
+   bien réel sous Fusion — donc sous **Linux**, et dans le rendu des tests.
+2. **Le `QScrollArea` a un plancher de hauteur** (~70 px, prévu pour une vue autonome) :
+   il creusait 70 px de blanc dans les dialogues **sans corps** (`confirmer`, `informer`,
+   `avertir`) et empêchait le layout de comprimer le corps. `minimumSizeHint` forcé à
+   zéro. Restaient 18 px d'espacement de layout : la zone défilante est donc **masquée**
+   quand le corps est vide — un `confirmer()` retrouve exactement sa hauteur d'avant
+   (154 px, mesuré des deux côtés).
+3. **`AlignCenter` empêche le layout de comprimer la carte** : l'alignement fait servir
+   le `sizeHint` de l'item sans le borner. C'est la **taille maximale** du widget qui
+   plafonne — d'où `_ajuster_hauteur_carte`, sans laquelle le défilement n'aurait rien
+   changé.
+4. **Le filtre d'événements survit à la destruction de l'hôte** : à la fermeture de
+   l'app, Qt appelle encore `eventFilter` alors que les attributs Python de l'overlay
+   sont purgés (`AttributeError` sur stderr à chaque quit). D'où l'accès par `getattr`,
+   figé par un test.
+5. **Vidage récursif du layout** : l'en-tête « PARTICIPANTS » étant devenue une *ligne*
+   (sous-layout), le vidage historique — qui ne regardait que `item.widget()` — laissait
+   le libellé et la bascule affichés en double au changement d'événement.
+
+### 8.2 Points à connaître pour la suite
+
+- `QCoreApplication.processEvents()` **ne traite pas** les `DeferredDelete` : un test qui
+  vérifie une destruction par `deleteLater` doit appeler
+  `sendPostedEvents(None, QEvent.Type.DeferredDelete)`.
+- Le seuil et le statut « présent » sont deux constantes publiques de
+  `ui/bluemind_association.py` : `SEUIL_PRECOCHAGE = 8` et `STATUT_ACCEPTE = "Accepted"`.
+- L'infobulle de chaque case porte le libellé complet — c'est le filet contre la
+  troncature que la carte à 580 px ne fait que repousser (D1).

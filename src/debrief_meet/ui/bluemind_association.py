@@ -15,9 +15,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -41,6 +43,43 @@ def libelle_section(texte: str) -> QLabel:
     return lab
 
 
+#: Au-delà de ce nombre d'invités, on ne pré-coche plus tout le monde (docs/50 §3.5).
+#: Seuil bas assumé : se tromper dans ce sens coûte un clic sur « Tout cocher », alors
+#: que l'erreur inverse envoie au CR des noms de gens absents — et le modèle **invente
+#: alors des participants**, sans que rien ne le signale (correctif du 2026-08-06).
+SEUIL_PRECOCHAGE = 8
+
+#: Valeur brute BlueMind du statut « accepté » (cf. `_STATUTS_PART` de `sync.py`) — les
+#: seuls, avec l'organisateur, à être pré-cochés au-delà du seuil.
+STATUT_ACCEPTE = "Accepted"
+
+
+def _vider_layout(layout) -> None:
+    """Vide un layout **et ses sous-layouts**. Récursif à dessein : depuis que l'en-tête
+    « PARTICIPANTS » est une ligne (libellé + bascule), un `takeAt` qui ne regarderait
+    que `item.widget()` laisserait ces deux widgets orphelins mais toujours affichés au
+    changement d'événement."""
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.deleteLater()
+        elif item.layout() is not None:
+            _vider_layout(item.layout())
+
+
+def pre_cocher(personnes: list[dict]) -> bool:
+    """Faut-il pré-cocher tout le monde ? Vrai jusqu'à `SEUIL_PRECOCHAGE` invités —
+    cas nominal d'une réunion d'équipe, comportement historique inchangé."""
+    return len(personnes) <= SEUIL_PRECOCHAGE
+
+
+def _coche_par_defaut(personne: dict, tout_cocher: bool) -> bool:
+    if tout_cocher:
+        return True
+    return bool(personne.get("organisateur")) or personne.get("part_status") == STATUT_ACCEPTE
+
+
 class DialogAssociationBluemind(DialogueGabarit):
     """Trois sorties possibles quand `contexte_cr` est vrai (proposition faite juste avant
     un CR Mistral, docs/42) : `Rejected` = renoncer à tout ; `Accepted` avec
@@ -58,7 +97,10 @@ class DialogAssociationBluemind(DialogueGabarit):
                 "de transcription."
                 if contexte_cr else
                 "Un événement du calendrier BlueMind correspond à cette réunion."),
-            icone="calendar-check", intention=Intention.ACCENT, largeur_carte=440)
+            # 580 et non 440 (docs/50 §3.4) : « Nom <email> — statut » tient sur une
+            # ligne de QCheckBox, qui ne sait pas passer à la ligne. L'infobulle posée
+            # sur chaque case reste le filet quand une adresse dépasse quand même.
+            icone="calendar-check", intention=Intention.ACCENT, largeur_carte=580)
         self._chemin_md = chemin_md
         self._evenements = evenements
         self._evenement_choisi: Evenement | None = None
@@ -141,10 +183,7 @@ class DialogAssociationBluemind(DialogueGabarit):
 
     def _selectionner_evenement(self, evt: Evenement) -> None:
         self._evenement_choisi = evt
-        while self._lay_recap.count():
-            item = self._lay_recap.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        _vider_layout(self._lay_recap)
         self._lay_recap.setSpacing(10)
 
         # En-tête : « Titre : » en gras + titre de l'événement, puis date/heure
@@ -165,24 +204,58 @@ class DialogAssociationBluemind(DialogueGabarit):
         self._check_titre.setChecked(titre_reunion(self._chemin_md) is None)
         self._lay_recap.addWidget(self._check_titre)
 
-        self._lay_recap.addSpacing(4)
-        self._lay_recap.addWidget(libelle_section("Participants"))
-
-        self._checks_invites = []
         personnes = []
         if evt.organisateur:
             personnes.append({**evt.organisateur, "organisateur": True})
         for inv in evt.invites:
             personnes.append({**inv, "organisateur": False})
 
+        self._lay_recap.addSpacing(4)
+        entete = QHBoxLayout()
+        self._libelle_participants = libelle_section("Participants")
+        entete.addWidget(self._libelle_participants)
+        entete.addStretch()
+        self._bouton_tout = QPushButton()
+        self._bouton_tout.setObjectName("secondary")
+        self._bouton_tout.setStyleSheet("padding: 3px 10px; font-size: 12px;")
+        self._bouton_tout.clicked.connect(self._basculer_tout)
+        entete.addWidget(self._bouton_tout)
+        self._lay_recap.addLayout(entete)
+
+        self._checks_invites = []
+        tout_cocher = pre_cocher(personnes)
         for p in personnes:
             libelle = "organisateur" if p["organisateur"] else libelle_part_status(p.get("part_status"))
-            check = QCheckBox(f"{p.get('nom') or p.get('email', '')} <{p.get('email', '')}> — {libelle}")
-            check.setChecked(True)
+            texte = f"{p.get('nom') or p.get('email', '')} <{p.get('email', '')}> — {libelle}"
+            check = QCheckBox(texte)
+            check.setToolTip(texte)          # filet contre la troncature (carte à largeur fixe)
+            check.setChecked(_coche_par_defaut(p, tout_cocher))
+            check.toggled.connect(self._maj_compteur)
             self._lay_recap.addWidget(check)
             self._checks_invites.append((check, p))
 
+        self._maj_compteur()
         self._pages.setCurrentWidget(self._page_recap)
+
+    # ── Compteur + bascule « tout cocher / tout décocher » ──────────────────────
+
+    def _maj_compteur(self) -> None:
+        """Rend visible, sans dérouler la liste, combien d'invités partiront dans le CR —
+        et oriente la bascule : tout coché ⇒ on propose de décocher, sinon de cocher."""
+        total = len(self._checks_invites)
+        coches = sum(1 for check, _ in self._checks_invites if check.isChecked())
+        self._libelle_participants.setText(f"PARTICIPANTS ({coches}/{total})")
+        self._bouton_tout.setText("Tout décocher" if coches == total and total else "Tout cocher")
+        self._bouton_tout.setEnabled(total > 0)
+
+    def _basculer_tout(self) -> None:
+        cible = not all(check.isChecked() for check, _ in self._checks_invites)
+        for check, _ in self._checks_invites:
+            # Signaux coupés : sinon chaque case relance le compteur (34 fois pour rien).
+            check.blockSignals(True)
+            check.setChecked(cible)
+            check.blockSignals(False)
+        self._maj_compteur()
 
     # ── Validation ───────────────────────────────────────────────────────────────
 
