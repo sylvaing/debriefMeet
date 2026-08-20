@@ -195,10 +195,12 @@ Nouveau comportement :
   sont pré-cochés ; les « sans réponse », « refusé » et « provisoire » sont décochés, à
   recocher au besoin (le « tout cocher » de §3.2 le fait en un clic).
 
-**N = 12** (valeur retenue par l'agent, à confirmer si Sylvain préfère un autre seuil —
-c'est une constante nommée, changeable en une ligne). Motivation : au-delà d'une
-douzaine d'invités, on n'est plus sur une réunion d'équipe mais sur une invitation
-large, où la majorité des adresses ne correspond à personne ayant réellement parlé.
+**N = 8**, fixé par Sylvain le 2026-08-20 (constante nommée, changeable en une ligne).
+Motivation : au-delà de huit invités, on n'est plus sur une réunion d'équipe mais sur
+une invitation large, où la majorité des adresses ne correspond à personne ayant
+réellement parlé. Le seuil est volontairement bas — se tromper dans ce sens coûte un
+clic sur « Tout cocher », alors que l'erreur inverse fait inventer des participants au
+CR sans que rien ne le signale.
 
 Le statut est déjà disponible (`part_status`, rendu par `libelle_part_status`) — il
 faut décider du mapping exact des libellés vers « accepté » et le figer dans un test,
@@ -253,12 +255,11 @@ pathologique — Sylvain a décoché les trois quarts à la main.
 | # | Point | Décision |
 |---|---|---|
 | **D1** | Format des lignes de participants | **Élargir la carte** (440 → 580 px), `QCheckBox` mono-ligne conservée + infobulle. La ligne à deux niveaux reste en réserve si la troncature revient. cf. §3.4 |
-| **D2** | Défaut de cochage | **Seuil** : tout coché jusqu'à N invités, au-delà organisateur + `accepté` seulement. **N = 12** proposé par l'agent, à confirmer. cf. §3.5 |
+| **D2** | Défaut de cochage | **Seuil** : tout coché jusqu'à N invités, au-delà organisateur + `accepté` seulement. **N = 8** (fixé par Sylvain). cf. §3.5 |
 | **D3** | Suivi de fenêtre | **Refonte en overlay enfant** (et non le filtre d'événements) — suivi parfait, coût assumé sur `exec()`, la modalité et les tests. cf. §3.3 |
 | **D4** | Périmètre | **`bluemind_details` inclus**, avec vérification manuelle sur un événement à beaucoup d'invités. cf. §4 |
 
-Seul reliquat : la **valeur de N** (12 par défaut) — constante nommée, à ajuster d'un mot
-si Sylvain préfère un autre seuil.
+Aucun reliquat : les 4 points sont clos, valeur de N comprise.
 
 ---
 
@@ -269,3 +270,5 @@ si Sylvain préfère un autre seuil.
   aucun correctif écrit ; document créé, chantier reporté à une session dédiée.
 - **2026-08-20** — les 4 points ouverts tranchés (§6) : carte élargie, cochage à seuil,
   overlay enfant, `bluemind_details` inclus. Le document devient exécutable en l'état.
+- **2026-08-20** — seuil de pré-cochage fixé à **N = 8** par Sylvain (l'agent proposait
+  12). Plus aucune question ouverte.
