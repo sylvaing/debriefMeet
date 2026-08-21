@@ -388,10 +388,18 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     if echecs_raccourcis:
         logger.warning("Raccourcis non enregistrés (déjà pris ?) : %s", ", ".join(echecs_raccourcis))
 
+    # Arbitre unique de la couleur d'icône : orchestrateurs (rouge prioritaire) +
+    # jobs de l'Historique (orange — transcription locale, locuteurs, CR Mistral).
+    from debrief_meet.ui.arbitre_etat_visuel import ArbitreEtatVisuel
+    arbitre_etat = ArbitreEtatVisuel(parent=app)
+    arbitre_etat.etat_change.connect(tray.definir_etat_visuel)
+    arbitre_etat.etat_change.connect(fenetre.definir_etat_visuel)
+    arbitre_etat.suivre_gestionnaire(gestionnaire_diar, "jobs_locaux")
+    arbitre_etat.suivre_gestionnaire(gestionnaire_cr_mistral, "cr_mistral")
+
     orchestrateurs = [o for o in (orch_dictee, orch_reunion, orch_journal) if o is not None]
     for orch in orchestrateurs:
-        orch.etat_visuel_change.connect(tray.definir_etat_visuel)
-        orch.etat_visuel_change.connect(fenetre.definir_etat_visuel)
+        arbitre_etat.suivre_orchestrateur(orch)
     orch_reunion.micro_perdu.connect(tray.notifier_micro_perdu)
     orch_reunion.micro_retabli.connect(tray.notifier_micro_retabli)
     orch_reunion.micro_muet.connect(tray.notifier_micro_muet)
