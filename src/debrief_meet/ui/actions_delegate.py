@@ -50,7 +50,7 @@ class ActionSpec:
     tooltip: str
     actif: bool
     on_click: Callable[[], None]
-    danger: bool = False           # rouge permanent dans le menu ⋯ (§8.6.3, ex. Tout supprimer)
+    danger: bool = False           # rouge permanent dans le menu ⋯ (§8.6.3, ex. Supprimer)
     separateur_avant: bool = False  # filet avant cet item dans le menu ⋯
 
 

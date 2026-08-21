@@ -321,7 +321,7 @@ class ReunionView(QWidget):
             _ICONE_SUPPR_AUDIO, "Supprimer l'audio (garde le débrief)", bool(ligne.audio),
             lambda c=chemin: self._supprimer_audio_un(c), separateur_avant=True))
         actions.append(ActionSpec(
-            _ICONE_TOUT_SUPPR, "Tout supprimer", True,
+            _ICONE_TOUT_SUPPR, "Supprimer", True,
             lambda c=chemin: self._tout_supprimer_un(c), danger=True))
         return ActionsLigne(boutons=self._boutons_reunion(ligne, etat_cr), menu=actions)
 
