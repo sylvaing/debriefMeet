@@ -496,8 +496,8 @@ def test_boutons_dedies_generer_cr_et_copier_cr(qapp, machine, tmp_path):
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
     boutons = _boutons(vue)
-    assert [b.icone for b in boutons] == ["notebook", "copy"]
-    generer, copier = boutons
+    assert [b.icone for b in boutons] == ["notebook", "copy", "file-arrow-up"]
+    generer, copier, _fichier = boutons
     assert generer.actif is True
     assert copier.actif is False                    # pas de CR généré → grisé
     assert "aucun cr" in copier.tooltip.lower()
@@ -506,7 +506,7 @@ def test_boutons_dedies_generer_cr_et_copier_cr(qapp, machine, tmp_path):
 def test_boutons_sans_gestionnaire_cr_seul_copier_reste(qapp, machine, tmp_path):
     _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
-    assert [b.icone for b in _boutons(vue)] == ["copy"]
+    assert [b.icone for b in _boutons(vue)] == ["copy", "file-arrow-up"]
 
 
 def test_bouton_copier_cr_actif_avec_cr(qapp, machine, tmp_path):
@@ -532,6 +532,40 @@ def test_menu_commence_par_copier_la_transcription(qapp, machine, tmp_path):
     _reunion_avec_audio(tmp_path)
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
     assert _actions(vue)[0].tooltip == "Copier la transcription"
+    assert _actions(vue)[1].tooltip == "Copier le fichier de la transcription"
+
+
+# ── Copier le fichier de la transcription ────────────────────────────────────
+
+def test_copier_fichier_pose_transcription_md(qapp, machine, tmp_path):
+    """Toujours `transcription.md` lui-même — jamais la version diarizée."""
+    from tests.fakes.adapters import PressePapiersFake
+    md = _md_simple(tmp_path)
+    chemin_locuteurs(md).write_text("# Locuteurs\n\nMoi : salut", encoding="utf-8")
+    pp = PressePapiersFake()
+    vue = ReunionView(_config(tmp_path), machine, presse_papiers=pp,
+                      gestionnaire=FauxGestionnaire())
+    vue._copier_fichier(md)
+    assert pp.fichiers_copies == [md]
+    assert pp.historique == []      # référence de fichier, pas de texte
+
+
+def test_copier_fichier_ignore_un_chemin_absent(qapp, machine, tmp_path):
+    from tests.fakes.adapters import PressePapiersFake
+    pp = PressePapiersFake()
+    vue = ReunionView(_config(tmp_path), machine, presse_papiers=pp,
+                      gestionnaire=FauxGestionnaire())
+    vue._copier_fichier(tmp_path / "absent.md")
+    assert pp.fichiers_copies == []
+
+
+def test_bouton_copier_fichier_present_meme_en_attente(qapp, machine, tmp_path):
+    """La transcription.md existe dès le démarrage : le bouton est toujours actif."""
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire())
+    bouton = _spec(_boutons(vue), "file-arrow-up")
+    assert bouton.actif is True
+    assert bouton.tooltip == "Copier le fichier de la transcription"
 
 
 def test_copier_cr_copie_le_contenu_brut_sans_prefixe(qapp, machine, tmp_path):

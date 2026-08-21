@@ -140,9 +140,13 @@ class SystemeFake(CaptureAudioSysteme):
 class PressePapiersFake(PressePapiers):
     def __init__(self) -> None:
         self.historique: list[str] = []
+        self.fichiers_copies: list = []
 
     def copier(self, texte: str) -> None:
         self.historique.append(texte)
+
+    def copier_fichier(self, chemin) -> None:
+        self.fichiers_copies.append(chemin)
 
     def lire(self) -> str:
         return self.historique[-1] if self.historique else ""

@@ -28,5 +28,14 @@ class PressePapiersLinux(PressePapiers):
         # Jamais le texte lui-même dans les logs (docs/31 §3.7.1) — la longueur seule.
         logger.debug("PressePapiersLinux: copier(%d chars)", len(texte))
 
+    def copier_fichier(self, chemin) -> None:
+        # `text/uri-list` — le format compris par Nautilus et consorts pour un
+        # collage de fichier (Qt y ajoute le fallback texte du chemin).
+        from PySide6.QtCore import QMimeData, QUrl
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(chemin))])
+        QGuiApplication.clipboard().setMimeData(mime)
+        logger.debug("PressePapiersLinux: copier_fichier(%s)", chemin)
+
     def lire(self) -> str:
         return QGuiApplication.clipboard().text()

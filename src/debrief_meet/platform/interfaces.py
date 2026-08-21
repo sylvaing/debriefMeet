@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import numpy as np
 
 
@@ -131,6 +133,11 @@ class CaptureAudioSysteme(ABC):
 class PressePapiers(ABC):
     @abstractmethod
     def copier(self, texte: str) -> None: ...
+
+    @abstractmethod
+    def copier_fichier(self, chemin: "Path") -> None:
+        """Pose une référence de fichier dans le presse-papiers (pas son contenu) :
+        coller dans le gestionnaire de fichiers ou un mail copie le fichier lui-même."""
 
     @abstractmethod
     def lire(self) -> str: ...

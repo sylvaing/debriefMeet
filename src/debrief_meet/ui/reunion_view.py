@@ -71,6 +71,7 @@ from debrief_meet.ui.theme import C, M
 logger = logging.getLogger(__name__)
 
 _ICONE_COPIER = "copy"
+_ICONE_COPIER_FICHIER = "file-arrow-up"
 _ICONE_TRANSCRIRE = "file-text"
 _ICONE_GENERER = "users"
 _ICONE_EN_COURS = "clock-counter-clockwise"
@@ -252,7 +253,9 @@ class ReunionView(QWidget):
         etat_cr = self._etat_cr_mistral(ligne, un_job_tourne)
 
         actions = [ActionSpec(_ICONE_COPIER, "Copier la transcription", not ligne.en_attente,
-                              lambda c=chemin: self._copier(c))]
+                              lambda c=chemin: self._copier(c)),
+                   ActionSpec(_ICONE_COPIER_FICHIER, "Copier le fichier de la transcription",
+                              True, lambda c=chemin: self._copier_fichier(c))]
 
         # Édition lite : ces deux actions n'existent pas du tout (docs/44). Sans ce gate
         # elles seraient bien ajoutées puis grisées — `dispo`/`prete` ne pilotent que
@@ -356,6 +359,9 @@ class ReunionView(QWidget):
         boutons.append(BoutonSpec(
             _ICONE_COPIER, "Copier le CR" if ligne.cr_disponible else "Aucun CR à copier",
             ligne.cr_disponible, lambda c=chemin: self._copier_cr(c)))
+        boutons.append(BoutonSpec(
+            _ICONE_COPIER_FICHIER, "Copier le fichier de la transcription", True,
+            lambda c=chemin: self._copier_fichier(c)))
         return boutons
 
     def _menu_prompts(self, chemin: Path) -> list[ActionSpec] | None:
@@ -514,6 +520,12 @@ class ReunionView(QWidget):
                 subprocess.run(["pbcopy"], input=texte.encode("utf-8"), check=True)
             except Exception:
                 pass
+
+    def _copier_fichier(self, chemin: Path) -> None:
+        """Pose `transcription.md` lui-même (jamais la version diarizée) dans le
+        presse-papiers — collable dans le gestionnaire de fichiers ou un mail."""
+        if self._presse_papiers and chemin.exists():
+            self._presse_papiers.copier_fichier(chemin)
 
     def _copier_cr(self, chemin: Path) -> None:
         """Copie le CR généré tel quel — pas de préfixe de prompt : contrairement à la

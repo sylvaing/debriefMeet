@@ -23,3 +23,14 @@ def test_ne_logge_jamais_le_texte_copie(qapp, caplog):
     assert not any("secret" in m for m in messages)
     # La longueur, elle, doit bien être tracée (utile au diagnostic).
     assert any("copier(30 chars)" in m for m in messages)
+
+
+def test_copier_fichier_pose_une_url_de_fichier(qapp, tmp_path):
+    from PySide6.QtGui import QGuiApplication
+
+    fichier = tmp_path / "transcription.md"
+    fichier.write_text("contenu", encoding="utf-8")
+    PressePapiersLinux().copier_fichier(fichier)
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasUrls()
+    assert mime.urls()[0].toLocalFile() == str(fichier)

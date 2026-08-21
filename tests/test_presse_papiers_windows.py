@@ -7,3 +7,14 @@ def test_copier_puis_lire_aller_retour(qapp):
     pp = PressePapiersWindows()
     pp.copier("texte de test")
     assert pp.lire() == "texte de test"
+
+
+def test_copier_fichier_pose_une_url_de_fichier(qapp, tmp_path):
+    from PySide6.QtGui import QGuiApplication
+
+    fichier = tmp_path / "transcription.md"
+    fichier.write_text("contenu", encoding="utf-8")
+    PressePapiersWindows().copier_fichier(fichier)
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasUrls()
+    assert mime.urls()[0].toLocalFile() == str(fichier)

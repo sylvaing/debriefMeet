@@ -79,6 +79,9 @@ class PressePapiersStub(PressePapiers):
         self._contenu = texte
         logger.debug("PressePapiersStub: copier(%d chars)", len(texte))
 
+    def copier_fichier(self, chemin) -> None:
+        logger.debug("PressePapiersStub: copier_fichier(%s)", chemin)
+
     def lire(self) -> str:
         return self._contenu
 

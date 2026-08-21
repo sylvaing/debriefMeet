@@ -21,5 +21,14 @@ class PressePapiersWindows(PressePapiers):
         # Jamais le texte lui-même dans les logs (docs/31 §3.7.1) — la longueur seule.
         logger.debug("PressePapiersWindows: copier(%d chars)", len(texte))
 
+    def copier_fichier(self, chemin) -> None:
+        # Qt traduit les URLs en CF_HDROP — le format attendu par l'Explorateur
+        # pour un collage de fichier.
+        from PySide6.QtCore import QMimeData, QUrl
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(chemin))])
+        QGuiApplication.clipboard().setMimeData(mime)
+        logger.debug("PressePapiersWindows: copier_fichier(%s)", chemin)
+
     def lire(self) -> str:
         return QGuiApplication.clipboard().text()
