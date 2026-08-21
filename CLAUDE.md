@@ -189,8 +189,8 @@ ailleurs ; icône Phosphor `file-arrow-up` ajoutée) ; « Tout supprimer » reno
 jobs de l'Historique** (transcription locale, locuteurs, CR Mistral), rouge
 enregistrement prioritaire, flash vert/gris en fin de job (les orchestrateurs ne
 sont plus câblés en direct sur tray/fenêtre : tout passe par l'arbitre dans
-`__main__`). Reste : valider manuellement le collage Finder de `copier_fichier`
-sur macOS. Nouveau : `test_arbitre_etat_visuel.py` (8 tests).
+`__main__`). **Validé manuellement** par Sylvain le 2026-08-21 (collage Finder de
+`copier_fichier` compris). Nouveau : `test_arbitre_etat_visuel.py` (8 tests).
 
 ## Environnements Python — ne pas confondre
 
