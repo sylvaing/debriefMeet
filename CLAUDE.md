@@ -178,6 +178,20 @@ passe d'un moteur identité à un moteur qui atténue — sinon l'inefficacité 
 déclencherait, à raison, un recalage, et le test ne parlerait plus de la fuite de
 dérive qu'il documente.
 
+Après la retouche boutons/menus de l'Historique (2026-08-21) : **1466 passed** en
+environnement complet. Livré en 4 commits : « Copier la transcription » copie
+désormais **brut** (plus jamais de préfixe prompt/lexique — le prompt actif et le
+lexique ne servent plus qu'au CR Mistral) ; nouvelle action « Copier le fichier de
+la transcription » (bouton dédié + menu ⋯, toujours `transcription.md`, via
+`PressePapiers.copier_fichier()` — osascript POSIX file sur macOS, QMimeData/URLs
+ailleurs ; icône Phosphor `file-arrow-up` ajoutée) ; « Tout supprimer » renommé
+« Supprimer » ; et `ui/arbitre_etat_visuel.py` — l'icône passe **orange pendant les
+jobs de l'Historique** (transcription locale, locuteurs, CR Mistral), rouge
+enregistrement prioritaire, flash vert/gris en fin de job (les orchestrateurs ne
+sont plus câblés en direct sur tray/fenêtre : tout passe par l'arbitre dans
+`__main__`). Reste : valider manuellement le collage Finder de `copier_fichier`
+sur macOS. Nouveau : `test_arbitre_etat_visuel.py` (8 tests).
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
