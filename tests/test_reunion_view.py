@@ -345,7 +345,7 @@ def test_refresh_voit_nouvelle_reunion(qapp, machine, tmp_path):
     assert vue._modele.rowCount() == 2
 
 
-# ── Copie avec prompt actif ──────────────────────────────────────────────────
+# ── Copie brute (plus jamais de préfixe prompt/lexique, 2026-08-21) ──────────
 
 def _md_simple(tmp_path, nom="2026-01-01_10-00-00", corps="ligne de transcription"):
     md = tmp_path / f"{nom}.md"
@@ -353,7 +353,8 @@ def _md_simple(tmp_path, nom="2026-01-01_10-00-00", corps="ligne de transcriptio
     return md
 
 
-def test_copier_prefixe_le_prompt_actif(qapp, machine, tmp_path):
+def test_copier_reste_brut_meme_avec_prompt_actif(qapp, machine, tmp_path):
+    """Prompt actif ET lexique actif (défauts) : la copie reste le contenu tel quel."""
     from tests.fakes.adapters import PressePapiersFake
     md = _md_simple(tmp_path)
     cfg = _config(tmp_path)
@@ -362,14 +363,12 @@ def test_copier_prefixe_le_prompt_actif(qapp, machine, tmp_path):
     pp = PressePapiersFake()
     vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
     vue._copier(md)
-    # Lexique actif (défaut) + prompt sans ligne d'annonce → bloc de corrections en
-    # tête, puis le prompt, puis la transcription.
-    assert pp.dernier.startswith("Corrections de transcription :")
-    assert "Fais un CR.\n\n" in pp.dernier
-    assert pp.dernier.index("Fais un CR.") < pp.dernier.index("ligne de transcription")
+    assert pp.dernier == md.read_text(encoding="utf-8")
+    assert "Fais un CR." not in pp.dernier
+    assert "Corrections de transcription" not in pp.dernier
 
 
-def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
+def test_copier_prefere_la_version_diarizee_brute(qapp, machine, tmp_path):
     from tests.fakes.adapters import PressePapiersFake
     md = _md_simple(tmp_path)
     chemin_locuteurs(md).write_text("# Locuteurs\n\nMoi : salut", encoding="utf-8")
@@ -379,52 +378,7 @@ def test_copier_diarization_prefixe_aussi(qapp, machine, tmp_path):
     pp = PressePapiersFake()
     vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
     vue._copier(md)
-    assert "Résume.\n\n" in pp.dernier
-    assert pp.dernier.index("Résume.") < pp.dernier.index("Moi : salut")
-
-
-def test_copier_bloc_lexique_jamais_au_contact_de_la_transcription(qapp, machine, tmp_path):
-    """Lexique actif (défaut), prompt sans ligne d'annonce : bloc de corrections →
-    prompt → transcription — le bloc ne précède jamais directement le contenu, ses
-    noms propres seraient pris pour des participants (CR client du 2026-08-06)."""
-    from tests.fakes.adapters import PressePapiersFake
-    md = _md_simple(tmp_path)
-    cfg = _config(tmp_path)
-    cfg.set("prompts", [{"titre": "P", "contenu": "Fais un CR."}])
-    cfg.set("prompt_actif", 0)
-    pp = PressePapiersFake()
-    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
-    vue._copier(md)
-    assert (pp.dernier.index("Corrections de transcription")
-            < pp.dernier.index("Fais un CR.")
-            < pp.dernier.index("ligne de transcription"))
-
-
-def test_copier_sans_prompt_actif_reste_brut_malgre_le_lexique(qapp, machine, tmp_path):
-    """Le bloc n'est jamais injecté seul : sans prompt actif, copie brute (docs/46 §1)."""
-    from tests.fakes.adapters import PressePapiersFake
-    md = _md_simple(tmp_path)
-    cfg = _config(tmp_path)
-    cfg.set("prompt_actif", None)
-    pp = PressePapiersFake()
-    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
-    vue._copier(md)
-    assert "Corrections de transcription" not in pp.dernier
-    assert pp.dernier.startswith("# Réunion")
-
-
-def test_copier_lexique_inactif_prompt_seul(qapp, machine, tmp_path):
-    from tests.fakes.adapters import PressePapiersFake
-    md = _md_simple(tmp_path)
-    cfg = _config(tmp_path)
-    cfg.set("prompts", [{"titre": "P", "contenu": "Fais un CR."}])
-    cfg.set("prompt_actif", 0)
-    cfg.set("lexique_actif", False)
-    pp = PressePapiersFake()
-    vue = ReunionView(cfg, machine, presse_papiers=pp, gestionnaire=FauxGestionnaire())
-    vue._copier(md)
-    assert pp.dernier.startswith("Fais un CR.\n\n# Réunion")
-    assert "Corrections de transcription" not in pp.dernier
+    assert pp.dernier == "# Locuteurs\n\nMoi : salut"
 
 
 # ── CR Mistral (docs/42) ─────────────────────────────────────────────────────
