@@ -200,14 +200,40 @@ class DiarizationPyannote(MoteurDiarization):
         if self._pipeline is None:
             self._pipeline = self._charger()
 
+    def _appliquer(self, fichier: dict):
+        """Applique le pipeline sur un fichier **en mémoire**, sans passer par `__call__`.
+
+        `pipeline(fichier)` est un piège : en pyannote.audio 4.0.6 (version depuis
+        *retirée* de PyPI, mais embarquée dans le build macOS du 2026-08-21), la
+        branche « lot » de `Pipeline.__call__` contient des `yield` — toute la méthode
+        devient une fonction génératrice, donc l'appel rend un **générateur** sans
+        exécuter une ligne, y compris pour un fichier unique (le `return prediction`
+        final est mort). Résultat côté app : `'generator' object has no attribute
+        'itertracks'` sur les 2 pistes, « aucune piste exploitable », et jamais de
+        `locuteurs.md`. Invisible en dev, où le venv était resté en 4.0.4.
+
+        On appelle donc `apply()` directement, en préparant le fichier comme
+        `__call__` le ferait (`prepare_one` ajoute notamment l'`uri` que `apply`
+        exige). `prepare_one` n'existe qu'à partir de 4.0.6 : avant, `__call__` est
+        sain et fait ce travail lui-même."""
+        pipeline = self._pipeline
+        preparer = getattr(pipeline, "prepare_one", None)
+        if preparer is None:                      # pyannote.audio 4.0.0 → 4.0.5
+            return pipeline(fichier)
+        return pipeline.apply(preparer(fichier))
+
     def diariser(self, audio_16k: np.ndarray) -> list[tuple[float, float, str]]:
         import torch
 
         self.precharger()
         waveform = torch.from_numpy(
             np.ascontiguousarray(audio_16k, dtype=np.float32)).unsqueeze(0)
-        out = self._pipeline({"waveform": waveform, "sample_rate": SR})
+        out = self._appliquer({"waveform": waveform, "sample_rate": SR})
         ann = getattr(out, "speaker_diarization", out)
+        if not hasattr(ann, "itertracks"):
+            raise ErreurDiarization(
+                f"Sortie de diarization inattendue ({type(ann).__name__} au lieu "
+                "d'une Annotation) — version de pyannote.audio incompatible.")
         segs = [(float(tr.start), float(tr.end), str(lbl))
                 for tr, _, lbl in ann.itertracks(yield_label=True)]
         segs.sort(key=lambda x: x[0])

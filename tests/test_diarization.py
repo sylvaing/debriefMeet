@@ -148,6 +148,55 @@ def test_diarization_pyannote_pipeline_injecte():
     assert segs == [(0.0, 1.0, "SPK0"), (1.0, 2.0, "SPK1")]
 
 
+class _FauxPipelineGenerateur:
+    """Pipeline dont `__call__` est une fonction génératrice — pyannote.audio 4.0.6.
+
+    Reproduit le piège réel : l'appel rend un générateur sans exécuter le corps, et
+    seul `apply()` (sur un fichier passé par `prepare_one`) rend le vrai résultat."""
+
+    def __init__(self, tracks):
+        self._tracks = tracks
+        self.prepare = []
+
+    def __call__(self, entree):
+        yield entree, _FauxAnnotation(self._tracks)   # jamais atteint : générateur
+
+    def prepare_one(self, fichier, preload=False):
+        self.prepare.append(fichier)
+        return {**fichier, "uri": "en-memoire"}
+
+    def apply(self, fichier):
+        assert fichier["uri"] == "en-memoire", "apply() exige un fichier préparé"
+        return _FauxSortie(_FauxAnnotation(self._tracks))
+
+
+class _FauxSortie:
+    """`DiarizeOutput` de pyannote 4.x : l'annotation est sous `speaker_diarization`."""
+
+    def __init__(self, annotation):
+        self.speaker_diarization = annotation
+
+
+def test_diarization_contourne_le_call_generateur():
+    # Régression : en 4.0.6, `pipeline(...)` rendait un générateur → 'generator'
+    # object has no attribute 'itertracks' sur les 2 pistes, aucun locuteurs.md.
+    pytest.importorskip("torch")
+    moteur = diar.DiarizationPyannote(token="factice")
+    pipeline = _FauxPipelineGenerateur([(0.0, 1.0, "SPK0")])
+    moteur._pipeline = pipeline
+    assert moteur.diariser(np.zeros(diar.SR, dtype=np.float32)) == [(0.0, 1.0, "SPK0")]
+    assert pipeline.prepare, "le fichier doit passer par prepare_one avant apply"
+
+
+def test_diarization_sortie_inattendue_message_explicite():
+    # Une future incompatibilité doit dire « version incompatible », pas AttributeError.
+    pytest.importorskip("torch")
+    moteur = diar.DiarizationPyannote(token="factice")
+    moteur._pipeline = type("P", (), {"__call__": lambda self, _: object()})()
+    with pytest.raises(diar.ErreurDiarization, match="incompatible"):
+        moteur.diariser(np.zeros(diar.SR, dtype=np.float32))
+
+
 def test_token_hf_depuis_env(monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "hf_xyz")
     assert diar._token_hf() == "hf_xyz"

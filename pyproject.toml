@@ -27,7 +27,9 @@ dependencies = [
 macos = [
     "mlx-whisper",
     "livekit>=1.1",      # AEC3 (annulation d'écho sans casque) — APM WebRTC, cf. docs/06
-    "pyannote.audio>=4,<5", # diarization passe finale (community-1, gated) — cf. docs/07 et docs/29 (API from_pretrained changée entre 3.x et 4.x)
+    # ≥4.0.7 : la 4.0.6 (retirée de PyPI depuis) rend un générateur au lieu du résultat
+    # quand on appelle le pipeline — diarization morte dans le build du 2026-08-21.
+    "pyannote.audio>=4.0.7,<5", # diarization passe finale (community-1, gated) — cf. docs/07 et docs/29 (API from_pretrained changée entre 3.x et 4.x)
 ]
 windows = [
     "faster-whisper",
