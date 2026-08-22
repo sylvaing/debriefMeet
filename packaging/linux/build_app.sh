@@ -26,10 +26,30 @@ echo "[3/5] Suite de tests (bloquant — build refuse si rouge, comme docs/32)..
 # Memes exclusions que scripts/gate_pytest_lxc.sh, memes raisons (sources non
 # synchronisees : benchmark/ et spike/ sont des outils internes, test_build teste
 # l'hygiene du depot Mac).
+#
+# RC=139 (SIGSEGV) tolere UNIQUEMENT si le resume pytest ne rapporte aucun test en
+# echec : crash confirme (gdb, 2026-08-22) dans Shiboken::Object::destroy() pendant
+# la finalisation de l'interpreteur Python 3.14 (__run_exit_handlers, apres exit()),
+# donc APRES que tous les tests aient deja reussi — bug connu PySide6 6.11.2 /
+# Python 3.14, sans rapport avec le code de l'app. Tout autre code de sortie, ou un
+# resume indiquant un echec, bloque le build normalement.
+TESTS_OUT="$(mktemp)"
 QT_QPA_PLATFORM=offscreen ./.venv-build/bin/python -m pytest -m "not integration" -q --no-cov \
     --ignore-glob='tests/test_benchmark_*.py' \
     --ignore-glob='tests/test_spike_backends_*.py' \
-    --ignore=tests/test_build.py || exit 1
+    --ignore=tests/test_build.py > "$TESTS_OUT" 2>&1
+RC_TESTS=$?
+cat "$TESTS_OUT"
+if [ "$RC_TESTS" -ne 0 ]; then
+    if [ "$RC_TESTS" -eq 139 ] && grep -qE '[0-9]+ passed' "$TESTS_OUT" \
+        && ! grep -qE '[0-9]+ failed' "$TESTS_OUT"; then
+        echo "⚠ pytest RC=139 (segfault connu Python 3.14/PySide6 en fin de process) — tous les tests ont réussi, build non bloqué."
+    else
+        rm -f "$TESTS_OUT"
+        exit 1
+    fi
+fi
+rm -f "$TESTS_OUT"
 
 echo "[4/5] PyInstaller (onedir)..."
 rm -rf dist/debriefMeet

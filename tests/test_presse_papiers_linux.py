@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from debrief_meet.platform.linux.presse_papiers import PressePapiersLinux
 
 
@@ -33,4 +35,6 @@ def test_copier_fichier_pose_une_url_de_fichier(qapp, tmp_path):
     PressePapiersLinux().copier_fichier(fichier)
     mime = QGuiApplication.clipboard().mimeData()
     assert mime.hasUrls()
-    assert mime.urls()[0].toLocalFile() == str(fichier)
+    # `toLocalFile()` rend des slashes même sous Windows — comparer via Path, pas
+    # en chaîne brute (`str(fichier)` porte des antislashes sur cet OS).
+    assert Path(mime.urls()[0].toLocalFile()) == fichier
