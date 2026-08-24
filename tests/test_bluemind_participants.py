@@ -98,3 +98,99 @@ def test_inserer_pour_reunion_sans_locuteurs_ne_le_cree_pas(tmp_path):
     md.write_text("# Réunion\n\nTranscription\n", encoding="utf-8")
     inserer_pour_reunion(md, "X", "d", _INVITES)
     assert not (tmp_path / "locuteurs.md").exists()
+
+
+# ── reinserer_depuis_sidecar — point d'entrée partagé (2026-08-24) ────────────
+
+def _sidecar(md, *, coche=True, titre="point commerce Alix"):
+    from debrief_meet.core.bluemind.association import Association, InviteAssocie, ecrire
+    ecrire(md, Association(
+        event_uid="e1", cal_uid="cal", titre=titre, debut="2026-08-24T10:00:00+02:00",
+        invites=[InviteAssocie(nom="Alix Morel", email="alix.morel@exemple.fr",
+                               part_status="Accepted", organisateur=False, coche=coche)],
+    ))
+
+
+def test_reinserer_depuis_sidecar_ecrit_le_cartouche(tmp_path):
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT, reinserer_depuis_sidecar
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# point commerce Alix\n\n**Moi :** bonjour\n", encoding="utf-8")
+    _sidecar(md)
+
+    assert reinserer_depuis_sidecar(md) is True
+    texte = md.read_text(encoding="utf-8")
+    assert MARQUEUR_DEBUT in texte
+    assert "Alix Morel" in texte
+
+
+def test_reinserer_depuis_sidecar_sans_association(tmp_path):
+    from debrief_meet.core.bluemind.participants import reinserer_depuis_sidecar
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# Sans association\n", encoding="utf-8")
+
+    assert reinserer_depuis_sidecar(md) is False
+    assert md.read_text(encoding="utf-8") == "# Sans association\n"
+
+
+def test_reinserer_depuis_sidecar_aucun_invite_coche(tmp_path):
+    """Un cartouche sans aucun nom n'apprendrait rien : on n'écrit pas."""
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT, reinserer_depuis_sidecar
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# X\n", encoding="utf-8")
+    _sidecar(md, coche=False)
+
+    assert reinserer_depuis_sidecar(md) is False
+    assert MARQUEUR_DEBUT not in md.read_text(encoding="utf-8")
+
+
+def test_reinserer_depuis_sidecar_cible_un_seul_fichier(tmp_path):
+    """`cible` sert la diarization : le bloc va dans locuteurs.md, pas dans le .md."""
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT, reinserer_depuis_sidecar
+    from debrief_meet.core.fichiers import chemin_locuteurs
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# X\n", encoding="utf-8")
+    loc = chemin_locuteurs(md)
+    loc.write_text("# X\n\nSPEAKER_00: bonjour\n", encoding="utf-8")
+    _sidecar(md)
+
+    assert reinserer_depuis_sidecar(md, cible=loc) is True
+    assert MARQUEUR_DEBUT in loc.read_text(encoding="utf-8")
+    assert MARQUEUR_DEBUT not in md.read_text(encoding="utf-8")
+
+
+def test_reinserer_depuis_sidecar_idempotent(tmp_path):
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT, reinserer_depuis_sidecar
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# X\n\ncorps\n", encoding="utf-8")
+    _sidecar(md)
+
+    reinserer_depuis_sidecar(md)
+    reinserer_depuis_sidecar(md)
+
+    assert md.read_text(encoding="utf-8").count(MARQUEUR_DEBUT) == 1
+
+
+def test_titre_courant_du_md_prime_sur_le_sidecar(tmp_path):
+    """Un titre édité à la main depuis l'association doit gagner."""
+    from debrief_meet.core.bluemind.participants import reinserer_depuis_sidecar
+
+    md = tmp_path / "transcription.md"
+    md.write_text("# Titre corrige a la main\n\ncorps\n", encoding="utf-8")
+    _sidecar(md, titre="ancien titre calendrier")
+
+    reinserer_depuis_sidecar(md)
+
+    assert "« Titre corrige a la main »" in md.read_text(encoding="utf-8")
+
+
+def test_debut_lisible_repli_sur_valeur_brute():
+    from debrief_meet.core.bluemind.participants import debut_lisible
+
+    assert debut_lisible("2026-08-24T10:00:00+02:00") == "2026-08-24 10:00"
+    assert debut_lisible("pas une date") == "pas une date"
+    assert debut_lisible(None) == ""

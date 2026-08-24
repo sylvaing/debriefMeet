@@ -179,25 +179,9 @@ class GestionnaireDiarization(QObject):
         """docs/40 §6.3 point 2 — si la réunion était déjà associée à un événement
         BlueMind avant que `_locuteurs.md` existe, le bloc invités est inséré dès sa
         génération plutôt qu'à la prochaine validation manuelle de F1."""
-        from debrief_meet.core.bluemind import association, participants
-        from debrief_meet.core.fichiers import titre_reunion
+        from debrief_meet.core.bluemind.participants import reinserer_depuis_sidecar
 
-        asso = association.lire(md)
-        if asso is None:
-            return
-        invites = [
-            {"nom": i.nom, "email": i.email, "organisateur": i.organisateur, "part_status": i.part_status}
-            for i in asso.invites if i.coche
-        ]
-        if not invites:
-            return
-        titre = titre_reunion(md) or asso.titre or md.parent.name
-        try:
-            debut_texte = asso.debut.split("T")[0] + " " + asso.debut.split("T")[1][:5]
-        except IndexError:
-            debut_texte = asso.debut
-        bloc = participants.construire_bloc(titre, debut_texte, invites)
-        participants.inserer_dans_fichier(locuteurs_md, bloc)
+        reinserer_depuis_sidecar(md, cible=locuteurs_md)
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:

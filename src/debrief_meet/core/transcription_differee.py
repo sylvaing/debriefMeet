@@ -84,8 +84,22 @@ def transcrire_reunion(chemin_md, moteur: MoteurTranscription, *,
                avec_systeme=piste_sys is not None)
     if duree is not None:
         definir_duree(chemin_md, duree)
+    # …et le cartouche invités BlueMind, effacé lui aussi : il est relu du sidecar.
+    # APRÈS `definir_duree` pour que le cartouche se pose entre le H1 et la durée,
+    # comme sur le chemin Voxtral (les deux s'insèrent juste après le H1).
+    _reinserer_bloc_invites(chemin_md)
     logger.info("Transcription différée écrite : %s", chemin_md)
     return chemin_md
+
+
+def _reinserer_bloc_invites(chemin_md: Path) -> None:
+    """No-op silencieux si l'interco BlueMind n'est pas installée (extra optionnel)."""
+    try:
+        from debrief_meet.core.bluemind.participants import reinserer_depuis_sidecar
+    except ImportError:
+        return
+    if reinserer_depuis_sidecar(chemin_md):
+        logger.info("Cartouche invités BlueMind ré-inséré : %s", chemin_md)
 
 
 def _transcrire_ou_vide(piste: Path | None, moteur, langue, label: str

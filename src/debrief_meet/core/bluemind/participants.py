@@ -5,6 +5,7 @@ doublon. L'en-tête « participants potentiels… ne vaut pas liste de présence
 **exigé explicitement** par la spec : un invité n'est pas forcément présent."""
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from debrief_meet.core.bluemind.sync import libelle_part_status
@@ -74,3 +75,52 @@ def inserer_pour_reunion(md: Path, titre_reunion: str, debut_texte: str, invites
     loc = chemin_locuteurs(md)
     if loc.exists():
         inserer_dans_fichier(loc, bloc)
+
+
+def debut_lisible(debut: str | None) -> str:
+    """« 2026-08-24T11:00:00+02:00 » → « 2026-08-24 11:00 » ; valeur brute si illisible."""
+    try:
+        return datetime.fromisoformat(debut).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return debut or ""
+
+
+def reinserer_depuis_sidecar(md: Path, *, cible: Path | None = None) -> bool:
+    """Ré-insère le cartouche invités en le relisant du sidecar `bluemind.json`.
+
+    Point d'entrée UNIQUE des chemins qui réécrivent un fichier de réunion de bout en
+    bout — ils repartent d'une page blanche et effacent donc le cartouche au passage
+    (transcription différée locale, réécriture Voxtral) — ou qui créent un fichier
+    après coup, la réunion étant déjà associée (`locuteurs.md` de la diarization).
+    Sans ce rappel le cartouche disparaît du `.md` livré alors que le sidecar, lui,
+    reste complet : constaté le 2026-08-24 sur une transcription locale, où seul le
+    chemin Voxtral avait son correctif.
+
+    `cible` vise un fichier précis ; par défaut le `.md` **et** son `locuteurs.md`
+    s'il existe. Renvoie False (sans rien écrire) si la réunion n'est pas associée ou
+    si aucun invité n'est coché — un cartouche sans nom n'apprendrait rien."""
+    from debrief_meet.core.bluemind import association
+    from debrief_meet.core.fichiers import chemin_locuteurs, titre_reunion
+
+    asso = association.lire(md)
+    if asso is None:
+        return False
+    invites = [
+        {"nom": i.nom, "email": i.email, "organisateur": i.organisateur,
+         "part_status": i.part_status}
+        for i in asso.invites if i.coche
+    ]
+    if not invites:
+        return False
+    # Le titre courant du `.md` prime : il peut avoir été édité à la main depuis
+    # l'association, et c'est lui que l'utilisateur voit dans l'Historique.
+    titre = titre_reunion(md) or asso.titre or md.parent.name
+    bloc = construire_bloc(titre, debut_lisible(asso.debut), invites)
+    if cible is not None:
+        inserer_dans_fichier(cible, bloc)
+        return True
+    inserer_dans_fichier(md, bloc)
+    loc = chemin_locuteurs(md)
+    if loc.exists():
+        inserer_dans_fichier(loc, bloc)
+    return True

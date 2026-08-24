@@ -83,3 +83,65 @@ def test_duree_conservee_apres_reecriture(tmp_path):
     _piste(tmp_path, "moi")
     transcrire_reunion(md, MoteurFake())
     assert duree_reunion(md) == 900                      # préservée malgré la réécriture du .md
+
+
+# ── Cartouche invités BlueMind préservé à la réécriture (2026-08-24) ──────────
+
+def _associer(md, titre="point commerce Alix"):
+    """Sidecar minimal, comme après une association F1."""
+    from debrief_meet.core.bluemind.association import Association, InviteAssocie, ecrire
+    ecrire(md, Association(
+        event_uid="e1", cal_uid="cal", titre=titre, debut="2026-08-24T10:00:00+02:00",
+        invites=[
+            InviteAssocie(nom="Sylvain Garcia", email="sylvain.garcia@bluemind.net",
+                          part_status=None, organisateur=True, coche=True),
+            InviteAssocie(nom="Alix Morel", email="alix.morel@exemple.fr",
+                          part_status="Accepted", organisateur=False, coche=True),
+        ],
+    ))
+
+
+def test_reecriture_conserve_le_cartouche_invites(tmp_path):
+    """Le bug du 2026-08-24 : la réécriture repart d'une page blanche et effaçait le
+    cartouche, que seul le chemin Voxtral savait ré-insérer."""
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT
+
+    md = _placeholder(tmp_path)
+    _associer(md)
+    _piste(tmp_path, "moi")
+    _piste(tmp_path, "systeme")
+
+    transcrire_reunion(md, MoteurFake())
+
+    contenu = md.read_text(encoding="utf-8")
+    assert MARQUEUR_DEBUT in contenu
+    assert "Alix Morel <alix.morel@exemple.fr> — accepté" in contenu
+    assert "Sylvain Garcia <sylvain.garcia@bluemind.net> — organisateur" in contenu
+    assert "« point commerce Alix » — 2026-08-24 10:00" in contenu
+
+
+def test_cartouche_pose_entre_le_titre_et_la_duree(tmp_path):
+    """Même ordonnancement que le chemin Voxtral — les deux s'insèrent après le H1."""
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT
+
+    md = _placeholder(tmp_path)
+    _associer(md)
+    _piste(tmp_path, "moi")
+    from debrief_meet.core.fichiers import definir_duree
+    definir_duree(md, 1529)
+
+    transcrire_reunion(md, MoteurFake())
+
+    contenu = md.read_text(encoding="utf-8")
+    assert contenu.index("# ") < contenu.index(MARQUEUR_DEBUT) < contenu.index("<!-- duree_s:")
+
+
+def test_reunion_non_associee_reste_sans_cartouche(tmp_path):
+    from debrief_meet.core.bluemind.participants import MARQUEUR_DEBUT
+
+    md = _placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+
+    transcrire_reunion(md, MoteurFake())
+
+    assert MARQUEUR_DEBUT not in md.read_text(encoding="utf-8")

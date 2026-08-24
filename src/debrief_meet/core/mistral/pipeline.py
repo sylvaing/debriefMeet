@@ -130,24 +130,16 @@ def _reinserer_bloc_invites(chemin_md: Path) -> None:
     """Après réécriture Voxtral du `.md`, ré-insère le cartouche invités BlueMind que la
     réécriture a effacé (si la réunion est associée). Le contexte CR vient du sidecar, pas
     du texte ; ce bloc est là pour la **cohérence** avec les réunions associées et la
-    **portabilité** du `.md` (contexte lisible même hors sidecar). No-op si non associée."""
+    **portabilité** du `.md` (contexte lisible même hors sidecar). No-op si non associée.
+
+    Logique partagée avec la transcription locale et la diarization (2026-08-24) : le
+    correctif ne vivait que sur ce chemin, laissant les `.md` transcrits en local sans
+    cartouche."""
     try:
-        from debrief_meet.core.bluemind import association
-        from debrief_meet.core.bluemind.participants import inserer_pour_reunion
+        from debrief_meet.core.bluemind.participants import reinserer_depuis_sidecar
     except ImportError:
         return
-    asso = association.lire(chemin_md)
-    if asso is None:
-        return
-    try:
-        debut_texte = datetime.fromisoformat(asso.debut).strftime("%Y-%m-%d %H:%M")
-    except (ValueError, TypeError):
-        debut_texte = asso.debut or ""
-    invites = [
-        {"nom": i.nom, "email": i.email, "organisateur": i.organisateur, "part_status": i.part_status}
-        for i in asso.invites if i.coche
-    ]
-    inserer_pour_reunion(chemin_md, asso.titre or chemin_md.parent.name, debut_texte, invites)
+    reinserer_depuis_sidecar(chemin_md)
 
 
 def _transcrire_si_utile(client: ClientMistral, piste: Path | None, analyse,
