@@ -16,10 +16,13 @@ from debrief_meet.core.fichiers import (
 from debrief_meet.ui.capture_model import (
     COL_FICHIER_JOURNAL,
     COL_TITRE_REUNION,
+    JOB_CR_MISTRAL,
     ROLE_CHEMIN,
     CaptureModel,
 )
+from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.status_pill import HistoryState
+from debrief_meet.ui.theme import C
 
 
 def _creer_reunion(dossier, *, titre=None, avec_audio=False, avec_locuteurs=False):
@@ -236,3 +239,102 @@ def test_chemin_actif_n_exclut_que_la_reunion_visee(qapp, tmp_path):
 
     assert modele.rowCount() == 1
     assert modele.chemin_a_la_ligne(0) == autre
+
+
+# ── Colonne 0 : icône du traitement a posteriori en cours ────────────────────────
+
+def _image_col0(modele, row=0):
+    """Icône rendue de la colonne 0 (type). Comparer les IMAGES, pas les QIcon :
+    ça fige à la fois la forme (donc QUELLE opération) et la teinte."""
+    icone = modele.data(modele.index(row, 0), Qt.ItemDataRole.DecorationRole)
+    return icone.pixmap(16, 16).toImage()
+
+
+def _image_attendue(nom, couleur=C.JOB):
+    return icone_svg_teintee(icone_phosphor(nom), couleur, 16).pixmap(16, 16).toImage()
+
+
+def _infobulle_col0(modele, row=0):
+    return modele.data(modele.index(row, 0), Qt.ItemDataRole.ToolTipRole)
+
+
+@pytest.mark.parametrize("type_job,icone_attendue", [
+    ("transcription", "file-text"),
+    ("diarization", "users"),
+    (JOB_CR_MISTRAL, "notebook"),
+])
+def test_icone_ligne_montre_le_job_a_posteriori_en_cours(qapp, tmp_path, type_job, icone_attendue):
+    md = _creer_reunion(tmp_path, titre="Point équipe")
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    assert _image_col0(modele) == _image_attendue("users-three", C.INK400)  # repos
+
+    modele.definir_job_en_cours(md, type_job)
+    modele.recharger()
+    assert _image_col0(modele) == _image_attendue(icone_attendue)
+
+
+def test_fin_de_job_rend_l_icone_reunion(qapp, tmp_path):
+    md = _creer_reunion(tmp_path)
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_job_en_cours(md, JOB_CR_MISTRAL)
+    modele.recharger()
+    assert _image_col0(modele) == _image_attendue("notebook")
+
+    modele.definir_job_en_cours(None, None)
+    modele.recharger()
+    assert _image_col0(modele) == _image_attendue("users-three", C.INK400)
+
+
+def test_icone_job_ne_touche_que_la_reunion_concernee(qapp, tmp_path):
+    from datetime import datetime as _dt
+
+    from debrief_meet.core.fichiers import chemin_reunion as _chemin_reunion
+    cible = _creer_reunion(tmp_path)
+    autre = _chemin_reunion(tmp_path, _dt(2026, 7, 5, 9, 0))
+    autre.parent.mkdir(parents=True)
+    autre.write_text("# Réunion — 2026-07-05 09:00\n", encoding="utf-8")
+
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_job_en_cours(cible, "transcription")
+    modele.recharger()
+    lignes = {modele.chemin_a_la_ligne(r): r for r in range(modele.rowCount())}
+    assert _image_col0(modele, lignes[cible]) == _image_attendue("file-text")
+    assert _image_col0(modele, lignes[autre]) == _image_attendue("users-three", C.INK400)
+
+
+def test_icone_job_de_type_inconnu_reste_visible(qapp, tmp_path):
+    """Un job dont le type n'est pas dans la table : l'icône « réunion » mentirait sur
+    l'inactivité, on peint le symbole générique — en orange comme les autres."""
+    md = _creer_reunion(tmp_path)
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.definir_job_en_cours(md, "un-nouveau-job")
+    modele.recharger()
+    assert _image_col0(modele) == _image_attendue("arrows-clockwise")
+    assert _infobulle_col0(modele) == "Traitement en cours…"
+
+
+def test_ligne_en_cours_garde_le_micro_meme_si_un_job_porte_le_chemin_sentinelle(qapp, tmp_path):
+    """Piège : la ligne « en cours » a `Path()` pour chemin (sentinelle). Un
+    `_job_chemin` lui aussi vide serait `==` et lui collerait une icône de job, alors
+    que c'est l'enregistrement LIVE — pas un traitement a posteriori."""
+    from pathlib import Path as _Path
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    modele.definir_job_en_cours(_Path(), "transcription")
+    modele.definir_ligne_en_cours(True, 5)
+
+    assert modele.data(modele.index(0, COL_TITRE_REUNION)) == "Réunion en cours"
+    assert _image_col0(modele) == _image_attendue("microphone", C.INK400)
+    assert _infobulle_col0(modele) is None
+
+
+def test_infobulle_colonne_type_nomme_l_operation(qapp, tmp_path):
+    md = _creer_reunion(tmp_path)
+    modele = CaptureModel(tmp_path, est_reunion=True)
+    modele.recharger()
+    assert _infobulle_col0(modele) is None            # au repos, pas d'infobulle parasite
+
+    modele.definir_job_en_cours(md, "diarization")
+    modele.recharger()
+    assert _infobulle_col0(modele) == "Génération des locuteurs en cours…"

@@ -58,6 +58,7 @@ from debrief_meet.ui.capture_model import (
     COL_ACTIONS_REUNION,
     COL_CALENDRIER_REUNION,
     COL_TITRE_REUNION,
+    JOB_CR_MISTRAL,
     CaptureModel,
 )
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
@@ -242,7 +243,27 @@ class ReunionView(QWidget):
         return Path(self._config.get("dossier_reunions"))
 
     def recharger(self) -> None:
+        """Unique point de rechargement de la vue : pousse d'abord au modèle le
+        traitement a posteriori en cours (transcription / locuteurs / CR), pour que la
+        colonne 0 de la réunion concernée montre l'icône de l'opération. Tout passe
+        ici — un `self._modele.recharger()` direct laisserait l'icône se périmer."""
+        self._modele.definir_job_en_cours(*self._job_en_cours())
         self._modele.recharger()
+
+    def _job_en_cours(self) -> tuple[Path | None, str | None]:
+        """(réunion, type) du job a posteriori en cours. Les deux gestionnaires sont
+        exclusifs en pratique (chacun refuse de démarrer si l'autre tourne, via
+        `un_job_tourne`), mais Mistral est interrogé d'abord : c'est le seul dont le
+        job peut durer sans que `_gestionnaire` en sache quoi que ce soit."""
+        if self._gestionnaire_cr_mistral is not None:
+            chemin = self._gestionnaire_cr_mistral.job_en_cours()
+            if chemin is not None:
+                return Path(chemin), JOB_CR_MISTRAL
+        if self._gestionnaire is not None:
+            chemin = self._gestionnaire.job_en_cours()
+            if chemin is not None:
+                return Path(chemin), self._gestionnaire.type_job_en_cours()
+        return None, None
 
     # ── Actions par ligne (fournisseur du délégué) ──────────────────────────────
 
@@ -488,7 +509,7 @@ class ReunionView(QWidget):
         email_moi = self._config.get("bluemind_email") or ""
         dlg = DialogMappingLocuteurs(chemin, loc, email_moi, self)
         if dlg.exec() == dlg.DialogCode.Accepted:
-            self._modele.recharger()
+            self.recharger()
 
     # ── Sélection ──────────────────────────────────────────────────────────────
 
@@ -610,10 +631,10 @@ class ReunionView(QWidget):
         self._gestionnaire.echoue.connect(self._sur_diar_echoue)
 
     def _sur_diar_change(self, *_args) -> None:
-        self._modele.recharger()
+        self.recharger()
 
     def _sur_diar_echoue(self, _md: object, message: str) -> None:
-        self._modele.recharger()
+        self.recharger()
         if self.isVisible():
             dialogues.avertir(self, titre="Diarization — échec",
                               description=f"La génération des locuteurs a échoué :\n{message}")
@@ -636,7 +657,7 @@ class ReunionView(QWidget):
         # Resync forcée : la détection ne doit pas manquer un événement créé depuis la
         # dernière synchro (les autres déclencheurs sont tous « au fil de l'eau »).
         if attendre_sync(self._synchro_bluemind, self):
-            self._modele.recharger()                  # la colonne calendrier suit la réplique
+            self.recharger()                  # la colonne calendrier suit la réplique
 
         evenements = self._evenements_correspondants_pour(chemin)
         if not evenements:
@@ -706,10 +727,10 @@ class ReunionView(QWidget):
         self._gestionnaire_cr_mistral.echoue.connect(self._sur_cr_mistral_echoue)
 
     def _sur_cr_mistral_change(self, *_args) -> None:
-        self._modele.recharger()
+        self.recharger()
 
     def _sur_cr_mistral_termine(self, _md: object, sortie: Path) -> None:
-        self._modele.recharger()
+        self.recharger()
         if self.isVisible():
             ouvrir = dialogues.confirmer(
                 self, titre="CR généré",
@@ -719,7 +740,7 @@ class ReunionView(QWidget):
                 self._ouvrir(sortie)
 
     def _sur_cr_mistral_echoue(self, _md: object, message: str) -> None:
-        self._modele.recharger()
+        self.recharger()
         if self.isVisible():
             dialogues.avertir(self, titre="CR Mistral — échec",
                               description=f"La génération du CR a échoué :\n{message}")
@@ -747,7 +768,7 @@ class ReunionView(QWidget):
                     p.unlink()
                 except OSError:
                     pass
-        self._modele.recharger()
+        self.recharger()
 
     def _tout_supprimer_un(self, chemin: Path) -> None:
         self._tout_supprimer(chemin)
@@ -767,7 +788,7 @@ class ReunionView(QWidget):
             return
         for c in cibles:
             self._supprimer_un(c)
-        self._modele.recharger()
+        self.recharger()
 
     def _supprimer_un(self, chemin: Path) -> None:
         """Supprime le dossier entier de la réunion (docs/43 §8) — plus aucun
@@ -855,7 +876,7 @@ class ReunionView(QWidget):
 
     def selectionner_reunion(self, chemin_md: Path | None) -> None:
         """Sélectionne la ligne du `.md` donné."""
-        self._modele.recharger()
+        self.recharger()
         if chemin_md is None:
             return
         row = self._modele.ligne_pour_chemin(Path(chemin_md))

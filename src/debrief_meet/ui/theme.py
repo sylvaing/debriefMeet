@@ -36,13 +36,18 @@ class C:  # ----- Couleurs (hex) -----
     NEUTRAL = "#7A828F"; NEUTRAL_BG = "#F1F2F5"
     INFO = "#3B5BDB"; INFO_BG = "#EEF1FE"
     DANGER = "#B42318"; DANGER_BG = "#FEF3F2"
+    # Un traitement a posteriori tourne sur une réunion (transcription, locuteurs,
+    # CR Mistral) : icône de la ligne d'Historique concernée. Même orange que l'icône
+    # de tray dans cet état (cf. `TRAY_TRANSCRIBE` plus bas, `arbitre_etat_visuel`) —
+    # la ligne dit LAQUELLE de ses opérations tourne, le tray dit qu'il en tourne une.
+    JOB = "#FF9500"
     # Icône tray par état d'activité
     TRAY_IDLE = "#3D4351"        # contour monochrome — barre CLAIRE (macOS/Windows)
     # Barre SOMBRE (GNOME : le bandeau supérieur est noir y compris en thème clair,
     # donc ce n'est PAS un choix à dériver du `colorScheme` de l'application).
     # #3D4351 y était invisible : constaté sur le poste du premier utilisateur Linux.
     TRAY_IDLE_BARRE_SOMBRE = "#FFFFFF"
-    TRAY_RECORDING = "#FF3B30"; TRAY_TRANSCRIBE = "#FF9500"
+    TRAY_RECORDING = "#FF3B30"; TRAY_TRANSCRIBE = JOB
     TRAY_DONE = "#34C759"; TRAY_ERROR = "#8E8E93"
 
 

@@ -17,8 +17,10 @@ from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.ui import reunion_view as rv_module
 from debrief_meet.ui.actions_delegate import largeur_colonne
 from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_CALENDRIER_REUNION
+from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.status_pill import HistoryState
+from debrief_meet.ui.theme import C
 
 
 @pytest.fixture
@@ -687,6 +689,71 @@ def test_boutons_actions_ne_debordent_pas_sur_la_colonne_calendrier(qapp, machin
     for zone in zones:
         assert zone.rect.left() >= rect_actions.left()
         assert zone.rect.left() >= rect_calendrier.right()
+
+
+# ── Colonne 0 : icône du traitement a posteriori en cours ────────────────────────
+
+def _image_col0(vue, row=0):
+    icone = vue._modele.data(vue._modele.index(row, 0), Qt.ItemDataRole.DecorationRole)
+    return icone.pixmap(16, 16).toImage()
+
+
+def _image_attendue(nom, couleur=C.JOB):
+    return icone_svg_teintee(icone_phosphor(nom), couleur, 16).pixmap(16, 16).toImage()
+
+
+def test_icone_ligne_suit_le_job_de_transcription(qapp, machine, tmp_path):
+    md = _reunion_en_attente(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="transcription"))
+    assert _image_col0(vue) == _image_attendue("file-text")
+
+
+def test_icone_ligne_suit_le_job_de_diarization(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="diarization"))
+    assert _image_col0(vue) == _image_attendue("users")
+
+
+def test_icone_ligne_suit_le_job_cr_mistral(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(job=md))
+    assert _image_col0(vue) == _image_attendue("notebook")
+
+
+def test_icone_ligne_revient_a_reunion_a_la_fin_du_job(qapp, machine, tmp_path):
+    """Les gestionnaires remettent `_job_en_cours` à None AVANT d'émettre `termine` :
+    le handler de la vue doit donc voir « plus de job » et repeindre l'icône neutre."""
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral(job=md)
+    # La vue n'est pas affichée → `_sur_cr_mistral_termine` ne montre aucun dialogue.
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=g)
+    assert _image_col0(vue) == _image_attendue("notebook")
+
+    g._job = None
+    g.termine.emit(md, chemin_cr_mistral(md))
+    assert _image_col0(vue) == _image_attendue("users-three", C.INK400)
+
+
+def test_icone_ligne_neutre_sans_aucun_job(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    assert _image_col0(vue) == _image_attendue("users-three", C.INK400)
+
+
+def test_job_mistral_prime_sur_le_gestionnaire_local(qapp, machine, tmp_path):
+    """Ordre documenté par `_job_en_cours` : Mistral d'abord. Les deux gestionnaires
+    sont exclusifs en pratique, mais si les deux se déclaraient occupés il faut un
+    gagnant stable, pas une icône qui dépend de l'ordre des attributs."""
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="diarization"),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(job=md))
+    assert _image_col0(vue) == _image_attendue("notebook")
 
 
 # ── Régénération : confirmation de remplacement quand un CR existe ────────────────
