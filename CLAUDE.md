@@ -201,6 +201,45 @@ pas de double sortie sur le chemin souris. ⚠️ `make test` se termine par un
 `Segmentation fault: 11` **au teardown de pytest, après le rapport** — préexistant
 sur `main`, non lié à ce correctif (vérifié en stash).
 
+Après le correctif de la colonne actions + l'icône de job de l'Historique
+(2026-08-24, **validé manuellement** par Sylvain) : **1498 passed**, 0 échec en
+environnement complet (1482 avant), en 2 commits verts indépendamment. Deux défauts
+distincts, tous deux sur les icônes des lignes de réunion :
+
+1. **Colonne actions sous-dimensionnée** — la largeur était restée calée sur 2 boutons
+   dédiés alors que `_boutons_reunion` en produit **3** depuis la retouche du
+   2026-08-21 (« Copier le fichier »). 130 px au lieu de 162 ; `ActionsDelegate._zones`
+   construisant depuis le bord **droit** sans clipper, le bouton « Générer le CR »
+   était peint de −32 à −2 px, soit pile sur l'icône de la colonne « lien calendrier »
+   (3..31 d'une colonne de 34) : **superposition** sur macOS, apparence « collée » sur
+   Windows, et Linux touché de la même façon — la géométrie est 100 % Python. La
+   largeur passe désormais par `NB_BOUTONS_REUNION`/`NB_FLECHES_REUNION`, qui
+   documentent le pire cas réel. ⚠️ `test_largeur_colonne_journal_et_reunion` ne
+   pouvait pas voir la régression : il vérifie la **formule**, jamais le nombre de
+   boutons qu'on lui passe. L'accord est maintenant testé côté vue
+   (`test_colonne_actions_dimensionnee_pour_les_boutons_reellement_produits`), plus le
+   symptôme lui-même sur les `visualRect` réels des deux colonnes.
+2. **L'icône de la ligne montre l'opération en cours** — la colonne 0 cédait toujours
+   « users-three » : rien ne disait qu'un traitement **a posteriori** tournait sur
+   telle réunion. Elle affiche maintenant l'icône du job (transcription →
+   `file-text`, locuteurs → `users`, CR Mistral → `notebook`, type inconnu →
+   `arrows-clockwise` — une icône « réunion » mentirait sur l'inactivité), teintée
+   `C.JOB` : le même orange que l'icône de tray dans cet état, sorti du bloc tray sous
+   un nom sémantique dont `TRAY_TRANSCRIBE` dérive (le tray dit qu'une opération
+   tourne, la ligne dit laquelle et sur quelle réunion) + infobulle sur la colonne.
+   `CaptureModel.definir_job_en_cours(chemin, type)` suit le modèle de
+   `definir_chemin_actif` — le modèle ne connaît toujours aucun gestionnaire — et
+   **`ReunionView.recharger()` devient le point de rechargement UNIQUE** : les 11
+   `self._modele.recharger()` directs passent par lui, sinon l'icône se périme au
+   premier rechargement venu d'ailleurs (watcher de dossier, fin de mapping des
+   locuteurs, association BlueMind). Deux pièges figés par des tests : les
+   gestionnaires remettent `_job_en_cours` à None **avant** d'émettre
+   `termine`/`echoue` (le handler voit donc bien « plus de job » — inverser cet ordre
+   casse un test) ; et la ligne « en cours » a `Path()` pour chemin sentinelle, qu'un
+   `_job_chemin` lui aussi vide égalerait, collant une icône de job à
+   l'enregistrement live. Les tests comparent les **images rendues**, pas les `QIcon` :
+   ça fige la forme (donc *quelle* opération) autant que la teinte.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
