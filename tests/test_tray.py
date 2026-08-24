@@ -280,3 +280,89 @@ def test_clic_droit_ne_double_pas_le_menu_sous_linux(qapp, tmp_path, monkeypatch
     tray._on_activation(QSystemTrayIcon.ActivationReason.Context)
 
     assert popups == []
+
+
+# ── « Quitter » : l'EFFET de l'activation, pas le libellé ─────────────────────
+#
+# Les deux tests d'ordre du menu ci-dessus n'assertaient que la présence du texte
+# « Quitter » : ils restaient verts alors que l'item était inerte sous Linux, chez
+# l'utilisateur, faute de porte de sortie (`setQuitOnLastWindowClosed(False)`).
+
+def _tray_quit_espionne(qapp, tmp_path, monkeypatch, *, linux: bool):
+    """Tray construit avec `QApplication.quit` espionné.
+
+    Le remplacement doit précéder la construction : `connect()` capture le callable
+    au moment du câblage, un patch posé après n'intercepterait rien."""
+    from debrief_meet.ui import tray as mod
+
+    monkeypatch.setattr(mod, "_LINUX", linux)
+    appels: list[bool] = []
+    monkeypatch.setattr(mod.QApplication, "quit", lambda *a: appels.append(True))
+    machine = MachineEtats()
+    fenetre = FenetrePrincipale(machine, _config(tmp_path))
+    tray = IconeTray(machine, _config(tmp_path), fenetre_principale=fenetre)
+    return tray, appels
+
+
+def _action_quitter(tray):
+    return next(a for a in tray._menu.actions() if a.text() == "Quitter")
+
+
+def _relacher_clic_gauche(widget) -> None:
+    """Le vrai chemin souris : `mouseReleaseEvent`, pas l'émission du signal."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    widget.mouseReleaseEvent(QMouseEvent(
+        QEvent.Type.MouseButtonRelease, QPointF(1, 1), Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+
+def test_quitter_sous_linux_est_une_action_simple_qui_quitte(qapp, tmp_path, monkeypatch):
+    """Sous Linux le menu est exporté via DBusMenu, qui ne transporte que
+    libellé/icône/état : un `QWidgetAction` n'y a aucune représentation. L'item
+    s'affichait par son seul `setText()` et l'hôte l'activait via `triggered` —
+    signal auquel rien n'était branché, d'où un « Quitter » sans effet."""
+    from PySide6.QtWidgets import QWidgetAction
+
+    tray, appels = _tray_quit_espionne(qapp, tmp_path, monkeypatch, linux=True)
+    action = _action_quitter(tray)
+
+    assert not isinstance(action, QWidgetAction)
+    action.trigger()  # ce que fait l'hôte StatusNotifierItem
+    assert appels == [True]
+
+
+def test_quitter_hors_linux_garde_le_widget_rouge_et_quitte_au_clic(qapp, tmp_path, monkeypatch):
+    """macOS/Windows : Qt rend le menu lui-même, le widget rouge est conservé —
+    et son clic doit toujours quitter."""
+    from PySide6.QtWidgets import QWidgetAction
+
+    tray, appels = _tray_quit_espionne(qapp, tmp_path, monkeypatch, linux=False)
+    action = _action_quitter(tray)
+
+    assert isinstance(action, QWidgetAction)
+    _relacher_clic_gauche(action.defaultWidget())
+    assert appels == [True]
+
+
+def test_quitter_hors_linux_quitte_aussi_par_activation_clavier(qapp, tmp_path, monkeypatch):
+    """Filet de sécurité : `QWidgetAction` n'émet pas `triggered` au clic sur son
+    widget, mais toute autre activation (clavier, `trigger()`, hôte externe) passe
+    par là et n'aboutissait nulle part."""
+    tray, appels = _tray_quit_espionne(qapp, tmp_path, monkeypatch, linux=False)
+
+    _action_quitter(tray).trigger()
+
+    assert appels == [True]
+
+
+def test_quitter_ne_quitte_pas_deux_fois_au_clic(qapp, tmp_path, monkeypatch):
+    """Le câblage double (`cliquee` + `triggered`) ne doit pas produire deux sorties
+    sur le chemin souris — `QWidgetAction` ne déclenche pas `triggered` quand on
+    clique son widget."""
+    tray, appels = _tray_quit_espionne(qapp, tmp_path, monkeypatch, linux=False)
+
+    _relacher_clic_gauche(_action_quitter(tray).defaultWidget())
+
+    assert len(appels) == 1

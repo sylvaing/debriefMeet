@@ -71,7 +71,10 @@ class _LigneQuitter(QWidget):
     """Ligne « Quitter » en rouge permanent (`#FF3B30`, convention macOS) — un
     `QAction` standard ne peut pas recevoir une couleur de texte statique via
     `QMenu::item` en QSS (le sélecteur ne cible pas un item précis), d'où ce
-    `QWidgetAction` custom plutôt qu'une action classique."""
+    `QWidgetAction` custom plutôt qu'une action classique.
+
+    **Jamais utilisée sous Linux** : là le menu est exporté via DBusMenu et redessiné
+    par l'hôte, qui ignore les widgets Qt (cf. `_construire_menu`)."""
 
     cliquee = Signal()
 
@@ -202,12 +205,29 @@ class IconeTray(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        ligne_quitter = _LigneQuitter(menu)
-        ligne_quitter.cliquee.connect(menu.close)
-        ligne_quitter.cliquee.connect(QApplication.quit)
-        action_quitter = QWidgetAction(menu)
-        action_quitter.setText("Quitter")  # gardé pour les tests/accessibilité ; rendu via le widget custom
-        action_quitter.setDefaultWidget(ligne_quitter)
+        # Linux : le menu n'est pas dessiné par Qt, il est exporté via DBusMenu à
+        # l'hôte StatusNotifierItem, qui ne transporte que libellé/icône/état — un
+        # `QWidgetAction` n'y a AUCUNE représentation. L'item s'affichait donc par son
+        # seul `setText()`, et l'hôte l'activait via `triggered`, signal auquel rien
+        # n'était branché : « Quitter » inerte, et aucune autre porte de sortie
+        # (`setQuitOnLastWindowClosed(False)`, pas d'item ailleurs) — l'utilisateur
+        # devait tuer le process. Constaté chez l'utilisateur Linux le 2026-08-24.
+        # Le widget rouge maison n'a de sens que là où Qt rend le menu lui-même.
+        action_quitter: QAction
+        if _LINUX:
+            action_quitter = QAction(_icone_menu("sign-out", C.REC), "Quitter", menu)
+        else:
+            ligne_quitter = _LigneQuitter(menu)
+            ligne_quitter.cliquee.connect(menu.close)
+            ligne_quitter.cliquee.connect(QApplication.quit)
+            action_quitter = QWidgetAction(menu)
+            action_quitter.setText("Quitter")  # accessibilité + tests ; rendu par le widget
+            action_quitter.setDefaultWidget(ligne_quitter)
+        # Branché dans les deux cas. `QWidgetAction` n'émet pas `triggered` quand on
+        # clique son widget (d'où le câblage sur `cliquee` ci-dessus), donc pas de
+        # double sortie ; mais tout autre chemin d'activation — hôte de menu externe,
+        # navigation clavier, `trigger()` — passe par là et n'aboutissait nulle part.
+        action_quitter.triggered.connect(QApplication.quit)
         menu.addAction(action_quitter)
 
         if _LINUX:
