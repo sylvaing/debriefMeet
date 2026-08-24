@@ -84,6 +84,13 @@ _ICONE_BLUEMIND_ASSOCIE = "calendar-check"
 _ICONE_NOMMER_LOCUTEURS = "chat-text"
 _ICONE_CR_MISTRAL = "notebook"
 
+# Nombre MAXIMAL de boutons dédiés que `_boutons_reunion` peut produire (Générer le
+# CR ▾ + Copier le CR + Copier le fichier) et de flèches parmi eux. La colonne actions
+# est dimensionnée là-dessus : ajouter un bouton sans bouger ces constantes le fait
+# déborder à gauche, hors de sa colonne (cf. `_construire_table`).
+NB_BOUTONS_REUNION = 3
+NB_FLECHES_REUNION = 1
+
 
 @dataclass(frozen=True)
 class _EtatBluemind:
@@ -183,10 +190,15 @@ class ReunionView(QWidget):
         table.setColumnWidth(3, 74)
         table.setColumnWidth(4, 116)
         table.setColumnWidth(COL_CALENDRIER_REUNION, 34)  # icône 28×28 + marge (§8.6.2)
-        # 2 boutons dédiés (Générer le CR ▾ + Copier le CR) + ⋯ : la colonne doit les
-        # contenir (= sizeHint d'ActionsDelegate). Sous-dimensionner ferait déborder les
-        # boutons à gauche → chevauchement avec la colonne « lien calendrier ».
-        table.setColumnWidth(COL_ACTIONS_REUNION, largeur_colonne(2, nb_fleches=1))
+        # Les boutons dédiés + ⋯ : la colonne doit tous les contenir (= sizeHint
+        # d'ActionsDelegate, qui ne clippe pas). Sous-dimensionner fait déborder les
+        # boutons à GAUCHE, hors de la colonne — c'est ce qui a fait peindre le bouton
+        # « Générer le CR » par-dessus l'icône de la colonne « lien calendrier »
+        # (constaté sur macOS et Windows le 2026-08-24 : la largeur était restée
+        # calée sur 2 boutons après l'ajout du 3ᵉ, « Copier le fichier »).
+        table.setColumnWidth(
+            COL_ACTIONS_REUNION,
+            largeur_colonne(NB_BOUTONS_REUNION, nb_fleches=NB_FLECHES_REUNION))
 
         raccourci = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), table)
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
