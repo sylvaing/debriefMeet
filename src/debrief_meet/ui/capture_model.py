@@ -52,6 +52,27 @@ COLS_JOURNAL = ("icône", "fichier", "note", "actions")
 _ENTETES_REUNIONS = ("", "TITRE", "DATE", "DURÉE", "ÉTAT", "", "")
 _ENTETES_JOURNAL = ("", "FICHIER", "NOTE", "")
 
+# Colonne 0 pendant un traitement **a posteriori** sur la réunion (≠ ligne « en
+# cours », qui est l'enregistrement live et garde son micro) : l'icône « réunion »
+# cède la place à celle de l'opération qui tourne, teintée `C.JOB`. Une entrée par
+# valeur de `GestionnaireDiarization.type_job_en_cours()`, plus `JOB_CR_MISTRAL` que
+# la vue passe pour le gestionnaire Mistral (qui n'a pas de type, il n'a qu'un job).
+JOB_CR_MISTRAL = "cr_mistral"
+JOB_AUTRE = "autre"  # un job tourne mais son type n'est pas connu ici
+_ICONES_JOB = {
+    "transcription": "file-text",     # = _ICONE_TRANSCRIRE de reunion_view
+    "diarization": "users",           # = _ICONE_GENERER
+    JOB_CR_MISTRAL: "notebook",       # = _ICONE_CR_MISTRAL
+}
+# Type inconnu (un job ajouté sans passer par ici) : l'orange et le mouvement de sens
+# général valent mieux que l'icône « réunion » qui mentirait sur l'inactivité.
+_ICONE_JOB_AUTRE = "arrows-clockwise"
+_TOOLTIPS_JOB = {
+    "transcription": "Transcription en cours…",
+    "diarization": "Génération des locuteurs en cours…",
+    JOB_CR_MISTRAL: "Génération du CR en cours…",
+}
+
 COL_TITRE_REUNION = 1
 COL_CALENDRIER_REUNION = 5  # DESIGN.md §8.6.2 — colonne dédiée, sortie de la rangée d'actions
 COL_ACTIONS_REUNION = 6
@@ -146,6 +167,8 @@ class CaptureModel(QAbstractTableModel):
         self._lignes: list[_LigneReunion] | list[_LigneJournal] = []
         self._ligne_en_cours: _LigneReunion | None = None  # Réunion uniquement (CHANGELOG_v2 §3)
         self._chemin_actif: Path | None = None  # exclu du listing pendant l'enregistrement
+        self._job_chemin: Path | None = None    # réunion sous traitement a posteriori
+        self._job_type: str | None = None
 
     # ── API Qt ───────────────────────────────────────────────────────────────
 
@@ -197,7 +220,15 @@ class CaptureModel(QAbstractTableModel):
         return self._data_journal(ligne, col, role)
 
     def _data_reunion(self, ligne: _LigneReunion, col: int, role: int):
-        if role == Qt.ItemDataRole.DecorationRole and col == 0:
+        if col == 0 and role in (Qt.ItemDataRole.DecorationRole, Qt.ItemDataRole.ToolTipRole):
+            job = self._type_job_de(ligne)
+            if job is not None:
+                if role == Qt.ItemDataRole.ToolTipRole:
+                    return _TOOLTIPS_JOB.get(job, "Traitement en cours…")
+                nom = _ICONES_JOB.get(job, _ICONE_JOB_AUTRE)
+                return icone_svg_teintee(icone_phosphor(nom), C.JOB, 16)
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return None
             icone = "microphone" if ligne.en_cours else "users-three"
             return icone_svg_teintee(icone_phosphor(icone), C.INK400, 16)
         if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
@@ -217,6 +248,17 @@ class CaptureModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole and col == 4:
             return ligne.etat
         return None
+
+    def _type_job_de(self, ligne: _LigneReunion) -> str | None:
+        """Type du job qui tourne sur CETTE ligne, ou None. La ligne « en cours » est
+        exclue : son chemin est une sentinelle vide (`Path()`), qui vaudrait `==` avec
+        un `_job_chemin` lui aussi vide — et c'est l'enregistrement live, pas un
+        traitement a posteriori."""
+        if ligne.en_cours or self._job_chemin is None:
+            return None
+        if ligne.chemin != self._job_chemin:
+            return None
+        return self._job_type or JOB_AUTRE
 
     def _data_journal(self, ligne: _LigneJournal, col: int, role: int):
         if role == Qt.ItemDataRole.DecorationRole and col == 0:
@@ -299,6 +341,14 @@ class CaptureModel(QAbstractTableModel):
         déjà représentée par la ligne « en cours » — sans cette exclusion, la même
         réunion apparaît deux fois. Ne recharge pas (l'appelant le fait)."""
         self._chemin_actif = chemin
+
+    def definir_job_en_cours(self, chemin: Path | None, type_job: str | None) -> None:
+        """Réunion sur laquelle un traitement a posteriori tourne (transcription,
+        locuteurs, CR) et de quel type : la colonne 0 de CETTE ligne montre l'icône de
+        l'opération au lieu de l'icône « réunion ». Ne recharge pas (l'appelant le
+        fait — cf. `ReunionView.recharger`, qui est l'unique point d'appel)."""
+        self._job_chemin = chemin
+        self._job_type = type_job
 
     def recharger(self) -> None:
         fichiers = lister_reunions(self._dossier) if self._est_reunion else lister_enregistrements(self._dossier)

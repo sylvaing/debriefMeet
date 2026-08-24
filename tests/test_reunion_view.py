@@ -8,14 +8,19 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QStyleOptionViewItem
 from scipy.io import wavfile
 
 from debrief_meet.core.config import Config
 from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, chemin_cr_mistral, chemin_locuteurs
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.ui import reunion_view as rv_module
+from debrief_meet.ui.actions_delegate import largeur_colonne
+from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_CALENDRIER_REUNION
+from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.status_pill import HistoryState
+from debrief_meet.ui.theme import C
 
 
 @pytest.fixture
@@ -631,6 +636,124 @@ def test_clic_principal_lance_avec_le_prompt_actif(qapp, machine, tmp_path):
     _spec(_boutons(vue), "notebook").on_click()
     assert g.lances == [md]
     assert g.prompts == [None]                       # None → prompt actif (pipeline)
+
+
+# ── Accord largeur de colonne ↔ boutons réellement produits ───────────────────────
+
+def _vue_max_boutons(machine, tmp_path):
+    """Vue dans la configuration qui produit le MAXIMUM de boutons dédiés :
+    réunion transcrite avec audio + CR Mistral disponible + 2 prompts (→ flèche)."""
+    _reunion_avec_audio(tmp_path)
+    cfg = _config(tmp_path)
+    cfg.set("prompts", [{"titre": "CR simple", "contenu": "Simple."},
+                        {"titre": "CR détaillé", "contenu": "Détaillé."}])
+    cfg.set("mistral_confidentialite_acceptee", True)
+    return ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+
+
+def test_colonne_actions_dimensionnee_pour_les_boutons_reellement_produits(qapp, machine, tmp_path):
+    """Régression du 2026-08-24 : le 3ᵉ bouton (« Copier le fichier ») avait été
+    ajouté à `_boutons_reunion` sans bouger la largeur de la colonne, restée calée
+    sur 2 boutons — 32 px de trop peu. `test_largeur_colonne_journal_et_reunion` ne
+    voyait rien : il vérifie la formule, pas le nombre de boutons qu'on lui passe."""
+    vue = _vue_max_boutons(machine, tmp_path)
+    boutons = _boutons(vue)
+    nb_fleches = sum(1 for b in boutons if b.menu_deroulant)
+
+    # Les constantes qui dimensionnent la colonne décrivent bien le pire cas réel.
+    assert len(boutons) == rv_module.NB_BOUTONS_REUNION
+    assert nb_fleches == rv_module.NB_FLECHES_REUNION
+    assert (vue._table.columnWidth(COL_ACTIONS_REUNION)
+            == largeur_colonne(len(boutons), nb_fleches=nb_fleches))
+
+
+def test_boutons_actions_ne_debordent_pas_sur_la_colonne_calendrier(qapp, machine, tmp_path):
+    """Le symptôme observé : `ActionsDelegate` construit ses zones depuis le bord
+    DROIT et ne clippe pas, donc une colonne trop étroite peint le bouton le plus à
+    gauche par-dessus l'icône calendrier de la colonne voisine."""
+    vue = _vue_max_boutons(machine, tmp_path)
+    table = vue._table
+    table.resize(1200, 400)
+    index = vue._proxy.mapFromSource(vue._modele.index(0, COL_ACTIONS_REUNION))
+    rect_actions = table.visualRect(index)
+    rect_calendrier = table.visualRect(
+        vue._proxy.mapFromSource(vue._modele.index(0, COL_CALENDRIER_REUNION)))
+    assert rect_actions.width() > 0 and rect_calendrier.width() > 0
+
+    delegate = table.itemDelegateForColumn(COL_ACTIONS_REUNION)
+    option = QStyleOptionViewItem()
+    option.rect = rect_actions
+    zones = delegate._zones(option, _ligne_actions(vue))
+    assert zones
+    for zone in zones:
+        assert zone.rect.left() >= rect_actions.left()
+        assert zone.rect.left() >= rect_calendrier.right()
+
+
+# ── Colonne 0 : icône du traitement a posteriori en cours ────────────────────────
+
+def _image_col0(vue, row=0):
+    icone = vue._modele.data(vue._modele.index(row, 0), Qt.ItemDataRole.DecorationRole)
+    return icone.pixmap(16, 16).toImage()
+
+
+def _image_attendue(nom, couleur=C.JOB):
+    return icone_svg_teintee(icone_phosphor(nom), couleur, 16).pixmap(16, 16).toImage()
+
+
+def test_icone_ligne_suit_le_job_de_transcription(qapp, machine, tmp_path):
+    md = _reunion_en_attente(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="transcription"))
+    assert _image_col0(vue) == _image_attendue("file-text")
+
+
+def test_icone_ligne_suit_le_job_de_diarization(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="diarization"))
+    assert _image_col0(vue) == _image_attendue("users")
+
+
+def test_icone_ligne_suit_le_job_cr_mistral(qapp, machine, tmp_path):
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(job=md))
+    assert _image_col0(vue) == _image_attendue("notebook")
+
+
+def test_icone_ligne_revient_a_reunion_a_la_fin_du_job(qapp, machine, tmp_path):
+    """Les gestionnaires remettent `_job_en_cours` à None AVANT d'émettre `termine` :
+    le handler de la vue doit donc voir « plus de job » et repeindre l'icône neutre."""
+    md = _reunion_avec_audio(tmp_path)
+    g = FauxGestionnaireCRMistral(job=md)
+    # La vue n'est pas affichée → `_sur_cr_mistral_termine` ne montre aucun dialogue.
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=g)
+    assert _image_col0(vue) == _image_attendue("notebook")
+
+    g._job = None
+    g.termine.emit(md, chemin_cr_mistral(md))
+    assert _image_col0(vue) == _image_attendue("users-three", C.INK400)
+
+
+def test_icone_ligne_neutre_sans_aucun_job(qapp, machine, tmp_path):
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    assert _image_col0(vue) == _image_attendue("users-three", C.INK400)
+
+
+def test_job_mistral_prime_sur_le_gestionnaire_local(qapp, machine, tmp_path):
+    """Ordre documenté par `_job_en_cours` : Mistral d'abord. Les deux gestionnaires
+    sont exclusifs en pratique, mais si les deux se déclaraient occupés il faut un
+    gagnant stable, pas une icône qui dépend de l'ordre des attributs."""
+    md = _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine,
+                      gestionnaire=FauxGestionnaire(job=md, type_job="diarization"),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral(job=md))
+    assert _image_col0(vue) == _image_attendue("notebook")
 
 
 # ── Régénération : confirmation de remplacement quand un CR existe ────────────────

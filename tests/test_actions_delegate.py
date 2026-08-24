@@ -181,10 +181,14 @@ def test_fleche_accolee_a_droite_de_son_bouton(qapp):
 # ── Largeurs ─────────────────────────────────────────────────────────────────────
 
 def test_largeur_colonne_journal_et_reunion():
-    # Journal : Copier + ⋯. Réunion : Générer le CR ▾ + Copier le CR + ⋯.
+    # La FORMULE seulement — que chaque vue lui passe le bon nombre de boutons est
+    # vérifié côté vue (test_reunion_view.py :
+    # test_colonne_actions_dimensionnee_pour_les_boutons_reellement_produits).
+    # Journal : Copier + ⋯. Réunion : Générer le CR ▾ + Copier le CR + Copier le
+    # fichier + ⋯.
     assert largeur_colonne(1) == MARGE_DROITE + 2 * TAILLE_BOUTON + ESPACEMENT
-    assert largeur_colonne(2, nb_fleches=1) == (
-        MARGE_DROITE + 3 * TAILLE_BOUTON + LARGEUR_FLECHE + 2 * ESPACEMENT)
+    assert largeur_colonne(3, nb_fleches=1) == (
+        MARGE_DROITE + 4 * TAILLE_BOUTON + LARGEUR_FLECHE + 3 * ESPACEMENT)
 
 
 def test_size_hint_suit_les_boutons_pas_le_menu(qapp):
