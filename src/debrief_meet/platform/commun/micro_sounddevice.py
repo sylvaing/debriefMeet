@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
@@ -45,7 +46,30 @@ class CaptureMicroSounddevice(CaptureMicro):
     TROU_MIN_S = 0.020  # sous ce seuil : gigue d'horodatage, pas une perte
     TROU_MAX_S = 10.0   # au-delà : horodatage aberrant → resynchroniser sans combler
 
-    def __init__(self) -> None:
+    # Host API préféré quand AUCUN périphérique n'est demandé (terrain 2026-08-26).
+    # PortAudio prend par défaut, sous Windows, le périphérique par défaut de **MME** —
+    # le plus ancien host API, dont `inputBufferAdcTime` n'est pas l'horloge du
+    # périphérique. Le comblement de trous ci-dessus en dépend entièrement : sous MME il
+    # est silencieusement hors service (constaté chez une utilisatrice Windows : overflow
+    # signalé par PortAudio, 0 trou détecté, et l'offset inter-pistes qui saute de 0,6 à
+    # 0,7 s par bond — AEC à 0 dB sur une réunion entière). `_logger_infos_flux` disait
+    # déjà que MME est « un indice de latence/qualité dégradée » (E-8, docs/33 §2.1) :
+    # on ne s'y résigne plus, on demande WASAPI et on retombe sur le défaut global si
+    # WASAPI est absent ou refuse d'ouvrir.
+    HOST_API_PREFERE_DEFAUT = "WASAPI"
+
+    # Nombre d'overflows non compensés avant d'annoncer que le comblement est hors
+    # service. Plus de 1 : un overflow isolé peut légitimement ne rien avoir perdu.
+    OVERFLOWS_AVANT_ALERTE_AVEUGLE = 3
+
+    def __init__(self, host_api_prefere: str | None = None) -> None:
+        # Paramètre explicite plutôt qu'un `sys.platform` lu dans `_ouvrir_flux` (même
+        # raison que `surveillant_peripheriques`) : les tests restent déterministes sur
+        # les deux OS, la gate de build tournant sur la VM Windows. `""` désactive la
+        # préférence (= comportement PortAudio d'origine).
+        self._host_api_prefere = (
+            self.HOST_API_PREFERE_DEFAUT if host_api_prefere is None and sys.platform == "win32"
+            else (host_api_prefere or ""))
         self._buffer: list[tuple[np.ndarray, int]] = []  # (bloc, taux_natif_a_la_capture)
         self._verrou = threading.Lock()
         self._stream = None
@@ -60,6 +84,12 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._overflows = 0
         self._trous_combles = 0
         self._silence_comble_s = 0.0
+        # Aveuglement du comblement (terrain 2026-08-26) : cumulés sur la DURÉE DU FLUX,
+        # pas drainés par tranche — c'est une propriété de l'host API, pas de la tranche.
+        self._overflows_sans_trou = 0
+        self._blocs_sans_horodatage = 0
+        self._trous_combles_flux = 0
+        self._alerte_aveugle_emise = False
 
     @property
     def taux_echantillonnage(self) -> int:
@@ -95,6 +125,31 @@ class CaptureMicroSounddevice(CaptureMicro):
             nom, host_api, taux_natif, TAUX_CANONIQUE,
         )
 
+    def _defaut_host_api_prefere(self, sd) -> int | None:
+        """Index du périphérique d'entrée par défaut de l'host API préféré, ou None.
+
+        None couvre tous les cas d'indisponibilité (préférence vide, host API absent,
+        pas d'entrée par défaut, PortAudio muet) : l'appelant retombe alors sur le
+        défaut global. On ne lève jamais — un host API manquant n'est pas une panne."""
+        if not self._host_api_prefere:
+            return None
+        vise = self._host_api_prefere.lower()
+        try:
+            for api in sd.query_hostapis():
+                if vise not in str(api.get("name", "")).lower():
+                    continue
+                index = api.get("default_input_device")
+                # PortAudio met -1 quand l'host API n'a aucune entrée par défaut.
+                if index is None or int(index) < 0:
+                    continue
+                return int(index)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "Host API préféré %r introuvable (%s) — défaut global",
+                self._host_api_prefere, exc)
+        return None
+
     def _ouvrir_flux(self, sd, index_peripherique: int | None):
         """Ouvre un InputStream au taux natif du périphérique, avec repli sur le
         périphérique par défaut.
@@ -104,6 +159,11 @@ class CaptureMicroSounddevice(CaptureMicro):
         Si l'index demandé échoue (ex. AirPods déconnectés), on réessaie sur le
         périphérique par défaut. Un index None qui échoue est propagé (pas de
         périphérique du tout)."""
+        if index_peripherique is None:
+            # Aucun périphérique demandé : viser le défaut de l'host API préféré plutôt
+            # que le défaut global de PortAudio (cf. HOST_API_PREFERE_DEFAUT). None si
+            # indisponible → défaut global, comme avant.
+            index_peripherique = self._defaut_host_api_prefere(sd)
         try:
             return sd.InputStream(
                 samplerate=None,
@@ -173,6 +233,7 @@ class CaptureMicroSounddevice(CaptureMicro):
             self._buffer = []
             self._overflows = self._trous_combles = 0
             self._silence_comble_s = 0.0
+            self._reinitialiser_suivi_horodatage()
 
         self._attendre_fermeture_differee()
         self._rafraichir_portaudio(sd)
@@ -218,6 +279,8 @@ class CaptureMicroSounddevice(CaptureMicro):
         nouveau = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(nouveau)
         self._adc_attendu = None  # nouveau flux = nouvelle horloge PortAudio
+        with self._verrou:
+            self._reinitialiser_suivi_horodatage()
         nouveau.start()
         self._logger_infos_flux(sd, nouveau, self._sr_flux)
 
@@ -280,6 +343,49 @@ class CaptureMicroSounddevice(CaptureMicro):
         except Exception:
             pass
 
+    def _reinitialiser_suivi_horodatage(self) -> None:
+        """Compteurs d'aveuglement, par FLUX (à appeler sous `_verrou`). Un nouveau flux
+        peut viser un autre host API : le verdict précédent ne le concerne pas."""
+        self._overflows_sans_trou = 0
+        self._blocs_sans_horodatage = 0
+        self._trous_combles_flux = 0
+        self._alerte_aveugle_emise = False
+
+    def _alerter_si_comblement_aveugle(self) -> None:
+        """Dit une fois par flux que le comblement de trous est hors service.
+
+        Le comblement (docs/48 §8) suppose que `inputBufferAdcTime` porte l'horloge du
+        PÉRIPHÉRIQUE. Quand l'host API ne fournit rien, ou qu'il dérive l'horodatage du
+        nombre d'échantillons livrés, un trou est invisible : PortAudio annonce des
+        overflows et le détecteur ne comble rien. Ce silence-là a coûté cher (terrain
+        2026-08-26 : il a fallu remonter l'offset de l'AEC pour deviner que les pertes
+        n'étaient pas compensées) — désormais le diagnostic le dit lui-même.
+
+        Émis depuis le drain de tranche (MainThread) et jamais depuis le callback :
+        logger dans le callback le ferait attendre une écriture disque, ce qui est
+        précisément la famine qui provoque les pertes qu'on cherche à décrire."""
+        with self._verrou:
+            if self._alerte_aveugle_emise:
+                return
+            sans_horodatage = self._blocs_sans_horodatage
+            sans_trou = self._overflows_sans_trou
+            trous = self._trous_combles_flux
+            if sans_horodatage == 0 and sans_trou < self.OVERFLOWS_AVANT_ALERTE_AVEUGLE:
+                return
+            self._alerte_aveugle_emise = True
+
+        import logging
+        cause = ("l'host API ne fournit pas d'horodatage ADC"
+                 if sans_horodatage else
+                 "l'horodatage ADC ne montre aucune discontinuité malgré les pertes")
+        logging.getLogger(__name__).warning(
+            "Micro : comblement des trous HORS SERVICE — %s (%d bloc(s) sans horodatage, "
+            "%d overflow(s) non compensé(s), %d trou(s) comblé(s) depuis l'ouverture). "
+            "Les échantillons perdus ne sont PAS compensés : l'alignement moi/systeme "
+            "n'est plus garanti et l'AEC peut décrocher. Choisir un micro sous un autre "
+            "host API (Préférences › Audio) — cf. docs/48 §8.",
+            cause, sans_horodatage, sans_trou, trous)
+
     def recuperer_echantillons(self) -> np.ndarray:
         """Concatène le buffer et le renvoie rééchantillonné à 16 kHz.
 
@@ -302,6 +408,7 @@ class CaptureMicroSounddevice(CaptureMicro):
                 "%d overflow(s) PortAudio signalé(s) sur la tranche — continuité "
                 "des pistes préservée (docs/48 §8)",
                 trous, comble_s * 1000, overflows)
+        self._alerter_si_comblement_aveugle()
 
         if not buffer:
             return np.zeros(0, dtype=np.float32)
@@ -324,19 +431,29 @@ class CaptureMicroSounddevice(CaptureMicro):
 
     def _callback(self, indata, frames, time_info, status) -> None:
         sr = self._sr_flux
-        silence = self._silence_de_comblement(frames, time_info, sr)
+        silence, horodatage_utilisable = self._silence_de_comblement(frames, time_info, sr)
         overflow = bool(getattr(status, "input_overflow", False))
         with self._verrou:
             if overflow:
                 self._overflows += 1
+                # Overflow annoncé par PortAudio ET aucun trou détecté sur ce bloc : soit
+                # l'horodatage manque, soit il est dérivé des échantillons LIVRÉS (donc
+                # continu par construction, un trou y est invisible). Dans les deux cas
+                # les échantillons perdus ne sont PAS compensés — cf. l'alerte drainée
+                # dans `recuperer_echantillons`.
+                if silence is None:
+                    self._overflows_sans_trou += 1
+            if not horodatage_utilisable:
+                self._blocs_sans_horodatage += 1
             if silence is not None:
                 self._buffer.append((silence, sr))
                 self._trous_combles += 1
+                self._trous_combles_flux += 1
                 self._silence_comble_s += len(silence) / sr
             self._buffer.append((indata.copy().flatten(), sr))
 
-    def _silence_de_comblement(self, frames, time_info, sr) -> np.ndarray | None:
-        """Silence couvrant les échantillons perdus par PortAudio avant ce bloc, ou None.
+    def _silence_de_comblement(self, frames, time_info, sr) -> tuple[np.ndarray | None, bool]:
+        """(silence couvrant les échantillons perdus avant ce bloc, horodatage utilisable).
 
         Les blocs d'un flux sain sont contigus sur l'horloge ADC
         (`time_info.inputBufferAdcTime`) : un saut en avant = des échantillons ont
@@ -349,9 +466,11 @@ class CaptureMicroSounddevice(CaptureMicro):
         adc = float(getattr(time_info, "inputBufferAdcTime", 0.0) or 0.0)
         attendu = self._adc_attendu
         self._adc_attendu = adc + frames / sr if adc > 0 else None
-        if attendu is None or adc <= 0:
-            return None
+        if adc <= 0:
+            return None, False          # host API sans horodatage : comblement impossible
+        if attendu is None:
+            return None, True           # premier bloc du flux : rien à comparer
         manque = adc - attendu
         if not (self.TROU_MIN_S <= manque <= self.TROU_MAX_S):
-            return None
-        return np.zeros(int(round(manque * sr)), dtype=np.float32)
+            return None, True
+        return np.zeros(int(round(manque * sr)), dtype=np.float32), True

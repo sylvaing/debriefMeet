@@ -79,12 +79,21 @@ class _FauxSounddevice:
         return s
 
     def query_devices(self, device=None, kind=None):
+        # hostapi=1 → « Windows WASAPI » dans la table `hostapis` ci-dessus (l'index
+        # importe : c'est lui que `_logger_infos_flux` résout pour le log E-8).
         if device is not None:
-            return {"index": device, "name": f"peripherique-{device}", "hostapi": 0}
-        return {"index": self._index_valide, "name": "défaut", "hostapi": 0}
+            return {"index": device, "name": f"peripherique-{device}", "hostapi": 1}
+        return {"index": self._index_valide, "name": "défaut", "hostapi": 1}
+
+    # Vraie signature sounddevice : sans argument → LISTE des host API ; avec un index
+    # → le dict de celui-là. `hostapis` permet de simuler un poste sans WASAPI.
+    hostapis = [{"name": "MME", "default_input_device": 0},
+                {"name": "Windows WASAPI", "default_input_device": 1}]
 
     def query_hostapis(self, index=None):
-        return {"name": "Windows WASAPI"}
+        if index is None:
+            return list(self.hostapis)
+        return self.hostapis[index] if index < len(self.hostapis) else {"name": "inconnu"}
 
 
 @pytest.fixture()
@@ -539,3 +548,182 @@ def test_compteurs_remis_a_zero_entre_tranches(micro_16k, caplog):
 
     (msg,) = [r.message for r in caplog.records if "trou(s) de capture" in r.message]
     assert "1 trou(s)" in msg  # celui de CETTE tranche seulement, pas 2
+
+
+# ── Host API préféré : WASAPI plutôt que le défaut global (MME) sous Windows ──────
+#
+# Terrain 2026-08-26 : `micro_index = None` menait au défaut de PortAudio, soit MME
+# sous Windows, dont l'horodatage ADC ne permet pas de détecter les pertes
+# d'échantillons — le comblement de docs/48 §8 y est hors service.
+
+def _micro(host_api_prefere):
+    micro = CaptureMicroSounddevice(host_api_prefere=host_api_prefere)
+    micro.WARMUP_S = 0.0
+    return micro
+
+
+def test_sans_index_vise_le_defaut_du_host_api_prefere(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: 48_000})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    # default_input_device de « Windows WASAPI » = 1, pas le défaut global (None).
+    assert faux.streams_ouverts[-1].device == 1
+
+
+def test_index_demande_explicitement_n_est_jamais_remplace(monkeypatch):
+    """La préférence ne vaut QUE pour « aucun périphérique demandé » : un choix
+    utilisateur (Préférences › Audio) doit être respecté tel quel."""
+    faux = _FauxSounddevice(index_valide=7)
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(7)
+
+    assert faux.streams_ouverts[-1].device == 7
+
+
+def test_host_api_prefere_absent_retombe_sur_le_defaut_global(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None)
+    faux.hostapis = [{"name": "MME", "default_input_device": 0}]   # pas de WASAPI
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_host_api_prefere_sans_entree_par_defaut_retombe_sur_le_global(monkeypatch):
+    """PortAudio met -1 quand l'host API n'a aucune entrée par défaut — pas un index."""
+    faux = _FauxSounddevice(index_valide=None)
+    faux.hostapis = [{"name": "Windows WASAPI", "default_input_device": -1}]
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_preference_vide_conserve_le_comportement_portaudio(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: 48_000})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_defaut_prefere_qui_refuse_de_s_ouvrir_replie_sur_le_global(monkeypatch):
+    """L'index WASAPI existe dans la table mais l'ouverture échoue (périphérique
+    fantôme) : le repli de `_ouvrir_flux` doit ramener au défaut global, pas propager."""
+    faux = _FauxSounddevice(index_valide=None)          # aucun index n'est ouvrable...
+    faux.hostapis = [{"name": "Windows WASAPI", "default_input_device": 42}]
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    # Deux tentatives d'ouverture (42 refusé, puis le défaut global), et seul le second
+    # flux existe — `InputStream` lève avant de créer quoi que ce soit.
+    assert faux.evenements.count("open") == 2
+    assert [s.device for s in faux.streams_ouverts] == [None]
+
+
+def test_host_api_prefere_defaut_selon_l_os(monkeypatch):
+    """Le défaut est dérivé de `sys.platform` (idiome de `surveillant_peripheriques`) :
+    WASAPI sous Windows, aucune préférence ailleurs — et le paramètre explicite garde
+    les tests déterministes sur les deux OS, la gate de build tournant sur la VM."""
+    monkeypatch.setattr("debrief_meet.platform.commun.micro_sounddevice.sys.platform", "win32")
+    assert (CaptureMicroSounddevice()._host_api_prefere
+            == CaptureMicroSounddevice.HOST_API_PREFERE_DEFAUT)
+    monkeypatch.setattr("debrief_meet.platform.commun.micro_sounddevice.sys.platform", "darwin")
+    assert CaptureMicroSounddevice()._host_api_prefere == ""
+
+
+# ── Comblement de trous HORS SERVICE : le dire au lieu de le taire ────────────────
+#
+# Terrain 2026-08-26 : le log portait « 0 trou(s) comblé(s), 1 overflow(s) signalé(s) »
+# et rien d'autre — il a fallu remonter l'offset de l'AEC pour comprendre que les
+# pertes n'étaient pas compensées. Ces deux signatures sont désormais nommées.
+
+def _alertes_aveugles(caplog):
+    return [r.getMessage() for r in caplog.records if "HORS SERVICE" in r.getMessage()]
+
+
+def test_absence_d_horodatage_declaree_hors_service(micro_16k, caplog):
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1600, 0.0)        # host API sans horodatage ADC
+        micro_16k.recuperer_echantillons()
+
+    alertes = _alertes_aveugles(caplog)
+    assert len(alertes) == 1
+    assert "ne fournit pas d'horodatage ADC" in alertes[0]
+
+
+def test_overflows_sans_trou_detecte_declares_hors_service(micro_16k, caplog):
+    """L'horodatage EXISTE et reste continu, mais PortAudio annonce des pertes : c'est
+    la signature d'un horodatage dérivé des échantillons livrés (MME), où un trou est
+    invisible par construction. C'est le cas exact du terrain."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        for i in range(CaptureMicroSounddevice.OVERFLOWS_AVANT_ALERTE_AVEUGLE):
+            _pousser_bloc_adc(micro_16k, 1600, 1.0 + i * 0.1, overflow=True)
+        micro_16k.recuperer_echantillons()
+
+    alertes = _alertes_aveugles(caplog)
+    assert len(alertes) == 1
+    assert "aucune discontinuité" in alertes[0]
+    assert "casque" not in alertes[0]                  # ce n'est pas un souci acoustique
+
+
+def test_un_overflow_isole_ne_declenche_pas_l_alerte(micro_16k, caplog):
+    """Un overflow peut n'avoir rien perdu — on n'accuse pas l'host API sur un seul."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1600, 1.0, overflow=True)
+        micro_16k.recuperer_echantillons()
+
+    assert _alertes_aveugles(caplog) == []
+
+
+def test_comblement_operant_ne_declenche_jamais_l_alerte(micro_16k, caplog):
+    """Des trous détectés ET comblés : le mécanisme marche, aucune alerte — même avec
+    les overflows qui les accompagnent."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1600, 1.0)
+        for i in range(5):                             # 100 ms de trou à chaque bloc
+            _pousser_bloc_adc(micro_16k, 1600, 1.2 + i * 0.2, overflow=True)
+        micro_16k.recuperer_echantillons()
+
+    assert _alertes_aveugles(caplog) == []
+    assert micro_16k._trous_combles_flux == 5
+
+
+def test_alerte_aveugle_emise_une_seule_fois_par_flux(micro_16k, caplog):
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        for _ in range(3):
+            _pousser_bloc_adc(micro_16k, 1600, 0.0)
+            micro_16k.recuperer_echantillons()
+
+    assert len(_alertes_aveugles(caplog)) == 1
+
+
+def test_redemarrage_rearme_le_verdict_d_aveuglement(micro_16k, monkeypatch, caplog):
+    """Un nouveau flux peut viser un autre host API : le verdict précédent ne le
+    concerne pas, et l'alerte doit pouvoir se réémettre."""
+    _pousser_bloc_adc(micro_16k, 1600, 0.0)
+    micro_16k.recuperer_echantillons()
+    assert micro_16k._alerte_aveugle_emise
+
+    micro_16k.redemarrer(1)
+    assert micro_16k._alerte_aveugle_emise is False
+    assert micro_16k._blocs_sans_horodatage == 0
+
+    caplog.clear()   # sinon la 1ʳᵉ alerte, déjà capturée, compterait pour la seconde
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1600, 0.0)
+        micro_16k.recuperer_echantillons()
+    assert len(_alertes_aveugles(caplog)) == 1
