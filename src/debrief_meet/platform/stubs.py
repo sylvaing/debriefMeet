@@ -74,10 +74,19 @@ class SystemeStub(CaptureAudioSysteme):
 class PressePapiersStub(PressePapiers):
     def __init__(self) -> None:
         self._contenu = ""
+        self._html = ""
 
     def copier(self, texte: str) -> None:
         self._contenu = texte
         logger.debug("PressePapiersStub: copier(%d chars)", len(texte))
+
+    def copier_riche(self, html: str, texte: str) -> None:
+        # Les deux flavors sont mémorisées : `lire()` rend le repli texte, comme une
+        # cible qui ne prend pas le HTML, et `_html` reste inspectable en test.
+        self._html = html
+        self._contenu = texte
+        logger.debug("PressePapiersStub: copier_riche(%d chars HTML, %d chars texte)",
+                     len(html), len(texte))
 
     def copier_fichier(self, chemin) -> None:
         logger.debug("PressePapiersStub: copier_fichier(%s)", chemin)

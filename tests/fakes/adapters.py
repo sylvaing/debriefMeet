@@ -141,8 +141,17 @@ class PressePapiersFake(PressePapiers):
     def __init__(self) -> None:
         self.historique: list[str] = []
         self.fichiers_copies: list = []
+        # Flavors HTML posées par `copier_riche`, dans l'ordre. Séparées de
+        # `historique` pour qu'un test puisse distinguer une copie riche d'une copie
+        # brute — le repli texte, lui, alimente les deux (c'est bien ce que reçoit
+        # une cible qui ne prend pas le HTML).
+        self.historique_html: list[str] = []
 
     def copier(self, texte: str) -> None:
+        self.historique.append(texte)
+
+    def copier_riche(self, html: str, texte: str) -> None:
+        self.historique_html.append(html)
         self.historique.append(texte)
 
     def copier_fichier(self, chemin) -> None:
@@ -154,6 +163,10 @@ class PressePapiersFake(PressePapiers):
     @property
     def dernier(self) -> str:
         return self.lire()
+
+    @property
+    def dernier_html(self) -> str:
+        return self.historique_html[-1] if self.historique_html else ""
 
 
 class DemarrageAutoFake(DemarrageAuto):

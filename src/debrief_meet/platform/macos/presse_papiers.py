@@ -3,12 +3,18 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from debrief_meet.platform.commun.presse_papiers_riche import poser_html
 from debrief_meet.platform.interfaces import PressePapiers
 
 
 class PressePapiersMaxOS(PressePapiers):
     def copier(self, texte: str) -> None:
         subprocess.run(["pbcopy"], input=texte.encode("utf-8"), check=True)
+
+    def copier_riche(self, html: str, texte: str) -> None:
+        # `pbcopy` n'écrit que du texte brut : il ne peut pas porter de flavor HTML.
+        # Qt traduit `text/html` en `public.html`, le type que lit NSPasteboard.
+        poser_html(html, texte, "PressePapiersMaxOS")
 
     def copier_fichier(self, chemin: Path) -> None:
         # `osascript` plutôt que le presse-papiers Qt : c'est le seul mécanisme dont

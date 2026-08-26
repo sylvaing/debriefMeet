@@ -135,6 +135,13 @@ class PressePapiers(ABC):
     def copier(self, texte: str) -> None: ...
 
     @abstractmethod
+    def copier_riche(self, html: str, texte: str) -> None:
+        """Pose deux formats à la fois : `html` pour les éditeurs riches (note
+        Pipedrive, webmail, traitement de texte — qui ne mettent en forme que ce
+        qu'ils reçoivent en HTML) et `texte` en repli pour les cibles qui n'en
+        veulent pas, éditeurs markdown compris. Cf. `commun/presse_papiers_riche`."""
+
+    @abstractmethod
     def copier_fichier(self, chemin: "Path") -> None:
         """Pose une référence de fichier dans le presse-papiers (pas son contenu) :
         coller dans le gestionnaire de fichiers ou un mail copie le fichier lui-même."""

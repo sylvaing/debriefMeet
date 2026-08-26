@@ -17,6 +17,7 @@ import logging
 
 from PySide6.QtGui import QGuiApplication
 
+from debrief_meet.platform.commun.presse_papiers_riche import poser_html
 from debrief_meet.platform.interfaces import PressePapiers
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,9 @@ class PressePapiersLinux(PressePapiers):
         QGuiApplication.clipboard().setText(texte)
         # Jamais le texte lui-même dans les logs (docs/31 §3.7.1) — la longueur seule.
         logger.debug("PressePapiersLinux: copier(%d chars)", len(texte))
+
+    def copier_riche(self, html: str, texte: str) -> None:
+        poser_html(html, texte, "PressePapiersLinux")
 
     def copier_fichier(self, chemin) -> None:
         # `text/uri-list` — le format compris par Nautilus et consorts pour un

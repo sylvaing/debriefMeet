@@ -10,6 +10,7 @@ import logging
 
 from PySide6.QtGui import QGuiApplication
 
+from debrief_meet.platform.commun.presse_papiers_riche import poser_html
 from debrief_meet.platform.interfaces import PressePapiers
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ class PressePapiersWindows(PressePapiers):
         QGuiApplication.clipboard().setText(texte)
         # Jamais le texte lui-même dans les logs (docs/31 §3.7.1) — la longueur seule.
         logger.debug("PressePapiersWindows: copier(%d chars)", len(texte))
+
+    def copier_riche(self, html: str, texte: str) -> None:
+        # Qt traduit `text/html` en `CF_HTML`, le format attendu par les éditeurs Win32.
+        poser_html(html, texte, "PressePapiersWindows")
 
     def copier_fichier(self, chemin) -> None:
         # Qt traduit les URLs en CF_HDROP — le format attendu par l'Explorateur
