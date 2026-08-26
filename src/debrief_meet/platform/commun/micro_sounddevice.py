@@ -58,9 +58,18 @@ class CaptureMicroSounddevice(CaptureMicro):
     # WASAPI est absent ou refuse d'ouvrir.
     HOST_API_PREFERE_DEFAUT = "WASAPI"
 
-    # Nombre d'overflows non compensés avant d'annoncer que le comblement est hors
-    # service. Plus de 1 : un overflow isolé peut légitimement ne rien avoir perdu.
-    OVERFLOWS_AVANT_ALERTE_AVEUGLE = 3
+    # Déficit d'échantillons avant d'annoncer que le comblement est hors service.
+    #
+    # Ni `paInputOverflow` ni l'horodatage ADC ne sont des déclencheurs fiables : sur le
+    # poste du terrain 2026-08-26, l'offset inter-pistes a sauté de 1,3 s en 12 min avec
+    # **zéro** overflow signalé ce jour-là (un seul sur tout le mois) — les pertes ne se
+    # déclarent pas. Le seul signal indépendant de l'host API : comparer le temps écoulé
+    # à l'horloge murale au nombre d'échantillons réellement livrés. Un déficit, ce sont
+    # des échantillons perdus, point. La dérive d'horloge légitime (12 ppm mesurés,
+    # docs/48 §8.4) vaut 1 ms sur 80 s — trois ordres de grandeur sous le seuil, aucune
+    # confusion possible. `time.monotonic` n'avance pas pendant une veille système :
+    # refermer le capot ne fabrique pas de faux déficit.
+    DEFICIT_ALERTE_S = 0.250
 
     def __init__(self, host_api_prefere: str | None = None) -> None:
         # Paramètre explicite plutôt qu'un `sys.platform` lu dans `_ouvrir_flux` (même
@@ -90,6 +99,10 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._blocs_sans_horodatage = 0
         self._trous_combles_flux = 0
         self._alerte_aveugle_emise = False
+        # Comptabilité murale : instant du 1ᵉʳ bloc du flux, et total livré depuis (blocs
+        # + silence de comblement). L'écart entre les deux EST la perte non compensée.
+        self._t0_flux: float | None = None
+        self._echantillons_livres = 0
 
     @property
     def taux_echantillonnage(self) -> int:
@@ -350,6 +363,8 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._blocs_sans_horodatage = 0
         self._trous_combles_flux = 0
         self._alerte_aveugle_emise = False
+        self._t0_flux = None
+        self._echantillons_livres = 0
 
     def _alerter_si_comblement_aveugle(self) -> None:
         """Dit une fois par flux que le comblement de trous est hors service.
@@ -361,17 +376,26 @@ class CaptureMicroSounddevice(CaptureMicro):
         2026-08-26 : il a fallu remonter l'offset de l'AEC pour deviner que les pertes
         n'étaient pas compensées) — désormais le diagnostic le dit lui-même.
 
+        Le DÉCLENCHEUR est le déficit d'horloge murale (`DEFICIT_ALERTE_S`), pas
+        l'absence d'horodatage ni les overflows : un host API qui ne fournit pas
+        d'horodatage mais ne perd rien ne mérite aucun WARNING (sinon Linux et macOS en
+        récolteraient un par réunion), et un poste qui perd des échantillons sans le
+        déclarer doit en récolter un (c'est exactement le cas du terrain). L'horodatage
+        et les overflows ne servent plus qu'à EXPLIQUER le déficit constaté.
+
         Émis depuis le drain de tranche (MainThread) et jamais depuis le callback :
         logger dans le callback le ferait attendre une écriture disque, ce qui est
         précisément la famine qui provoque les pertes qu'on cherche à décrire."""
         with self._verrou:
-            if self._alerte_aveugle_emise:
+            if self._alerte_aveugle_emise or self._t0_flux is None:
+                return
+            deficit = (time.monotonic() - self._t0_flux
+                       - self._echantillons_livres / max(1, self._sr_flux))
+            if deficit < self.DEFICIT_ALERTE_S:
                 return
             sans_horodatage = self._blocs_sans_horodatage
             sans_trou = self._overflows_sans_trou
             trous = self._trous_combles_flux
-            if sans_horodatage == 0 and sans_trou < self.OVERFLOWS_AVANT_ALERTE_AVEUGLE:
-                return
             self._alerte_aveugle_emise = True
 
         import logging
@@ -379,12 +403,12 @@ class CaptureMicroSounddevice(CaptureMicro):
                  if sans_horodatage else
                  "l'horodatage ADC ne montre aucune discontinuité malgré les pertes")
         logging.getLogger(__name__).warning(
-            "Micro : comblement des trous HORS SERVICE — %s (%d bloc(s) sans horodatage, "
-            "%d overflow(s) non compensé(s), %d trou(s) comblé(s) depuis l'ouverture). "
-            "Les échantillons perdus ne sont PAS compensés : l'alignement moi/systeme "
-            "n'est plus garanti et l'AEC peut décrocher. Choisir un micro sous un autre "
-            "host API (Préférences › Audio) — cf. docs/48 §8.",
-            cause, sans_horodatage, sans_trou, trous)
+            "Micro : comblement des trous HORS SERVICE — %.0f ms d'échantillons manquants "
+            "non compensés depuis l'ouverture du flux ; %s (%d bloc(s) sans horodatage, "
+            "%d overflow(s) non compensé(s), %d trou(s) comblé(s)). L'alignement "
+            "moi/systeme n'est plus garanti et l'AEC va décrocher. Choisir un micro sous "
+            "un autre host API (Préférences › Audio) — cf. docs/48 §8.",
+            deficit * 1000, cause, sans_horodatage, sans_trou, trous)
 
     def recuperer_echantillons(self) -> np.ndarray:
         """Concatène le buffer et le renvoie rééchantillonné à 16 kHz.
@@ -450,7 +474,14 @@ class CaptureMicroSounddevice(CaptureMicro):
                 self._trous_combles += 1
                 self._trous_combles_flux += 1
                 self._silence_comble_s += len(silence) / sr
+                # Le silence de comblement compte comme LIVRÉ : il remplace les
+                # échantillons perdus, donc un trou correctement comblé ne creuse aucun
+                # déficit. C'est ce qui sépare « comblement opérant » de « hors service ».
+                self._echantillons_livres += len(silence)
             self._buffer.append((indata.copy().flatten(), sr))
+            self._echantillons_livres += frames
+            if self._t0_flux is None:
+                self._t0_flux = time.monotonic()
 
     def _silence_de_comblement(self, frames, time_info, sr) -> tuple[np.ndarray | None, bool]:
         """(silence couvrant les échantillons perdus avant ce bloc, horodatage utilisable).

@@ -14,6 +14,7 @@ import sys
 import numpy as np
 import pytest
 
+from debrief_meet.platform.commun import micro_sounddevice as ms_module
 from debrief_meet.platform.commun.micro_sounddevice import (
     TAUX_CANONIQUE,
     CaptureMicroSounddevice,
@@ -648,82 +649,144 @@ def test_host_api_prefere_defaut_selon_l_os(monkeypatch):
 # ── Comblement de trous HORS SERVICE : le dire au lieu de le taire ────────────────
 #
 # Terrain 2026-08-26 : le log portait « 0 trou(s) comblé(s), 1 overflow(s) signalé(s) »
-# et rien d'autre — il a fallu remonter l'offset de l'AEC pour comprendre que les
-# pertes n'étaient pas compensées. Ces deux signatures sont désormais nommées.
+# et rien d'autre — il a fallu remonter l'offset de l'AEC pour comprendre que les pertes
+# n'étaient pas compensées. Le déclencheur est le DÉFICIT d'horloge murale : ni les
+# overflows (zéro le jour du décrochage) ni l'horodatage ne sont fiables pour ça.
+
+
+class _Horloge:
+    """Horloge murale contrôlée — `avancer()` simule le temps qui passe sans dormir."""
+
+    def __init__(self):
+        self.t = 1_000.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, _secondes):
+        pass
+
+    def avancer(self, secondes):
+        self.t += secondes
+
+
+@pytest.fixture()
+def horloge(monkeypatch):
+    h = _Horloge()
+    monkeypatch.setattr(ms_module, "time", h)
+    return h
+
 
 def _alertes_aveugles(caplog):
     return [r.getMessage() for r in caplog.records if "HORS SERVICE" in r.getMessage()]
 
 
-def test_absence_d_horodatage_declaree_hors_service(micro_16k, caplog):
+def _livrer(micro, horloge, secondes_livrees, secondes_ecoulees, adc=0.0, overflow=False):
+    """Livre `secondes_livrees` d'échantillons pendant que l'horloge avance de
+    `secondes_ecoulees` — l'écart est la perte non compensée."""
+    n = int(secondes_livrees * TAUX_CANONIQUE)
+    horloge.avancer(secondes_ecoulees)
+    _pousser_bloc_adc(micro, n, adc, overflow=overflow)
+
+
+def test_deficit_declare_le_comblement_hors_service(micro_16k, horloge, caplog):
+    """10 s d'horloge murale pour 5 s d'échantillons livrés : 5 s ont été perdues et
+    personne ne les a comblées. Aucun overflow n'est nécessaire pour le voir — c'est
+    tout l'intérêt, le poste du terrain n'en signalait aucun."""
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        _pousser_bloc_adc(micro_16k, 1600, 0.0)        # host API sans horodatage ADC
+        _pousser_bloc_adc(micro_16k, 1, 0.0)        # pose t0 sur l'horloge contrôlée
+        _livrer(micro_16k, horloge, secondes_livrees=5.0, secondes_ecoulees=10.0)
         micro_16k.recuperer_echantillons()
 
     alertes = _alertes_aveugles(caplog)
     assert len(alertes) == 1
-    assert "ne fournit pas d'horodatage ADC" in alertes[0]
+    assert "5000 ms d'échantillons manquants" in alertes[0]
+    assert "ne fournit pas d'horodatage ADC" in alertes[0]   # adc=0 → explique le déficit
 
 
-def test_overflows_sans_trou_detecte_declares_hors_service(micro_16k, caplog):
-    """L'horodatage EXISTE et reste continu, mais PortAudio annonce des pertes : c'est
-    la signature d'un horodatage dérivé des échantillons livrés (MME), où un trou est
-    invisible par construction. C'est le cas exact du terrain."""
+def test_flux_sain_n_alerte_jamais_meme_sans_horodatage(micro_16k, horloge, caplog):
+    """NON-RÉGRESSION Linux/macOS : un host API qui ne fournit AUCUN horodatage (adc=0)
+    mais ne perd rien ne doit produire aucun WARNING. Sans cette garde, tout poste dont
+    PortAudio ne remplit pas `inputBufferAdcTime` en récolterait un par réunion."""
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        for i in range(CaptureMicroSounddevice.OVERFLOWS_AVANT_ALERTE_AVEUGLE):
-            _pousser_bloc_adc(micro_16k, 1600, 1.0 + i * 0.1, overflow=True)
-        micro_16k.recuperer_echantillons()
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        for _ in range(20):
+            _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=1.0)
+            micro_16k.recuperer_echantillons()
 
-    alertes = _alertes_aveugles(caplog)
-    assert len(alertes) == 1
-    assert "aucune discontinuité" in alertes[0]
-    assert "casque" not in alertes[0]                  # ce n'est pas un souci acoustique
+    assert _alertes_aveugles(caplog) == []
 
 
-def test_un_overflow_isole_ne_declenche_pas_l_alerte(micro_16k, caplog):
-    """Un overflow peut n'avoir rien perdu — on n'accuse pas l'host API sur un seul."""
+def test_deficit_sous_le_seuil_reste_silencieux(micro_16k, horloge, caplog):
+    """Gigue d'ordonnancement : sous le seuil, on se taît (la dérive d'horloge légitime
+    est 3 ordres de grandeur plus petite, elle ne peut jamais y arriver)."""
+    manque = ms_module.CaptureMicroSounddevice.DEFICIT_ALERTE_S / 2
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        _pousser_bloc_adc(micro_16k, 1600, 1.0, overflow=True)
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        _livrer(micro_16k, horloge, secondes_livrees=5.0, secondes_ecoulees=5.0 + manque)
         micro_16k.recuperer_echantillons()
 
     assert _alertes_aveugles(caplog) == []
 
 
-def test_comblement_operant_ne_declenche_jamais_l_alerte(micro_16k, caplog):
-    """Des trous détectés ET comblés : le mécanisme marche, aucune alerte — même avec
-    les overflows qui les accompagnent."""
+def test_trou_comble_ne_creuse_aucun_deficit(micro_16k, horloge, caplog):
+    """Comblement OPÉRANT : le trou est détecté par l'horodatage et remplacé par du
+    silence, qui compte comme livré — donc pas de déficit, donc pas d'alerte, alors que
+    le temps mural, lui, a bien avancé pendant le trou."""
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        _pousser_bloc_adc(micro_16k, 1600, 1.0)
-        for i in range(5):                             # 100 ms de trou à chaque bloc
-            _pousser_bloc_adc(micro_16k, 1600, 1.2 + i * 0.2, overflow=True)
+        horloge.avancer(1.0)
+        _pousser_bloc_adc(micro_16k, 16_000, 1.0)          # 1 s livrée, adc à 1.0
+        horloge.avancer(2.0)                               # 2 s murales…
+        _pousser_bloc_adc(micro_16k, 16_000, 3.0)          # …dont 1 s de trou comblé
         micro_16k.recuperer_echantillons()
 
+    assert micro_16k._trous_combles_flux == 1
     assert _alertes_aveugles(caplog) == []
-    assert micro_16k._trous_combles_flux == 5
 
 
-def test_alerte_aveugle_emise_une_seule_fois_par_flux(micro_16k, caplog):
+def test_alerte_deficit_emise_une_seule_fois_par_flux(micro_16k, horloge, caplog):
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
         for _ in range(3):
-            _pousser_bloc_adc(micro_16k, 1600, 0.0)
+            _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
             micro_16k.recuperer_echantillons()
 
     assert len(_alertes_aveugles(caplog)) == 1
 
 
-def test_redemarrage_rearme_le_verdict_d_aveuglement(micro_16k, monkeypatch, caplog):
+def test_overflows_cites_en_explication_du_deficit(micro_16k, horloge, caplog):
+    """Quand PortAudio DAIGNE signaler l'overflow, il est cité — mais il n'est jamais le
+    déclencheur : le poste du terrain n'en a signalé aucun le jour du décrochage."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 1.0)               # horodatage présent (adc > 0)
+        # adc CONTIGU au bloc précédent (1 échantillon plus tard) : l'horodatage jure que
+        # rien n'a été perdu — la signature MME — alors que 4 s ont disparu du mur.
+        _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0,
+                adc=1.0 + 1 / TAUX_CANONIQUE, overflow=True)
+        micro_16k.recuperer_echantillons()
+
+    alertes = _alertes_aveugles(caplog)
+    assert len(alertes) == 1
+    assert "aucune discontinuité" in alertes[0]            # adc > 0 → l'autre explication
+    assert "1 overflow(s) non compensé(s)" in alertes[0]
+
+
+def test_redemarrage_rearme_le_verdict_d_aveuglement(micro_16k, horloge, caplog):
     """Un nouveau flux peut viser un autre host API : le verdict précédent ne le
-    concerne pas, et l'alerte doit pouvoir se réémettre."""
-    _pousser_bloc_adc(micro_16k, 1600, 0.0)
+    concerne pas, et la comptabilité murale repart de zéro."""
+    _pousser_bloc_adc(micro_16k, 1, 0.0)
+    _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
     micro_16k.recuperer_echantillons()
     assert micro_16k._alerte_aveugle_emise
 
     micro_16k.redemarrer(1)
     assert micro_16k._alerte_aveugle_emise is False
-    assert micro_16k._blocs_sans_horodatage == 0
+    assert micro_16k._t0_flux is None
+    assert micro_16k._echantillons_livres == 0
 
     caplog.clear()   # sinon la 1ʳᵉ alerte, déjà capturée, compterait pour la seconde
     with caplog.at_level(logging.WARNING, logger="debrief_meet"):
-        _pousser_bloc_adc(micro_16k, 1600, 0.0)
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
         micro_16k.recuperer_echantillons()
     assert len(_alertes_aveugles(caplog)) == 1
