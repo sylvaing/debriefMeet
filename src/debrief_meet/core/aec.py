@@ -75,6 +75,15 @@ ECHO_RESIDUEL_ATT_DB = 3.0            # atténuation (en valeur absolue) qui dis
 # référence au délai courant), pas seulement un WARNING. Borné : au-delà, l'écho ne vient
 # pas d'un désalignement et recaler en boucle n'y changerait rien.
 RECALIBRAGES_AUTO_MAX = 3
+# Terrain 2026-08-26 (poste Windows, micro sous MME) : les délais des 4 calages
+# successifs d'une même réunion étaient +11240, −9765, −19427, −11802 éch, et le suivi a
+# mesuré +11740 éch de résidu 62 s après un calage NEUF — 11 800 ppm, quand une horloge
+# dérive de 12. Ce ne sont pas des dérives, ce sont des pertes d'échantillons en bloc
+# (~0,7 s) que ni le comblement micro (horodatage ADC non informatif sous MME) ni la
+# capture système (aucune détection) ne compensent. Contre ça l'AEC ne peut rien : elle
+# court après un offset qui saute plus vite qu'elle ne se recale. Au-delà de cet écart
+# entre deux calages, on cesse de traiter — et surtout on cesse d'incriminer l'acoustique.
+SAUT_OFFSET_ECH = int(0.300 * SR_AEC)  # 300 ms entre deux calages = flux non synchronisables
 
 
 # ── Estimation du délai (cross-corrélation bornée) ───────────────────────────
@@ -193,8 +202,12 @@ class ProcesseurAEC:
         self._moteur = moteur
         self._moteur_injecte = moteur is not None
         # Hors `_reset_etat` : le budget de recalages doit SURVIVRE au recalage qu'il
-        # autorise, sinon il se réarme lui-même et la boucle est infinie.
+        # autorise, sinon il se réarme lui-même et la boucle est infinie. Idem pour
+        # l'historique des calages — c'est l'écart ENTRE deux calages qui nous dit si les
+        # flux sont synchronisables, il serait perdu à chaque recalage.
         self._recalibrages_auto = 0
+        self._delais_calages: list[int] = []
+        self._abandonne = False
         self._reset_etat()
 
     def _reset_etat(self) -> None:
@@ -223,6 +236,8 @@ class ProcesseurAEC:
         moteur = self._moteur if self._moteur_injecte else _MoteurAECLiveKit(ns=self._ns)
         self._reset_etat()
         self._recalibrages_auto = 0
+        self._delais_calages = []
+        self._abandonne = False
         self._moteur = moteur
         self._demarre = True
 
@@ -233,8 +248,12 @@ class ProcesseurAEC:
         cours est conservé : seul le calage (délai, buffers) est remis à zéro."""
         if not self._demarre:
             return
-        # Chemin d'écho réellement nouveau (autre micro) : budget de recalages neuf.
+        # Chemin d'écho réellement nouveau (autre micro) : budget de recalages neuf, et
+        # historique des calages remis à zéro (les offsets d'un AUTRE périphérique ne
+        # disent rien de celui-ci — comparer les deux ferait crier au saut à tort).
         self._recalibrages_auto = 0
+        self._delais_calages = []
+        self._abandonne = False
         self._recaler_alignement()
 
     def _recaler_alignement(self) -> None:
@@ -254,6 +273,16 @@ class ProcesseurAEC:
         self._buf_ref = np.concatenate(
             [self._buf_ref, reechantillonner(np.asarray(systeme, dtype=np.float32), self._sr_systeme)]
         )
+
+        if self._abandonne:
+            # Abandon acté (`_surveiller_efficacite`) : micro rendu BRUT, sans traitement.
+            # Ce n'est pas qu'un aveu — les ~0,2 s de calcul par tranche tenaient le GIL,
+            # or c'est cette famine qui fait perdre des échantillons au callback micro
+            # (docs/48 §8). Renoncer à une AEC inutile réduit la cause du désalignement.
+            sortie = self._buf_micro
+            self._buf_micro = np.zeros(0, dtype=np.float32)
+            self._buf_ref = np.zeros(0, dtype=np.float32)
+            return sortie
 
         if not self._calibre and not self._tenter_calibration():
             # Pas d'écho franc à annuler (système silencieux ou pas de pic corrélé) →
@@ -301,6 +330,7 @@ class ProcesseurAEC:
                 return False
 
         self._delai_estime = delai
+        self._delais_calages.append(delai)
         # On veut que la référence PRÉCÈDE l'écho de `marge` → décalage = délai - marge.
         decalage = delai - self._marge
         # Décalage négatif → avancer la référence (sauter le début de la réf) ;
@@ -428,6 +458,23 @@ class ProcesseurAEC:
             # Terminal : plus de recalage, et plus de WARNING (le log rotatif n'a pas à
             # être noyé par une réunion entière d'écho non annulable).
             self._alerte_efficacite_emise = True
+            saut = self._saut_offset_max()
+            if saut is not None:
+                # Les calages successifs ne se ressemblent pas : le problème n'est pas
+                # l'acoustique, ce sont les deux flux qui ne se tiennent pas. Conseiller
+                # un casque ici serait faux — et l'utilisatrice du terrain 2026-08-26 en
+                # portait un. On le dit, et on arrête de traiter.
+                self._abandonne = True
+                logger.warning(
+                    "AEC DÉSACTIVÉE pour cette session : l'offset entre les pistes a sauté "
+                    "de %d ms entre deux calages (délais calés : %s éch) — les deux flux ne "
+                    "sont pas synchronisables, ce n'est PAS un problème acoustique et un "
+                    "casque n'y changerait rien. Cause probable : des échantillons perdus "
+                    "non compensés (cf. le WARNING « comblement des trous HORS SERVICE » "
+                    "du micro). Micro laissé brut — cf. docs/48 §8.",
+                    round(saut / SR_AEC * 1000),
+                    ", ".join(str(d) for d in self._delais_calages))
+                return
             logger.warning(
                 "AEC inefficace : écho toujours corrélé à la référence après %d recalages "
                 "complets (délai calé %s éch, atténuation %s dB) — ce n'est pas un défaut "
@@ -443,6 +490,19 @@ class ProcesseurAEC:
             ECHO_RESIDUEL_TRANCHES, self._delai_estime, att_txt,
             self._recalibrages_auto, RECALIBRAGES_AUTO_MAX)
         self._recaler_alignement()
+
+    def _saut_offset_max(self) -> int | None:
+        """Plus grand écart entre deux calages CONSÉCUTIFS, s'il dépasse
+        `SAUT_OFFSET_ECH` ; None sinon (offset stable → l'écho est bien acoustique).
+
+        Consécutifs et non min/max global : une dérive lente cumulée sur une longue
+        réunion finirait par dépasser le seuil sans qu'aucun saut n'ait eu lieu, et la
+        dérive lente, elle, l'AEC sait la suivre (`_suivre_alignement`)."""
+        if len(self._delais_calages) < 2:
+            return None
+        ecarts = [abs(b - a) for a, b in zip(self._delais_calages, self._delais_calages[1:])]
+        pire = max(ecarts)
+        return pire if pire > SAUT_OFFSET_ECH else None
 
     def _maj_attenuation(self, brut: np.ndarray, nettoye: np.ndarray) -> None:
         """Indicateur d'atténuation (auto-vérif). Affiné en étape 3 (fenêtres de silence)."""
@@ -467,6 +527,21 @@ class ProcesseurAEC:
     @property
     def derniere_attenuation_db(self) -> float | None:
         return self._derniere_attenuation_db
+
+    def bilan(self) -> str:
+        """Verdict de la session en une ligne, pour le bilan de fin de réunion.
+
+        Rend l'état lisible sans reconstituer l'historique DEBUG à la main — ce qu'il a
+        fallu faire pour analyser le terrain du 2026-08-26."""
+        if self._abandonne:
+            return (f"désactivée (flux non synchronisables, calages "
+                    f"{', '.join(str(d) for d in self._delais_calages)} éch)")
+        if not self._calibre:
+            return "jamais calée (aucun écho franc détecté — micro passé brut)"
+        att = self._derniere_attenuation_db
+        att_txt = f"{att:.1f} dB" if att is not None else "?"
+        return (f"calée à {self._delai_estime} éch, atténuation {att_txt}, "
+                f"{self._recalibrages_auto} recalage(s), {len(self._delais_calages)} calage(s)")
 
     def terminer(self) -> None:
         if self._moteur is not None:

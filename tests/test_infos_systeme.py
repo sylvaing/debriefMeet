@@ -48,6 +48,27 @@ def test_version_lib_inconnue_indisponible():
     assert "indisponible" in _version_lib("ce-paquet-n-existe-pas-du-tout")
 
 
+def test_version_lib_replie_sur_le_version_du_module():
+    """En app figée, PyInstaller n'embarque pas tous les `dist-info` : le diagnostic du
+    terrain 2026-08-26 disait « indisponible » pour PySide6 ET sounddevice — les deux
+    versions qu'on veut quand on débogue un plantage Qt ou une capture audio."""
+    from debrief_meet.platform.infos_systeme import _version_lib
+    assert _version_lib("nom-de-distribution-absent", module="PySide6")[0].isdigit()
+
+
+def test_version_lib_sans_metadata_ni_module_reste_indisponible():
+    from debrief_meet.platform.infos_systeme import _version_lib
+    assert "indisponible" in _version_lib("absent", module="module_qui_n_existe_pas_xyz")
+
+
+def test_pyside6_et_sounddevice_jamais_indisponibles_quand_importables(sounddevice_dispo):
+    """Les deux rubriques que le terrain a perdues, sur l'appel réel (pas `_version_lib`
+    en isolation) — c'est le dictionnaire final qui doit porter un numéro."""
+    rubriques = collecter_infos_systeme()
+    assert rubriques["pyside6"][0].isdigit()
+    assert rubriques["sounddevice"][0].isdigit()
+
+
 # ── Rubriques Linux (docs/49 §5.5) ───────────────────────────────────────────
 
 def test_rubriques_linux_absentes_hors_linux(monkeypatch):

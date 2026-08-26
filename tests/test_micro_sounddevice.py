@@ -14,6 +14,7 @@ import sys
 import numpy as np
 import pytest
 
+from debrief_meet.platform.commun import micro_sounddevice as ms_module
 from debrief_meet.platform.commun.micro_sounddevice import (
     TAUX_CANONIQUE,
     CaptureMicroSounddevice,
@@ -79,12 +80,21 @@ class _FauxSounddevice:
         return s
 
     def query_devices(self, device=None, kind=None):
+        # hostapi=1 → « Windows WASAPI » dans la table `hostapis` ci-dessus (l'index
+        # importe : c'est lui que `_logger_infos_flux` résout pour le log E-8).
         if device is not None:
-            return {"index": device, "name": f"peripherique-{device}", "hostapi": 0}
-        return {"index": self._index_valide, "name": "défaut", "hostapi": 0}
+            return {"index": device, "name": f"peripherique-{device}", "hostapi": 1}
+        return {"index": self._index_valide, "name": "défaut", "hostapi": 1}
+
+    # Vraie signature sounddevice : sans argument → LISTE des host API ; avec un index
+    # → le dict de celui-là. `hostapis` permet de simuler un poste sans WASAPI.
+    hostapis = [{"name": "MME", "default_input_device": 0},
+                {"name": "Windows WASAPI", "default_input_device": 1}]
 
     def query_hostapis(self, index=None):
-        return {"name": "Windows WASAPI"}
+        if index is None:
+            return list(self.hostapis)
+        return self.hostapis[index] if index < len(self.hostapis) else {"name": "inconnu"}
 
 
 @pytest.fixture()
@@ -539,3 +549,316 @@ def test_compteurs_remis_a_zero_entre_tranches(micro_16k, caplog):
 
     (msg,) = [r.message for r in caplog.records if "trou(s) de capture" in r.message]
     assert "1 trou(s)" in msg  # celui de CETTE tranche seulement, pas 2
+
+
+# ── Host API préféré : WASAPI plutôt que le défaut global (MME) sous Windows ──────
+#
+# Terrain 2026-08-26 : `micro_index = None` menait au défaut de PortAudio, soit MME
+# sous Windows, dont l'horodatage ADC ne permet pas de détecter les pertes
+# d'échantillons — le comblement de docs/48 §8 y est hors service.
+
+def _micro(host_api_prefere):
+    micro = CaptureMicroSounddevice(host_api_prefere=host_api_prefere)
+    micro.WARMUP_S = 0.0
+    return micro
+
+
+def test_sans_index_vise_le_defaut_du_host_api_prefere(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: 48_000})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    # default_input_device de « Windows WASAPI » = 1, pas le défaut global (None).
+    assert faux.streams_ouverts[-1].device == 1
+
+
+def test_index_demande_explicitement_n_est_jamais_remplace(monkeypatch):
+    """La préférence ne vaut QUE pour « aucun périphérique demandé » : un choix
+    utilisateur (Préférences › Audio) doit être respecté tel quel."""
+    faux = _FauxSounddevice(index_valide=7)
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(7)
+
+    assert faux.streams_ouverts[-1].device == 7
+
+
+def test_host_api_prefere_absent_retombe_sur_le_defaut_global(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None)
+    faux.hostapis = [{"name": "MME", "default_input_device": 0}]   # pas de WASAPI
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_host_api_prefere_sans_entree_par_defaut_retombe_sur_le_global(monkeypatch):
+    """PortAudio met -1 quand l'host API n'a aucune entrée par défaut — pas un index."""
+    faux = _FauxSounddevice(index_valide=None)
+    faux.hostapis = [{"name": "Windows WASAPI", "default_input_device": -1}]
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_preference_vide_conserve_le_comportement_portaudio(monkeypatch):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: 48_000})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("")
+
+    micro.demarrer(None)
+
+    assert faux.streams_ouverts[-1].device is None
+
+
+def test_defaut_prefere_qui_refuse_de_s_ouvrir_replie_sur_le_global(monkeypatch):
+    """L'index WASAPI existe dans la table mais l'ouverture échoue (périphérique
+    fantôme) : le repli de `_ouvrir_flux` doit ramener au défaut global, pas propager."""
+    faux = _FauxSounddevice(index_valide=None)          # aucun index n'est ouvrable...
+    faux.hostapis = [{"name": "Windows WASAPI", "default_input_device": 42}]
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+
+    micro.demarrer(None)
+
+    # Deux tentatives d'ouverture (42 refusé, puis le défaut global), et seul le second
+    # flux existe — `InputStream` lève avant de créer quoi que ce soit.
+    assert faux.evenements.count("open") == 2
+    assert [s.device for s in faux.streams_ouverts] == [None]
+
+
+def test_host_api_prefere_defaut_selon_l_os(monkeypatch):
+    """Le défaut est dérivé de `sys.platform` (idiome de `surveillant_peripheriques`) :
+    WASAPI sous Windows, aucune préférence ailleurs — et le paramètre explicite garde
+    les tests déterministes sur les deux OS, la gate de build tournant sur la VM."""
+    monkeypatch.setattr("debrief_meet.platform.commun.micro_sounddevice.sys.platform", "win32")
+    assert (CaptureMicroSounddevice()._host_api_prefere
+            == CaptureMicroSounddevice.HOST_API_PREFERE_DEFAUT)
+    monkeypatch.setattr("debrief_meet.platform.commun.micro_sounddevice.sys.platform", "darwin")
+    assert CaptureMicroSounddevice()._host_api_prefere == ""
+
+
+# ── Comblement de trous HORS SERVICE : le dire au lieu de le taire ────────────────
+#
+# Terrain 2026-08-26 : le log portait « 0 trou(s) comblé(s), 1 overflow(s) signalé(s) »
+# et rien d'autre — il a fallu remonter l'offset de l'AEC pour comprendre que les pertes
+# n'étaient pas compensées. Le déclencheur est le DÉFICIT d'horloge murale : ni les
+# overflows (zéro le jour du décrochage) ni l'horodatage ne sont fiables pour ça.
+
+
+class _Horloge:
+    """Horloge murale contrôlée — `avancer()` simule le temps qui passe sans dormir."""
+
+    def __init__(self):
+        self.t = 1_000.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, _secondes):
+        pass
+
+    def avancer(self, secondes):
+        self.t += secondes
+
+
+@pytest.fixture()
+def horloge(monkeypatch):
+    h = _Horloge()
+    monkeypatch.setattr(ms_module, "time", h)
+    return h
+
+
+def _alertes_aveugles(caplog):
+    return [r.getMessage() for r in caplog.records if "HORS SERVICE" in r.getMessage()]
+
+
+def _livrer(micro, horloge, secondes_livrees, secondes_ecoulees, adc=0.0, overflow=False):
+    """Livre `secondes_livrees` d'échantillons pendant que l'horloge avance de
+    `secondes_ecoulees` — l'écart est la perte non compensée."""
+    n = int(secondes_livrees * TAUX_CANONIQUE)
+    horloge.avancer(secondes_ecoulees)
+    _pousser_bloc_adc(micro, n, adc, overflow=overflow)
+
+
+def test_deficit_declare_le_comblement_hors_service(micro_16k, horloge, caplog):
+    """10 s d'horloge murale pour 5 s d'échantillons livrés : 5 s ont été perdues et
+    personne ne les a comblées. Aucun overflow n'est nécessaire pour le voir — c'est
+    tout l'intérêt, le poste du terrain n'en signalait aucun."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)        # pose t0 sur l'horloge contrôlée
+        _livrer(micro_16k, horloge, secondes_livrees=5.0, secondes_ecoulees=10.0)
+        micro_16k.recuperer_echantillons()
+
+    alertes = _alertes_aveugles(caplog)
+    assert len(alertes) == 1
+    assert "5000 ms d'échantillons manquants" in alertes[0]
+    assert "ne fournit pas d'horodatage ADC" in alertes[0]   # adc=0 → explique le déficit
+
+
+def test_flux_sain_n_alerte_jamais_meme_sans_horodatage(micro_16k, horloge, caplog):
+    """NON-RÉGRESSION Linux/macOS : un host API qui ne fournit AUCUN horodatage (adc=0)
+    mais ne perd rien ne doit produire aucun WARNING. Sans cette garde, tout poste dont
+    PortAudio ne remplit pas `inputBufferAdcTime` en récolterait un par réunion."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        for _ in range(20):
+            _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=1.0)
+            micro_16k.recuperer_echantillons()
+
+    assert _alertes_aveugles(caplog) == []
+
+
+def test_deficit_sous_le_seuil_reste_silencieux(micro_16k, horloge, caplog):
+    """Gigue d'ordonnancement : sous le seuil, on se taît (la dérive d'horloge légitime
+    est 3 ordres de grandeur plus petite, elle ne peut jamais y arriver)."""
+    manque = ms_module.CaptureMicroSounddevice.DEFICIT_ALERTE_S / 2
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        _livrer(micro_16k, horloge, secondes_livrees=5.0, secondes_ecoulees=5.0 + manque)
+        micro_16k.recuperer_echantillons()
+
+    assert _alertes_aveugles(caplog) == []
+
+
+def test_trou_comble_ne_creuse_aucun_deficit(micro_16k, horloge, caplog):
+    """Comblement OPÉRANT : le trou est détecté par l'horodatage et remplacé par du
+    silence, qui compte comme livré — donc pas de déficit, donc pas d'alerte, alors que
+    le temps mural, lui, a bien avancé pendant le trou."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        horloge.avancer(1.0)
+        _pousser_bloc_adc(micro_16k, 16_000, 1.0)          # 1 s livrée, adc à 1.0
+        horloge.avancer(2.0)                               # 2 s murales…
+        _pousser_bloc_adc(micro_16k, 16_000, 3.0)          # …dont 1 s de trou comblé
+        micro_16k.recuperer_echantillons()
+
+    assert micro_16k._trous_combles_flux == 1
+    assert _alertes_aveugles(caplog) == []
+
+
+def test_alerte_deficit_emise_une_seule_fois_par_flux(micro_16k, horloge, caplog):
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        for _ in range(3):
+            _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
+            micro_16k.recuperer_echantillons()
+
+    assert len(_alertes_aveugles(caplog)) == 1
+
+
+def test_overflows_cites_en_explication_du_deficit(micro_16k, horloge, caplog):
+    """Quand PortAudio DAIGNE signaler l'overflow, il est cité — mais il n'est jamais le
+    déclencheur : le poste du terrain n'en a signalé aucun le jour du décrochage."""
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 1.0)               # horodatage présent (adc > 0)
+        # adc CONTIGU au bloc précédent (1 échantillon plus tard) : l'horodatage jure que
+        # rien n'a été perdu — la signature MME — alors que 4 s ont disparu du mur.
+        _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0,
+                adc=1.0 + 1 / TAUX_CANONIQUE, overflow=True)
+        micro_16k.recuperer_echantillons()
+
+    alertes = _alertes_aveugles(caplog)
+    assert len(alertes) == 1
+    assert "aucune discontinuité" in alertes[0]            # adc > 0 → l'autre explication
+    assert "1 overflow(s) non compensé(s)" in alertes[0]
+
+
+def test_redemarrage_rearme_le_verdict_d_aveuglement(micro_16k, horloge, caplog):
+    """Un nouveau flux peut viser un autre host API : le verdict précédent ne le
+    concerne pas, et la comptabilité murale repart de zéro."""
+    _pousser_bloc_adc(micro_16k, 1, 0.0)
+    _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
+    micro_16k.recuperer_echantillons()
+    assert micro_16k._alerte_aveugle_emise
+
+    micro_16k.redemarrer(1)
+    assert micro_16k._alerte_aveugle_emise is False
+    assert micro_16k._t0_flux is None
+    assert micro_16k._echantillons_livres == 0
+
+    caplog.clear()   # sinon la 1ʳᵉ alerte, déjà capturée, compterait pour la seconde
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        _pousser_bloc_adc(micro_16k, 1, 0.0)
+        _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
+        micro_16k.recuperer_echantillons()
+    assert len(_alertes_aveugles(caplog)) == 1
+
+
+# ── Rétrogradation de l'host API préféré : ne pas boucler sur un flux muet ────────
+
+def test_flux_muet_abandonne_l_host_api_prefere(monkeypatch, horloge, caplog):
+    """Le vrai risque de la bascule WASAPI : un flux qui s'ouvre sans jamais livrer.
+    Le watchdog « tranche muette » de `core/reunion` rappelle `redemarrer(None)`, donc
+    la même préférence — sans rétrogradation c'est une réunion de silence en boucle."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    assert faux.streams_ouverts[-1].device == 1          # préférence appliquée
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()                   # aucun bloc n'est jamais arrivé
+
+    assert micro._host_api_prefere == ""
+    assert any("préférence abandonnée" in r.getMessage() for r in caplog.records)
+
+    micro.redemarrer(None)                               # ce que fait le watchdog
+    assert faux.streams_ouverts[-1].device is None       # défaut global, plus WASAPI
+
+
+def test_flux_qui_livre_ne_retrograde_jamais(monkeypatch, horloge, caplog):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    _pousser_bloc_adc(micro, 1600, 1.0)                  # un bloc suffit à prouver la vie
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S * 10)
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()
+
+    assert micro._host_api_prefere == "WASAPI"
+    assert not any("préférence abandonnée" in r.getMessage() for r in caplog.records)
+
+
+def test_retrogradation_ne_se_reevalue_pas_a_chaque_reconnexion(monkeypatch, horloge, caplog):
+    """`_retrogradation_faite` vit à la SESSION : le réarmer par flux ferait retenter
+    l'host API muet à chaque reconnexion — la boucle qu'on casse."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    micro.recuperer_echantillons()
+    assert micro._retrogradation_faite
+
+    micro.redemarrer(None)
+    assert micro._retrogradation_faite                   # pas réarmé par le nouveau flux
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    caplog.clear()   # la 1ʳᵉ rétrogradation est déjà capturée ; on veut la SUITE
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()
+    assert sum("préférence abandonnée" in r.getMessage() for r in caplog.records) == 0
+
+
+def test_delai_de_grace_avant_de_retrograder(monkeypatch, horloge):
+    """Un flux tout juste ouvert n'a pas encore eu le temps de livrer : pas de verdict
+    avant `MUET_AVANT_RETROGRADATION_S`."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S / 2)
+    micro.recuperer_echantillons()
+
+    assert micro._host_api_prefere == "WASAPI"

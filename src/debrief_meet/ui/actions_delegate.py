@@ -182,9 +182,19 @@ class ActionsDelegate(QStyledItemDelegate):
     # ── Interaction ─────────────────────────────────────────────────────────────
 
     def editorEvent(self, event, model, option: QStyleOptionViewItem, index: QModelIndex) -> bool:
+        # Qt ne route pas ici que des évènements souris : `QAbstractItemView::keyPressEvent`
+        # appelle `edit(currentIndex(), AnyKeyPressed, event)` pour TOUTE touche imprimable
+        # (et EditKeyPressed pour F2), et `edit()` passe l'évènement au délégué via
+        # `sendDelegateEvent` **avant** de vérifier les `editTriggers`. On reçoit donc des
+        # QKeyEvent, qui n'ont ni `position()` ni `pos()` → filtrer sur le type AVANT de
+        # lire la position, sinon AttributeError (constaté chez une utilisatrice Windows le
+        # 2026-08-24 : un CRITICAL par frappe dès que la cellule courante est dans cette
+        # colonne). `calendrier_delegate` y échappait déjà en testant le type en tête.
+        if event.type() not in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+            return False
         # NB : le survol (MouseMove sans bouton) n'est PAS routé vers editorEvent par
-        # Qt — seuls Press/Release/DblClick le sont. Le hover est donc géré dans
-        # eventFilter (viewport, mouse tracking actif), comme TableAvecSurvolLigne.
+        # Qt. Le hover est donc géré dans eventFilter (viewport, mouse tracking actif),
+        # comme TableAvecSurvolLigne.
         vue = option.widget
         ligne = self._fournisseur(index)
         if ligne is None or ligne.vide:

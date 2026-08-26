@@ -11,7 +11,8 @@ import types
 import numpy as np
 import pytest
 
-from debrief_meet.platform.windows.capture_systeme_wasapi import CaptureAudioSystemeWasapi
+from debrief_meet.platform.windows import capture_systeme_wasapi as mod
+from debrief_meet.platform.windows.capture_systeme_wasapi import TAUX, CaptureAudioSystemeWasapi
 
 
 class _FakeRecorder:
@@ -47,6 +48,8 @@ class _FakeSoundcard:
         self.nom_defaut = "Haut-parleurs (Realtek)"
         self.appels_get_microphone: list[str] = []
         self.leve_get_microphone: Exception | None = None
+        self.echecs_restants: int | None = None   # None = échoue toujours
+        self.delai_get_microphone = 0.0
         self._bloc_defaut = (
             bloc_defaut if bloc_defaut is not None
             else np.zeros((1024, 2), dtype=np.float32)
@@ -58,8 +61,13 @@ class _FakeSoundcard:
 
     def get_microphone(self, name, include_loopback=True):
         self.appels_get_microphone.append(name)
+        if self.delai_get_microphone:
+            time.sleep(self.delai_get_microphone)
         if self.leve_get_microphone is not None:
-            raise self.leve_get_microphone
+            if self.echecs_restants is None or self.echecs_restants > 0:
+                if self.echecs_restants is not None:
+                    self.echecs_restants -= 1
+                raise self.leve_get_microphone
         return _FakeMicrophone(self._comportement_record)
 
 
@@ -179,4 +187,77 @@ def test_trois_echecs_consecutifs_passe_en_mode_silence(fake_sc, caplog):
     capture.arreter()
 
     assert any("mode silence" in r.message for r in caplog.records)
+    # NB : plus d'assertion « piste vide » ici — c'était le défaut, pas le contrat.
+    # `_silence = True` était posé et lu par personne, la piste cessait de grandir et
+    # finissait courte de tout le reste de la réunion. Le comblement continu est
+    # vérifié par test_mode_silence_comble_jusqu_a_l_arret ci-dessous.
+
+
+# ── Comblement du silence (docs/48) : la piste système garde sa durée réelle ──────
+#
+# Port de `platform/linux/capture_systeme_monitor`, qui l'avait appris le premier.
+# Toute seconde sans livraison RACCOURCIT la piste système et décale les deux pistes
+# d'autant — l'AEC décroche, l'attribution des locuteurs devient fausse.
+
+def test_silence_comble_la_duree_reelle(fake_sc):
+    capture = CaptureAudioSystemeWasapi()
+    capture._t_derniere_trame = time.monotonic() - 2.0
+    capture._combler_silence(time.monotonic(), "test")
+    audio = capture.recuperer_echantillons()
+    assert 1.8 * TAUX <= len(audio) <= 2.2 * TAUX
+    assert not audio.any()
+
+
+def test_silence_borne_pour_ne_pas_exploser_la_memoire(fake_sc, caplog):
+    """Une mise en veille créerait un trou de plusieurs heures : combler à l'identique
+    allouerait des gigaoctets. On borne, et on DIT que les pistes resteront décalées."""
+    capture = CaptureAudioSystemeWasapi()
+    capture._t_derniere_trame = time.monotonic() - 7200.0
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        capture._combler_silence(time.monotonic(), "veille")
+    audio = capture.recuperer_echantillons()
+    assert len(audio) == int(mod._COMBLEMENT_MAX_S * TAUX)
+    assert any("décalé" in r.getMessage() for r in caplog.records)
+
+
+def test_gigue_sous_le_seuil_non_comblee(fake_sc):
+    capture = CaptureAudioSystemeWasapi()
+    capture._t_derniere_trame = time.monotonic() - mod._COMBLEMENT_MIN_S / 2
+    capture._combler_silence(time.monotonic(), "gigue")
     assert capture.recuperer_echantillons().shape == (0,)
+
+
+def test_mode_silence_comble_jusqu_a_l_arret(fake_sc, monkeypatch):
+    """LE défaut corrigé : après 3 échecs, `_silence = True` était posé puis le thread
+    faisait `return` — la piste cessait de grandir jusqu'à la fin de la réunion, et
+    `_silence` n'était lu par personne. Elle doit maintenant continuer de grandir."""
+    monkeypatch.setattr(mod, "_PERIODE_COMBLEMENT_S", 0.02)
+    fake_sc.leve_get_microphone = RuntimeError("WASAPI indisponible")
+
+    capture = CaptureAudioSystemeWasapi()
+    try:
+        capture.demarrer()
+        assert _attendre(lambda: capture._silence is True, timeout=2.0)
+        assert _attendre(lambda: len(capture.recuperer_echantillons()) > 0, timeout=2.0)
+    finally:
+        capture.arreter()
+    assert capture._silence_cumule_s > 0
+
+
+def test_reouverture_comble_le_temps_perdu(fake_sc, caplog):
+    """Le trou de la réinit WASAPI (ici 150 ms simulées) doit être comblé au retour,
+    sinon chaque cycle échec→réouverture raccourcit la piste."""
+    fake_sc.leve_get_microphone = RuntimeError("panne passagère")
+    fake_sc.echecs_restants = 1              # échoue une fois, puis marche
+    fake_sc.delai_get_microphone = 0.15      # le temps réellement perdu
+
+    capture = CaptureAudioSystemeWasapi()
+    try:
+        with caplog.at_level(logging.INFO, logger="debrief_meet"):
+            capture.demarrer()
+            assert _attendre(lambda: capture._silence_cumule_s > 0, timeout=3.0)
+    finally:
+        capture.arreter()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("silence injectées" in m and "en échec" in m for m in messages)

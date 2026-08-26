@@ -6,6 +6,7 @@ ctypes/PowerShell). Ne lève jamais — chaque rubrique en échec devient une ch
 """
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import json
 import os
@@ -24,11 +25,31 @@ def _est_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
-def _version_lib(nom_distribution: str) -> str:
+def _version_lib(nom_distribution: str, module: str | None = None) -> str:
+    """Version d'une dépendance, avec repli sur le `__version__` du module.
+
+    En app figée, PyInstaller n'embarque pas le `dist-info` de tous les paquets :
+    `importlib.metadata` répond alors PackageNotFoundError et le diagnostic perdait
+    l'information. Constaté sur le terrain (2026-08-26) pour **PySide6 et
+    sounddevice** précisément — les deux versions qu'on veut connaître quand on
+    débogue un plantage Qt ou une capture audio. `__version__` reste disponible, lui,
+    puisque le module est bien dans le bundle."""
     try:
         return importlib.metadata.version(nom_distribution)
     except importlib.metadata.PackageNotFoundError as exc:
-        return f"indisponible ({exc})"
+        depuis_module = _version_module(module or nom_distribution)
+        return depuis_module if depuis_module else f"indisponible ({exc})"
+
+
+def _version_module(nom_module: str) -> str | None:
+    """`<module>.__version__` sans provoquer d'import coûteux : on ne lit que les
+    modules DÉJÀ importés (`sys.modules`) ou importables sans effet de bord."""
+    try:
+        module = importlib.import_module(nom_module)
+    except Exception:
+        return None
+    version = getattr(module, "__version__", None)
+    return str(version) if version else None
 
 
 def _peripheriques_audio() -> tuple[str, str]:
@@ -176,8 +197,8 @@ def collecter_infos_systeme() -> dict:
         "ram_go": _ram_go_windows() if windows else (_ram_go_linux() if linux else "non collecté"),
         "gpu": _gpu_windows() if windows else "non collecté",
         "python": platform.python_version(),
-        "pyside6": _version_lib("PySide6"),
-        "sounddevice": _version_lib("sounddevice"),
+        "pyside6": _version_lib("PySide6", module="PySide6"),
+        "sounddevice": _version_lib("sounddevice", module="sounddevice"),
         "numpy": _version_lib("numpy"),
         "faster_whisper": _version_lib("faster-whisper"),
         "soundcard": _version_lib("soundcard"),

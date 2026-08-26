@@ -905,3 +905,83 @@ def test_micro_muet_avertit_aussi_en_mode_live(qapp, qtbot, tmp_path):
     machine2.toggle_reunion()
     machine2.toggle_reunion()
     qtbot.waitUntil(lambda: len(recus) == 1, timeout=3000)
+
+
+# ── Observabilité de la capture (docs/48) ────────────────────────────────────────
+#
+# Analyser le terrain du 2026-08-26 a demandé de reconstituer à la main l'historique
+# DEBUG de l'AEC — et même là, impossible de dire de QUEL côté les échantillons se
+# perdaient : l'AEC ne mesure que l'offset relatif. Ces deux mesures comblent ça.
+
+def test_durees_livrees_loggees_a_chaque_tranche(qapp, qtbot, tmp_path, caplog):
+    """La mesure qui désigne le coupable : les deux pistes vident leur buffer sur le
+    même intervalle mural, donc un écart de durées EST une perte, du côté nommé."""
+    machine = MachineEtats()
+    # Les deux pistes n'ont PAS le même taux (micro 16 kHz canonique, système 48 kHz) :
+    # la comparaison doit se faire en secondes, jamais en échantillons.
+    micro = MicroFake(echantillons=np.ones(16_000, dtype=np.float32))       # 1,00 s
+    systeme = SystemeFake(echantillons=np.ones(24_000, dtype=np.float32))   # 0,50 s
+    orch, *_ = _creer(machine, tmp_path, micro=micro, systeme=systeme, aec_actif=False)
+    machine.toggle_reunion()
+
+    with caplog.at_level(logging.DEBUG, logger="debrief_meet.core.reunion"):
+        orch._capturer_tranche()      # 1ʳᵉ tranche → message « offset d'ingestion »
+        orch._capturer_tranche()      # suivantes → message « durées livrées »
+        orch._capturer_tranche()
+    machine.toggle_reunion()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("Offset d'ingestion" in m for m in messages) == 1
+    durees = [m for m in messages if "Durées livrées" in m]
+    assert len(durees) == 2
+    assert "micro 1.00s" in durees[0] and "système 0.50s" in durees[0]
+    assert "+500 ms" in durees[0]
+    # Le cumul intègre aussi l'offset d'ingestion de la 1ʳᵉ tranche : c'est bien la
+    # divergence TOTALE des deux pistes qu'on veut lire, celle qui les désaligne.
+    assert "cumul +1.00s" in durees[0]
+    assert "cumul +1.50s" in durees[1]
+
+
+def test_bilan_de_capture_logge_une_ligne_a_l_arret(qapp, qtbot, tmp_path, caplog):
+    """Une réunion = une ligne greppable, au lieu de 200 lignes de DEBUG à recoller."""
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path, aec_actif=False)
+    machine.toggle_reunion()
+    orch._capturer_tranche()
+
+    with caplog.at_level(logging.INFO, logger="debrief_meet.core.reunion"):
+        machine.toggle_reunion()
+
+    bilans = [r.getMessage() for r in caplog.records if "Bilan capture réunion" in r.getMessage()]
+    assert len(bilans) == 1
+    assert "durée" in bilans[0]
+    assert "écart micro−système cumulé" in bilans[0]
+
+
+def test_bilan_survit_a_des_collaborateurs_sans_methode_bilan(qapp, qtbot, tmp_path, caplog):
+    """`bilan()` est optionnel (stubs, adaptateurs macOS/Linux, doubles de test) : son
+    absence ne doit jamais faire échouer l'arrêt d'une réunion."""
+    machine = MachineEtats()
+    orch, *_ = _creer(machine, tmp_path, aec_actif=False)
+    assert not hasattr(orch._micro, "bilan")        # le double n'en a pas
+    machine.toggle_reunion()
+
+    with caplog.at_level(logging.INFO, logger="debrief_meet.core.reunion"):
+        machine.toggle_reunion()                    # ne lève pas
+
+    assert any("Bilan capture réunion" in r.getMessage() for r in caplog.records)
+
+
+def test_bilan_reprend_ce_que_les_captures_savent_dire(qapp, qtbot, tmp_path, caplog):
+    """Quand un collaborateur SAIT se raconter, son bilan est repris tel quel."""
+    machine = MachineEtats()
+    micro = MicroFake(echantillons=np.ones(1600, dtype=np.float32))
+    micro.bilan = lambda: "déficit +700 ms, 0 trou(s) comblé(s)"
+    orch, *_ = _creer(machine, tmp_path, micro=micro, aec_actif=False)
+    machine.toggle_reunion()
+
+    with caplog.at_level(logging.INFO, logger="debrief_meet.core.reunion"):
+        machine.toggle_reunion()
+
+    bilans = [r.getMessage() for r in caplog.records if "Bilan capture réunion" in r.getMessage()]
+    assert "micro : déficit +700 ms" in bilans[0]
