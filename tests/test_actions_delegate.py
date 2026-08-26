@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRect, Qt
-from PySide6.QtGui import QMouseEvent, QPainter, QPixmap, QStandardItemModel
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QPixmap, QStandardItemModel
 from PySide6.QtWidgets import QStyleOptionViewItem
 
 from debrief_meet.ui.actions_delegate import (
@@ -216,3 +216,44 @@ def test_boutons_ne_debordent_pas_quand_colonne_a_la_largeur_du_sizehint(qapp):
     option = _option(largeur=largeur)
     for zone in delegate._zones(option, ligne):
         assert zone.rect.left() >= option.rect.left()
+
+
+# ── Évènements non-souris routés vers editorEvent ────────────────────────────────
+
+def _key_event(touche=Qt.Key.Key_A, texte="a") -> QKeyEvent:
+    return QKeyEvent(QEvent.Type.KeyPress, touche, Qt.KeyboardModifier.NoModifier, texte)
+
+
+def test_editor_event_ignore_les_evenements_clavier(qapp):
+    """Régression du 2026-08-24 (terrain Windows) : Qt ne route pas que la souris vers
+    editorEvent — `QAbstractItemView::keyPressEvent` appelle `edit(currentIndex(),
+    AnyKeyPressed, event)`, et `edit()` passe l'évènement au délégué AVANT de vérifier
+    les editTriggers. Un QKeyEvent n'a ni `position()` ni `pos()` : lire la position
+    sans filtrer le type levait AttributeError, soit un CRITICAL par frappe dès que la
+    cellule courante était dans la colonne actions."""
+    ligne = ActionsLigne(
+        boutons=[BoutonSpec("notebook", "Générer le CR", True, lambda: None)],
+        menu=_menu_type())
+    delegate = ActionsDelegate(lambda idx: ligne)
+    assert delegate.editorEvent(_key_event(), QStandardItemModel(1, 1), _option(), _index()) is False
+
+
+def test_editor_event_ignore_f2_touche_d_edition(qapp):
+    """`EditKeyPressed` (F2 sous Windows) passe par le même chemin, avec un QKeyEvent
+    dont `text()` est vide — l'autre porte d'entrée du même crash."""
+    ligne = ActionsLigne(boutons=[BoutonSpec("copy", "Copier", True, lambda: None)], menu=_menu_type())
+    delegate = ActionsDelegate(lambda idx: ligne)
+    assert delegate.editorEvent(_key_event(Qt.Key.Key_F2, ""), QStandardItemModel(1, 1),
+                                _option(), _index()) is False
+
+
+def test_un_clavier_ne_declenche_aucune_action(qapp):
+    """Le filtre ne doit pas seulement éviter le crash : aucune action de la ligne ne
+    doit partir sur une frappe (le clic, lui, reste couvert par les tests ci-dessus)."""
+    appels = []
+    ligne = ActionsLigne(
+        boutons=[BoutonSpec("copy", "Copier", True, lambda: appels.append("bouton"))],
+        menu=[ActionSpec("copy", "Copier", True, lambda: appels.append("menu"))])
+    delegate = ActionsDelegate(lambda idx: ligne)
+    delegate.editorEvent(_key_event(), QStandardItemModel(1, 1), _option(), _index())
+    assert appels == []
