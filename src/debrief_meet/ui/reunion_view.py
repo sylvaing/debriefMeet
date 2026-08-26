@@ -41,6 +41,7 @@ from debrief_meet.core.fichiers import (
     duree_reunion,
     pistes_audio_existantes,
 )
+from debrief_meet.core.markdown_html import convertir
 from debrief_meet.core.modes import MachineEtats, Mode
 from debrief_meet.platform.interfaces import PressePapiers
 from debrief_meet.ui import dialogues
@@ -86,11 +87,14 @@ _ICONE_NOMMER_LOCUTEURS = "chat-text"
 _ICONE_CR_MISTRAL = "notebook"
 
 # Nombre MAXIMAL de boutons dédiés que `_boutons_reunion` peut produire (Générer le
-# CR ▾ + Copier le CR + Copier le fichier) et de flèches parmi eux. La colonne actions
-# est dimensionnée là-dessus : ajouter un bouton sans bouger ces constantes le fait
-# déborder à gauche, hors de sa colonne (cf. `_construire_table`).
+# CR ▾ + Copier le CR ▾ + Copier le fichier) et de flèches parmi eux. La colonne
+# actions est dimensionnée là-dessus : ajouter un bouton ou une flèche sans bouger ces
+# constantes le fait déborder à gauche, hors de sa colonne (cf. `_construire_table`)
+# — c'est arrivé le 2026-08-24, le bouton se peignait par-dessus l'icône calendrier.
+# `test_largeur_colonne_journal_et_reunion` ne peut pas voir ça : il vérifie la
+# formule, jamais le nombre de boutons qu'on lui passe. L'accord est testé côté vue.
 NB_BOUTONS_REUNION = 3
-NB_FLECHES_REUNION = 1
+NB_FLECHES_REUNION = 2
 
 
 @dataclass(frozen=True)
@@ -344,6 +348,8 @@ class ReunionView(QWidget):
         if ligne.cr_disponible:
             actions.append(ActionSpec(_ICONE_OUVRIR, "Ouvrir le CR", True,
                                       lambda c=chemin: self._ouvrir(chemin_cr_mistral(c))))
+            actions.append(ActionSpec(_ICONE_COPIER, "Copier le CR mis en forme", True,
+                                      lambda c=chemin: self._copier_cr_mis_en_forme(c)))
             actions.append(ActionSpec(_ICONE_COPIER, "Copier le CR", True,
                                       lambda c=chemin: self._copier_cr(c)))
         actions.append(ActionSpec(_ICONE_REVELER, "Révéler dans le dossier", True,
@@ -389,13 +395,33 @@ class ReunionView(QWidget):
                 lambda c=chemin: self._generer_cr_mistral(c),
                 menu_deroulant=self._menu_prompts(chemin) if etat_cr.actif else None,
                 tooltip_fleche="Générer le CR avec un autre prompt"))
+        # Le clic direct copie **mis en forme** : c'est le geste courant (coller dans
+        # une note Pipedrive, un mail, un document). La copie brute reste à un clic de
+        # plus, dans la flèche. Le `menu_deroulant` est fourni même sans CR : la flèche
+        # est alors peinte grisée et inerte, son état actif dérivant de celui du bouton
+        # (`ActionsDelegate._zone_active`) — la colonne garde ainsi sa géométrie.
         boutons.append(BoutonSpec(
-            _ICONE_COPIER, "Copier le CR" if ligne.cr_disponible else "Aucun CR à copier",
-            ligne.cr_disponible, lambda c=chemin: self._copier_cr(c)))
+            _ICONE_COPIER,
+            "Copier le CR mis en forme" if ligne.cr_disponible else "Aucun CR à copier",
+            ligne.cr_disponible, lambda c=chemin: self._copier_cr_mis_en_forme(c),
+            menu_deroulant=self._menu_copie_cr(chemin),
+            tooltip_fleche="Choisir le format de copie du CR"))
         boutons.append(BoutonSpec(
             _ICONE_COPIER_FICHIER, "Copier le fichier de la transcription", True,
             lambda c=chemin: self._copier_fichier(c)))
         return boutons
+
+    def _menu_copie_cr(self, chemin: Path) -> list[ActionSpec]:
+        """Items de la flèche du bouton de copie du CR : les deux formats, **y
+        compris celui du bouton lui-même**. C'est déjà ce que fait la flèche de
+        « Générer le CR », qui liste tous les prompts sans exclure l'actif — et ça
+        rend lisible ce que le clic direct va faire."""
+        return [
+            ActionSpec(_ICONE_COPIER, "Copier le CR mis en forme", True,
+                       lambda c=chemin: self._copier_cr_mis_en_forme(c)),
+            ActionSpec(_ICONE_COPIER, "Copier le CR", True,
+                       lambda c=chemin: self._copier_cr(c)),
+        ]
 
     def _menu_prompts(self, chemin: Path) -> list[ActionSpec] | None:
         """Items de la flèche du bouton « Générer le CR » : un par prompt de la config
@@ -570,6 +596,26 @@ class ReunionView(QWidget):
         if self._presse_papiers:
             self._presse_papiers.copier(texte)
         else:
+            try:
+                subprocess.run(["pbcopy"], input=texte.encode("utf-8"), check=True)
+            except Exception:
+                pass
+
+    def _copier_cr_mis_en_forme(self, chemin: Path) -> None:
+        """Copie le CR en HTML (+ repli markdown) : collé dans une note Pipedrive, un
+        webmail ou un traitement de texte, il arrive **mis en forme**. Sans ce flavor
+        HTML, `**gras**` reste littéral — l'éditeur ne met en forme que ce qu'il reçoit
+        déjà en HTML, il n'interprète jamais le markdown d'un texte collé (docs/51)."""
+        cr = chemin_cr_mistral(chemin)
+        if not cr.exists():
+            return
+        texte = cr.read_text(encoding="utf-8")
+        if self._presse_papiers:
+            self._presse_papiers.copier_riche(convertir(texte), texte)
+        else:
+            # Repli des vues sans adaptateur injecté. `pbcopy` ne portant pas de
+            # flavor HTML, on dégrade en texte brut : l'utilisateur a cliqué
+            # « copier », mieux vaut le markdown que rien du tout.
             try:
                 subprocess.run(["pbcopy"], input=texte.encode("utf-8"), check=True)
             except Exception:

@@ -515,13 +515,14 @@ def test_boutons_sans_gestionnaire_cr_seul_copier_reste(qapp, machine, tmp_path)
 
 
 def test_bouton_copier_cr_actif_avec_cr(qapp, machine, tmp_path):
+    """Le clic direct copie **mis en forme** — c'est le geste courant (docs/51 §4)."""
     md = _reunion_avec_audio(tmp_path)
     chemin_cr_mistral(md).write_text("# CR", encoding="utf-8")
     vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
                       gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
     copier = _spec(_boutons(vue), "copy")
     assert copier.actif is True
-    assert copier.tooltip == "Copier le CR"
+    assert copier.tooltip == "Copier le CR mis en forme"
 
 
 def test_menu_contient_copier_le_cr_quand_disponible(qapp, machine, tmp_path):
@@ -586,6 +587,83 @@ def test_copier_cr_copie_le_contenu_brut_sans_prefixe(qapp, machine, tmp_path):
     assert pp.dernier == "# CR — Point\n\ncontenu"
 
 
+# ── Copie du CR mise en forme (docs/51) ──────────────────────────────────────────
+
+def _vue_avec_cr(machine, tmp_path, contenu: str):
+    """Vue + presse-papiers espionné, sur une réunion dont le CR contient `contenu`."""
+    from tests.fakes.adapters import PressePapiersFake
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text(contenu, encoding="utf-8")
+    pp = PressePapiersFake()
+    vue = ReunionView(_config(tmp_path), machine, presse_papiers=pp,
+                      gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    return vue, pp, md
+
+
+def test_copier_cr_mis_en_forme_pose_html_et_repli_texte(qapp, machine, tmp_path):
+    """Les deux flavors partent ensemble : le HTML pour un éditeur riche, le markdown
+    source en repli — c'est lui que reçoit un éditeur markdown ou un champ simple."""
+    vue, pp, md = _vue_avec_cr(machine, tmp_path, "**PARTICIPANTS **\n- Untel")
+    vue._copier_cr_mis_en_forme(md)
+    assert "<strong>PARTICIPANTS</strong>" in pp.dernier_html
+    assert "<li>Untel</li>" in pp.dernier_html
+    assert pp.dernier == "**PARTICIPANTS **\n- Untel"    # repli = le markdown, intact
+
+
+def test_copier_cr_brut_ne_pose_aucun_html(qapp, machine, tmp_path):
+    """La copie brute reste strictement ce qu'elle était : aucune flavor HTML, sinon
+    coller dans un éditeur markdown donnerait des balises."""
+    vue, pp, md = _vue_avec_cr(machine, tmp_path, "**TITRE **")
+    vue._copier_cr(md)
+    assert pp.historique_html == []
+    assert pp.dernier == "**TITRE **"
+
+
+def test_copie_riche_ignore_une_reunion_sans_cr(qapp, machine, tmp_path):
+    from tests.fakes.adapters import PressePapiersFake
+    md = _reunion_avec_audio(tmp_path)
+    pp = PressePapiersFake()
+    vue = ReunionView(_config(tmp_path), machine, presse_papiers=pp,
+                      gestionnaire=FauxGestionnaire())
+    vue._copier_cr_mis_en_forme(md)
+    assert pp.historique_html == [] and pp.historique == []
+
+
+def test_fleche_de_copie_propose_les_deux_formats(qapp, machine, tmp_path):
+    """La flèche liste les DEUX formats, celui du bouton compris — comme la flèche de
+    « Générer le CR » liste tous les prompts sans exclure l'actif."""
+    vue, pp, md = _vue_avec_cr(machine, tmp_path, "**TITRE **")
+    copier = _spec(_boutons(vue), "copy")
+    assert [a.tooltip for a in copier.menu_deroulant] == [
+        "Copier le CR mis en forme", "Copier le CR"]
+
+    copier.menu_deroulant[1].on_click()               # le format brut, par la flèche
+    assert pp.historique_html == []
+    copier.menu_deroulant[0].on_click()
+    assert "<strong>TITRE</strong>" in pp.dernier_html
+
+
+def test_fleche_de_copie_presente_mais_inerte_sans_cr(qapp, machine, tmp_path):
+    """La flèche est peinte même sans CR (colonne de géométrie constante) : son état
+    actif dérive de celui du bouton, que `ActionsDelegate` grise alors."""
+    _reunion_avec_audio(tmp_path)
+    vue = ReunionView(_config(tmp_path), machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=FauxGestionnaireCRMistral())
+    copier = _spec(_boutons(vue), "copy")
+    assert copier.actif is False
+    assert copier.menu_deroulant is not None          # la flèche existe…
+    assert len(copier.menu_deroulant) == 2            # …et reste inerte via `actif`
+
+
+def test_menu_expose_les_deux_formats_de_copie_du_cr(qapp, machine, tmp_path):
+    """Le menu ⋯ est exhaustif par contrat : les deux formats y figurent."""
+    vue, _pp, _md = _vue_avec_cr(machine, tmp_path, "**TITRE **")
+    tooltips = [a.tooltip for a in _actions(vue)]
+    assert "Copier le CR mis en forme" in tooltips
+    assert "Copier le CR" in tooltips
+
+
 # ── Flèche du bouton Générer le CR : choix ponctuel du prompt ─────────────────────
 
 def test_fleche_absente_avec_un_seul_prompt(qapp, machine, tmp_path):
@@ -641,9 +719,15 @@ def test_clic_principal_lance_avec_le_prompt_actif(qapp, machine, tmp_path):
 # ── Accord largeur de colonne ↔ boutons réellement produits ───────────────────────
 
 def _vue_max_boutons(machine, tmp_path):
-    """Vue dans la configuration qui produit le MAXIMUM de boutons dédiés :
-    réunion transcrite avec audio + CR Mistral disponible + 2 prompts (→ flèche)."""
-    _reunion_avec_audio(tmp_path)
+    """Vue dans la configuration qui produit le MAXIMUM de boutons et de flèches :
+    réunion transcrite avec audio + 2 prompts (→ flèche du bouton Générer) + un CR
+    **réellement présent** (→ bouton de copie actif, donc sa flèche aussi).
+
+    Le CR compte : sans lui `cr_disponible` est faux, et le test ne vérifierait plus
+    le pire cas si la flèche de copie devenait un jour conditionnelle — il passerait
+    quand même, en silence."""
+    md = _reunion_avec_audio(tmp_path)
+    chemin_cr_mistral(md).write_text("**CR **", encoding="utf-8")
     cfg = _config(tmp_path)
     cfg.set("prompts", [{"titre": "CR simple", "contenu": "Simple."},
                         {"titre": "CR détaillé", "contenu": "Détaillé."}])
