@@ -12,6 +12,7 @@ import pytest
 from debrief_meet.core.aec import (
     RECAL_SEUIL_ECH,
     RECALIBRAGES_AUTO_MAX,
+    SAUT_OFFSET_ECH,
     MoteurAEC,
     ProcesseurAEC,
     SEUIL_RMS,
@@ -411,6 +412,10 @@ def test_recalages_automatiques_bornes(caplog):
     assert sum("recalage automatique abandonné" in m for m in messages) == 1
     assert messages[-1] == [m for m in messages if "abandonné" in m][0]   # terminal = dernier
     assert proc._recalibrages_auto == RECALIBRAGES_AUTO_MAX
+    # L'offset ne bouge pas ici (écho à délai constant) : l'écho est bien acoustique,
+    # donc le message acoustique est le bon et l'AEC continue de traiter.
+    assert not any("DÉSACTIVÉE" in r.getMessage() for r in caplog.records)
+    assert proc._abandonne is False
 
 
 def test_recalibrer_manuel_reouvre_le_budget_de_recalages():
@@ -431,3 +436,111 @@ def test_demarrer_reouvre_le_budget_de_recalages():
     proc._recalibrages_auto = RECALIBRAGES_AUTO_MAX
     proc.demarrer()
     assert proc._recalibrages_auto == 0
+
+
+# ── Flux non synchronisables : abdiquer au lieu d'incriminer l'acoustique ─────────
+#
+# Terrain 2026-08-26 (Windows, micro sous MME) : 4 calages à +11240, −9765, −19427,
+# −11802 éch sur une même réunion — des SAUTS d'offset de 0,6 à 1,2 s, pas une dérive.
+# L'AEC courait après une cible qui bougeait plus vite qu'elle, finissait à −0,3 dB, et
+# concluait « casque recommandé » à une utilisatrice qui en portait un.
+
+def _pousser_par_tranches(proc, mic, ref, secondes=12):
+    pas = SR_AEC * secondes
+    for debut in range(0, len(ref), pas):
+        proc.pousser(mic[debut:debut + pas], ref[debut:debut + pas])
+
+
+def test_offset_qui_saute_desactive_l_aec_sans_accuser_l_acoustique(caplog):
+    """Le délai de l'écho change de plusieurs centaines de ms d'un calage au suivant :
+    le verdict doit être « flux non synchronisables », pas « casque recommandé »."""
+    import logging as _logging
+    rng = np.random.default_rng(101)
+    tranches = 6 * (RECALIBRAGES_AUTO_MAX + 4)
+    pas = SR_AEC * 12
+    ref = rng.normal(0, 0.3, pas * tranches).astype(np.float32)
+    # Le délai d'écho ALTERNE de ~700 ms toutes les 6 tranches, au lieu du délai
+    # constant du test de bornage. Alterner plutôt que croître, comme sur le terrain
+    # (+11240, −9765, −19427, −11802 : des sauts dans les deux sens) — une croissance
+    # monotone finirait par sortir de ±DELAI_MAX_MS et ne se recalerait plus du tout.
+    mic = np.zeros_like(ref)
+    for i in range(tranches):
+        delai = 400 if (i // 6) % 2 == 0 else 400 + int(0.7 * SR_AEC)
+        bloc = ref[i * pas:(i + 1) * pas]
+        mic[i * pas:(i + 1) * pas] = _echo_decale(bloc, delai)
+
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
+        _pousser_par_tranches(proc, mic, ref)
+
+    messages = [r.getMessage() for r in caplog.records]
+    desactivations = [m for m in messages if "DÉSACTIVÉE" in m]
+    assert len(desactivations) == 1
+    assert "ne sont pas synchronisables" in desactivations[0]
+    assert "casque n'y changerait rien" in desactivations[0]
+    assert not any("casque recommandé" in m for m in messages)
+    assert proc._abandonne is True
+
+
+def test_abandon_rend_le_micro_brut_sans_appeler_le_moteur():
+    """Abdiquer, c'est laisser passer la voix telle quelle — et ne plus consommer les
+    ~0,2 s de calcul par tranche qui tenaient le GIL (or c'est cette famine qui fait
+    perdre les échantillons, docs/48 §8 : renoncer réduit la cause)."""
+    class _Compteur(MoteurAEC):
+        def __init__(self):
+            self.appels = 0
+
+        def traiter_trame(self, near, far):
+            self.appels += 1
+            return near.copy()
+
+    moteur = _Compteur()
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         delai_ms=0, moteur=moteur)
+    proc.demarrer()
+    proc._abandonne = True
+    micro = np.random.default_rng(5).normal(0, 0.2, TRAME * 10).astype(np.float32)
+
+    sortie = proc.pousser(micro, np.zeros_like(micro))
+
+    assert np.array_equal(sortie, micro)      # bit pour bit, aucun traitement
+    assert moteur.appels == 0
+
+
+def test_saut_offset_mesure_entre_calages_consecutifs_pas_en_cumul():
+    """Une dérive lente qui finit par cumuler plus que le seuil ne doit PAS être prise
+    pour un saut : la dérive lente, `_suivre_alignement` sait la rattraper."""
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, moteur=_Identite())
+    pas = SAUT_OFFSET_ECH // 4                      # chaque pas est sous le seuil…
+    proc._delais_calages = [i * pas for i in range(6)]   # …mais le cumul le dépasse
+    assert proc._saut_offset_max() is None
+
+    proc._delais_calages = [0, SAUT_OFFSET_ECH + 1]     # un seul vrai saut suffit
+    assert proc._saut_offset_max() == SAUT_OFFSET_ECH + 1
+
+
+def test_un_seul_calage_ne_conclut_rien():
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, moteur=_Identite())
+    proc._delais_calages = [12345]
+    assert proc._saut_offset_max() is None
+
+
+def test_demarrer_et_recalibrer_rearment_l_abandon():
+    """Session neuve ou micro réellement changé : les offsets d'avant ne condamnent pas
+    la suite (et comparer les calages de DEUX périphériques ferait crier au saut)."""
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         delai_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc._abandonne = True
+    proc._delais_calages = [0, 99999]
+
+    proc.recalibrer()
+    assert proc._abandonne is False
+    assert proc._delais_calages == []
+
+    proc._abandonne = True
+    proc._delais_calages = [0, 99999]
+    proc.demarrer()
+    assert proc._abandonne is False
+    assert proc._delais_calages == []
