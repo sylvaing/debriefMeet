@@ -528,6 +528,21 @@ class ProcesseurAEC:
     def derniere_attenuation_db(self) -> float | None:
         return self._derniere_attenuation_db
 
+    def bilan(self) -> str:
+        """Verdict de la session en une ligne, pour le bilan de fin de réunion.
+
+        Rend l'état lisible sans reconstituer l'historique DEBUG à la main — ce qu'il a
+        fallu faire pour analyser le terrain du 2026-08-26."""
+        if self._abandonne:
+            return (f"désactivée (flux non synchronisables, calages "
+                    f"{', '.join(str(d) for d in self._delais_calages)} éch)")
+        if not self._calibre:
+            return "jamais calée (aucun écho franc détecté — micro passé brut)"
+        att = self._derniere_attenuation_db
+        att_txt = f"{att:.1f} dB" if att is not None else "?"
+        return (f"calée à {self._delai_estime} éch, atténuation {att_txt}, "
+                f"{self._recalibrages_auto} recalage(s), {len(self._delais_calages)} calage(s)")
+
     def terminer(self) -> None:
         if self._moteur is not None:
             self._moteur.terminer()

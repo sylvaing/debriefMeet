@@ -128,6 +128,7 @@ class OrchestrateurReunion(QObject):
         self._avec_systeme = False
         self._avec_micro = True
         self._offset_ingestion_mesure = False
+        self._cumul_ecart_s = 0.0
         self._base_moi: Path | None = None
         self._worker: _WorkerTranche | None = None
         self._thread: QThread | None = None
@@ -184,6 +185,7 @@ class OrchestrateurReunion(QObject):
         self._avec_systeme = False
         self._micro_a_capte_du_son = False
         self._offset_ingestion_mesure = False
+        self._cumul_ecart_s = 0.0
         evt_pre_associe = self._evenement_pre_associe
         self._evenement_pre_associe = None
         try:
@@ -304,6 +306,9 @@ class OrchestrateurReunion(QObject):
     def _arreter(self) -> None:
         self._actif = False
         self._timer.stop()
+        # AVANT d'arrêter les captures : leurs compteurs de session sont remis à zéro à
+        # la prochaine ouverture, et `arreter()` peut déjà fermer le flux.
+        self._logger_bilan_capture()
         if self._avec_micro:
             self._micro.arreter()
         if self._avec_systeme:
@@ -380,15 +385,8 @@ class OrchestrateurReunion(QObject):
         (cf. docs/25) → tentative de reconnexion."""
         audio_micro = self._micro.recuperer_echantillons() if self._avec_micro else _vide()
         audio_systeme = self._systeme.recuperer_echantillons() if self._avec_systeme else _vide()
-        if not self._offset_ingestion_mesure and self._avec_micro and self._avec_systeme:
-            # docs/48 §4.3 — à la 1ʳᵉ tranche, chaque piste vide l'arriéré accumulé
-            # depuis SON démarrage : l'écart de durées = l'offset d'ingestion, celui
-            # qui décale les pistes retenues et fausse la calibration AEC.
-            self._offset_ingestion_mesure = True
-            d_moi = len(audio_micro) / max(1, self._micro.taux_echantillonnage)
-            d_sys = len(audio_systeme) / max(1, self._systeme.taux_echantillonnage)
-            logger.debug("Offset d'ingestion 1ʳᵉ tranche : micro %.2fs, système %.2fs "
-                         "— écart %+.0f ms", d_moi, d_sys, (d_moi - d_sys) * 1000)
+        if self._avec_micro and self._avec_systeme:
+            self._suivre_durees_livrees(audio_micro, audio_systeme)
         if surveiller and self._actif and self._avec_micro and len(audio_micro) == 0:
             self._recuperer_micro()
         sr_micro = self._micro.taux_echantillonnage
@@ -517,6 +515,55 @@ class OrchestrateurReunion(QObject):
         if not self._actif:
             return
         self._recuperer_micro()
+
+    def _logger_bilan_capture(self) -> None:
+        """Une ligne INFO par réunion : de quoi juger la capture sans lire 200 lignes de
+        DEBUG. Une réunion = une ligne greppable dans un zip diagnostic.
+
+        `bilan()` est optionnel sur les deux collaborateurs (stubs, adaptateurs macOS et
+        Linux, doubles de test) : on ne fait jamais échouer un arrêt de réunion pour une
+        ligne de journal."""
+        duree = (datetime.now() - self._debut).total_seconds() if self._debut else 0.0
+        morceaux = [f"durée {duree:.0f}s"]
+        if self._avec_micro and self._avec_systeme:
+            morceaux.append(f"écart micro−système cumulé {self._cumul_ecart_s:+.2f}s")
+        for etiquette, source in (("micro", self._micro if self._avec_micro else None),
+                                  ("système", self._systeme if self._avec_systeme else None),
+                                  ("AEC", self._aec)):
+            bilan = getattr(source, "bilan", None) if source is not None else None
+            if callable(bilan):
+                try:
+                    morceaux.append(f"{etiquette} : {bilan()}")
+                except Exception as exc:      # pragma: no cover — jamais vu, jamais fatal
+                    morceaux.append(f"{etiquette} : bilan indisponible ({exc})")
+        logger.info("Bilan capture réunion — %s", " | ".join(morceaux))
+
+    def _suivre_durees_livrees(self, audio_micro, audio_systeme) -> None:
+        """Durées réellement livrées par chaque piste, à CHAQUE tranche (docs/48).
+
+        La seule mesure qui dise de quel côté les échantillons se perdent. Chaque tranche
+        vide les deux buffers sur le même intervalle mural : micro et système devraient
+        livrer la même durée. Un écart, c'est une piste qui a perdu — et le cumul dit
+        combien les deux pistes ont divergé depuis le début de la réunion.
+
+        Ça manquait pour analyser le terrain du 2026-08-26 : l'AEC ne mesure que l'offset
+        *relatif*, elle ne peut pas désigner le coupable, et le déficit du micro ne voit
+        pas ce qui se perd côté système. La 1ʳᵉ tranche garde son message propre : elle
+        vide l'arriéré accumulé depuis le démarrage de chaque piste, donc son écart est
+        l'offset d'ingestion (docs/48 §4.3), pas une perte — mais il entre quand même
+        dans le cumul, qui mesure la divergence TOTALE des deux pistes, celle qui les
+        désaligne réellement."""
+        d_moi = len(audio_micro) / max(1, self._micro.taux_echantillonnage)
+        d_sys = len(audio_systeme) / max(1, self._systeme.taux_echantillonnage)
+        self._cumul_ecart_s += d_moi - d_sys
+        if not self._offset_ingestion_mesure:
+            self._offset_ingestion_mesure = True
+            logger.debug("Offset d'ingestion 1ʳᵉ tranche : micro %.2fs, système %.2fs "
+                         "— écart %+.0f ms", d_moi, d_sys, (d_moi - d_sys) * 1000)
+            return
+        logger.debug("Durées livrées : micro %.2fs, système %.2fs — écart %+.0f ms "
+                     "(cumul %+.2fs)", d_moi, d_sys, (d_moi - d_sys) * 1000,
+                     self._cumul_ecart_s)
 
     def _recuperer_micro(self) -> None:
         """Tentative de reconnexion micro — appelée sur un changement de périphérique
