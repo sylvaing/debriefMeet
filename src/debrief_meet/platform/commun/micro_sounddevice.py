@@ -71,6 +71,16 @@ class CaptureMicroSounddevice(CaptureMicro):
     # refermer le capot ne fabrique pas de faux déficit.
     DEFICIT_ALERTE_S = 0.250
 
+    # Rétrogradation de l'host API préféré : un flux OUVERT qui ne livre aucun bloc
+    # pendant ce délai est mort. Sans cette garde, la bascule WASAPI a un pire cas bien
+    # plus grave que le statu quo : le watchdog « tranche muette » de `core/reunion`
+    # rappelle `redemarrer(micro_index)` avec le MÊME `micro_index = None`, donc la même
+    # préférence, donc le même flux muet — une réunion entière de silence en boucle. On
+    # abandonne donc la préférence pour le reste de la session : la reconnexion suivante
+    # repart sur le défaut global. Les blocs arrivent toutes les ~10-50 ms : 5 s sans
+    # rien n'est pas de la gigue.
+    MUET_AVANT_RETROGRADATION_S = 5.0
+
     def __init__(self, host_api_prefere: str | None = None) -> None:
         # Paramètre explicite plutôt qu'un `sys.platform` lu dans `_ouvrir_flux` (même
         # raison que `surveillant_peripheriques`) : les tests restent déterministes sur
@@ -103,6 +113,10 @@ class CaptureMicroSounddevice(CaptureMicro):
         # + silence de comblement). L'écart entre les deux EST la perte non compensée.
         self._t0_flux: float | None = None
         self._echantillons_livres = 0
+        # Ouverture du flux : mesurée AU DÉMARRAGE, pas au 1ᵉʳ bloc — c'est justement
+        # l'absence de bloc qu'on doit pouvoir constater (`_t0_flux` resterait None).
+        self._t_ouverture: float | None = None
+        self._retrogradation_faite = False
 
     @property
     def taux_echantillonnage(self) -> int:
@@ -255,6 +269,7 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._sr_flux = self._taux_natif(self._stream)
         self._adc_attendu = None  # nouveau flux = nouvelle horloge PortAudio
         self._stream.start()
+        self._t_ouverture = time.monotonic()
         self._logger_infos_flux(sd, self._stream, self._sr_flux)
 
         # Warm-up : on laisse Core Audio se reconfigurer, puis on
@@ -295,6 +310,7 @@ class CaptureMicroSounddevice(CaptureMicro):
         with self._verrou:
             self._reinitialiser_suivi_horodatage()
         nouveau.start()
+        self._t_ouverture = time.monotonic()
         self._logger_infos_flux(sd, nouveau, self._sr_flux)
 
         # Warm-up : ce que le nouveau flux capte ici est du glitch → on le jette
@@ -356,6 +372,23 @@ class CaptureMicroSounddevice(CaptureMicro):
         except Exception:
             pass
 
+    def bilan(self) -> str:
+        """État de la capture en une ligne, pour le bilan de fin de réunion : host API
+        réellement retenu, déficit d'échantillons, trous comblés."""
+        with self._verrou:
+            t0, livres = self._t0_flux, self._echantillons_livres
+            trous, sans_horodatage = self._trous_combles_flux, self._blocs_sans_horodatage
+            retrograde = self._retrogradation_faite
+        if t0 is None:
+            return "aucun bloc reçu"
+        deficit = time.monotonic() - t0 - livres / max(1, self._sr_flux)
+        details = [f"déficit {deficit * 1000:+.0f} ms", f"{trous} trou(s) comblé(s)"]
+        if sans_horodatage:
+            details.append(f"{sans_horodatage} bloc(s) sans horodatage ADC")
+        if retrograde:
+            details.append("host API préféré abandonné")
+        return ", ".join(details)
+
     def _reinitialiser_suivi_horodatage(self) -> None:
         """Compteurs d'aveuglement, par FLUX (à appeler sous `_verrou`). Un nouveau flux
         peut viser un autre host API : le verdict précédent ne le concerne pas."""
@@ -365,6 +398,30 @@ class CaptureMicroSounddevice(CaptureMicro):
         self._alerte_aveugle_emise = False
         self._t0_flux = None
         self._echantillons_livres = 0
+        # NB : `_retrogradation_faite` et `_host_api_prefere` ne sont PAS réarmés ici.
+        # Ils vivent à la session : les réarmer ferait retenter l'host API muet à chaque
+        # reconnexion, c'est-à-dire exactement la boucle qu'on cherche à casser.
+
+    def _retrograder_si_flux_muet(self) -> None:
+        """Abandonne l'host API préféré si le flux ouvert ne livre RIEN.
+
+        Appelé au drain de tranche. Ne rouvre pas le flux : la reconnexion est déjà le
+        travail du watchdog « tranche muette » de `core/reunion`, qui repasse par
+        `redemarrer(micro_index)`. En retirant la préférence, on rend ce watchdog
+        efficace au lieu de le laisser boucler sur le même host API."""
+        if (self._retrogradation_faite or not self._host_api_prefere
+                or self._t_ouverture is None or self._t0_flux is not None):
+            return
+        if time.monotonic() - self._t_ouverture < self.MUET_AVANT_RETROGRADATION_S:
+            return
+        abandonne, self._host_api_prefere = self._host_api_prefere, ""
+        self._retrogradation_faite = True
+        import logging
+        logging.getLogger(__name__).warning(
+            "Micro : aucun bloc reçu depuis %.0f s sur l'host API %s — préférence "
+            "abandonnée pour cette session, la prochaine reconnexion prendra le "
+            "périphérique par défaut du système.",
+            self.MUET_AVANT_RETROGRADATION_S, abandonne)
 
     def _alerter_si_comblement_aveugle(self) -> None:
         """Dit une fois par flux que le comblement de trous est hors service.
@@ -423,6 +480,7 @@ class CaptureMicroSounddevice(CaptureMicro):
             trous, self._trous_combles = self._trous_combles, 0
             comble_s, self._silence_comble_s = self._silence_comble_s, 0.0
 
+        self._retrograder_si_flux_muet()
         if trous or overflows:
             # WARNING assumé (docs/48 : « l'échec était dans les logs, mais en
             # DEBUG ») — borné à 1 ligne par tranche, jamais par événement.

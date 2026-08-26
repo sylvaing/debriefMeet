@@ -790,3 +790,75 @@ def test_redemarrage_rearme_le_verdict_d_aveuglement(micro_16k, horloge, caplog)
         _livrer(micro_16k, horloge, secondes_livrees=1.0, secondes_ecoulees=5.0)
         micro_16k.recuperer_echantillons()
     assert len(_alertes_aveugles(caplog)) == 1
+
+
+# ── Rétrogradation de l'host API préféré : ne pas boucler sur un flux muet ────────
+
+def test_flux_muet_abandonne_l_host_api_prefere(monkeypatch, horloge, caplog):
+    """Le vrai risque de la bascule WASAPI : un flux qui s'ouvre sans jamais livrer.
+    Le watchdog « tranche muette » de `core/reunion` rappelle `redemarrer(None)`, donc
+    la même préférence — sans rétrogradation c'est une réunion de silence en boucle."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    assert faux.streams_ouverts[-1].device == 1          # préférence appliquée
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()                   # aucun bloc n'est jamais arrivé
+
+    assert micro._host_api_prefere == ""
+    assert any("préférence abandonnée" in r.getMessage() for r in caplog.records)
+
+    micro.redemarrer(None)                               # ce que fait le watchdog
+    assert faux.streams_ouverts[-1].device is None       # défaut global, plus WASAPI
+
+
+def test_flux_qui_livre_ne_retrograde_jamais(monkeypatch, horloge, caplog):
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    _pousser_bloc_adc(micro, 1600, 1.0)                  # un bloc suffit à prouver la vie
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S * 10)
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()
+
+    assert micro._host_api_prefere == "WASAPI"
+    assert not any("préférence abandonnée" in r.getMessage() for r in caplog.records)
+
+
+def test_retrogradation_ne_se_reevalue_pas_a_chaque_reconnexion(monkeypatch, horloge, caplog):
+    """`_retrogradation_faite` vit à la SESSION : le réarmer par flux ferait retenter
+    l'host API muet à chaque reconnexion — la boucle qu'on casse."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    micro.recuperer_echantillons()
+    assert micro._retrogradation_faite
+
+    micro.redemarrer(None)
+    assert micro._retrogradation_faite                   # pas réarmé par le nouveau flux
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S + 1)
+    caplog.clear()   # la 1ʳᵉ rétrogradation est déjà capturée ; on veut la SUITE
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.recuperer_echantillons()
+    assert sum("préférence abandonnée" in r.getMessage() for r in caplog.records) == 0
+
+
+def test_delai_de_grace_avant_de_retrograder(monkeypatch, horloge):
+    """Un flux tout juste ouvert n'a pas encore eu le temps de livrer : pas de verdict
+    avant `MUET_AVANT_RETROGRADATION_S`."""
+    faux = _FauxSounddevice(index_valide=None, taux_par_index={1: TAUX_CANONIQUE})
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    micro = _micro("WASAPI")
+    micro.demarrer(None)
+
+    horloge.avancer(micro.MUET_AVANT_RETROGRADATION_S / 2)
+    micro.recuperer_echantillons()
+
+    assert micro._host_api_prefere == "WASAPI"
