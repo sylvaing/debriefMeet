@@ -166,14 +166,19 @@ class TestMigrationV2Prompts:
         ps = cfg.get("prompts")
         assert ps[0]["contenu"] == "Mon prompt personnalisé."
 
-    def test_cr_pipedrive_et_full_md_ajoutes_en_fin(self, config_tmp_avec_fichier):
-        cfg = config_tmp_avec_fichier(self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1))
-        ps = cfg.get("prompts")
-        assert ps[-2:] == [{"titre": prompts_mod.CR_PIPEDRIVE_TITRE,
-                            "contenu": prompts_mod.CR_PIPEDRIVE_CONTENU},
-                           {"titre": prompts_mod.CR_FULL_MD_TITRE,
-                            "contenu": prompts_mod.CR_FULL_MD_CONTENU}]
-        assert cfg.get("prompt_actif") == 0      # l'index actif reste valide
+    def test_cr_pipedrive_et_full_md_ajoutes_en_fin(self):
+        """v2 **en isolation** : passer par `charger()` ferait aussi jouer la v4, qui
+        retire le prompt Pipedrive — le test ne parlerait plus de la v2. Sollicitée
+        directement, l'étape reste testable telle qu'elle a joué sur les postes."""
+        from debrief_meet.core.config import Config
+        donnees = self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1)
+        Config._migrer_v2_prompts(donnees)
+        assert donnees["prompts"][-2:] == [
+            {"titre": prompts_mod.CR_PIPEDRIVE_TITRE,
+             "contenu": prompts_mod.CR_PIPEDRIVE_CONTENU_V2},
+            {"titre": prompts_mod.CR_FULL_MD_TITRE,
+             "contenu": prompts_mod.CR_FULL_MD_CONTENU}]
+        assert donnees["prompt_actif"] == 0      # l'index actif reste valide
 
     def test_cr_pipedrive_deja_present_pas_de_doublon(self, config_tmp_avec_fichier):
         donnees = self._v1(prompts_mod.CR_SIMPLE_CONTENU_V1)
@@ -194,8 +199,10 @@ class TestMigrationV2Prompts:
         sur_disque = json.loads(chemin.read_text(encoding="utf-8"))
         assert sur_disque["version"] == VERSION_COURANTE
         titres = [p["titre"] for p in sur_disque["prompts"]]
-        assert prompts_mod.CR_PIPEDRIVE_TITRE in titres
         assert prompts_mod.CR_FULL_MD_TITRE in titres
+        # Ajouté par la v2 puis retiré par la v4 dans la même passe : l'état écrit sur
+        # disque est le résultat net de la chaîne, jamais un intermédiaire.
+        assert prompts_mod.CR_PIPEDRIVE_TITRE not in titres
 
     def test_config_v2_non_retouchee(self, tmp_path):
         # Une config déjà en v2 dont l'utilisateur a supprimé la note Pipedrive
@@ -237,8 +244,78 @@ class TestMigrationV3ModeleCr:
              "prompts": [{"titre": "Perso", "contenu": "X"}]})
         assert cfg.get("mistral_modele_cr") == "mistral-large-latest"
         titres = [p["titre"] for p in cfg.get("prompts")]
-        assert titres == ["Perso", "CR Pipedrive", "CR full .md"]   # v2 a joué aussi
+        # v2 a ajouté les deux CR BlueMind, v4 a retiré le Pipedrive : résultat net.
+        assert titres == ["Perso", "CR full .md"]
         assert cfg.get("version") == VERSION_COURANTE
+
+
+class TestMigrationV4RetraitPromptPipedrive:
+    """v3 → v4 : « CR Pipedrive » retiré des prompts (docs/51) — la copie mise en
+    forme convertit le markdown du « CR full .md » au moment du copier."""
+
+    @staticmethod
+    def _v3(contenu_pipedrive: str, actif: int = 0) -> dict:
+        return {"version": 3, "prompt_actif": actif, "prompts": [
+            {"titre": "CR simple", "contenu": "Simple."},
+            {"titre": prompts_mod.CR_PIPEDRIVE_TITRE, "contenu": contenu_pipedrive},
+            {"titre": prompts_mod.CR_FULL_MD_TITRE, "contenu": "Full."},
+        ]}
+
+    def test_prompt_reste_au_defaut_retire(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(self._v3(prompts_mod.CR_PIPEDRIVE_CONTENU_V2))
+        assert [p["titre"] for p in cfg.get("prompts")] == ["CR simple", "CR full .md"]
+        assert cfg.get("version") == VERSION_COURANTE
+
+    def test_prompt_retouche_conserve(self, config_tmp_avec_fichier):
+        """Un prompt que l'utilisateur a édité lui appartient — même règle que la v2
+        pour le CR simple."""
+        cfg = config_tmp_avec_fichier(self._v3("Ma version à moi."))
+        ps = cfg.get("prompts")
+        assert [p["titre"] for p in ps] == [
+            "CR simple", prompts_mod.CR_PIPEDRIVE_TITRE, "CR full .md"]
+        assert ps[1]["contenu"] == "Ma version à moi."
+
+    def test_index_actif_apres_le_retire_est_decremente(self, config_tmp_avec_fichier):
+        """LE piège : `prompt_actif` est un index, pas un nom. Sans recalage, un actif
+        à 2 (« CR full .md ») désignerait après suppression un prompt hors liste — et
+        `contenu_actif` retomberait silencieusement sur le CR simple codé en dur."""
+        cfg = config_tmp_avec_fichier(
+            self._v3(prompts_mod.CR_PIPEDRIVE_CONTENU_V2, actif=2))
+        assert cfg.get("prompt_actif") == 1
+        prompts_apres = cfg.get("prompts")
+        assert prompts_apres[cfg.get("prompt_actif")]["titre"] == prompts_mod.CR_FULL_MD_TITRE
+
+    def test_index_actif_avant_le_retire_inchange(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            self._v3(prompts_mod.CR_PIPEDRIVE_CONTENU_V2, actif=0))
+        assert cfg.get("prompt_actif") == 0
+
+    def test_index_actif_sur_le_retire_revient_au_cr_simple(self, config_tmp_avec_fichier):
+        """L'utilisateur avait le prompt Pipedrive pour actif : il faut un repli, pas
+        un index qui désigne le prompt ayant pris sa place dans la liste."""
+        cfg = config_tmp_avec_fichier(
+            self._v3(prompts_mod.CR_PIPEDRIVE_CONTENU_V2, actif=1))
+        assert cfg.get("prompt_actif") == prompts_mod.PROMPT_ACTIF_DEFAUT
+        assert cfg.get("prompts")[cfg.get("prompt_actif")]["titre"] == "CR simple"
+
+    def test_prompts_malformes_sans_crash(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier({"version": 3, "prompts": "pas une liste"})
+        assert cfg.get("version") == VERSION_COURANTE
+
+    def test_config_deja_a_jour_non_retouchee(self, tmp_path):
+        """Une config en v4 dont l'utilisateur a **remis** un prompt Pipedrive ne doit
+        pas le voir disparaître à chaque démarrage."""
+        from debrief_meet.core.config import Config
+        chemin = tmp_path / "config.json"
+        donnees = {"version": VERSION_COURANTE, "prompt_actif": 0, "prompts": [
+            {"titre": prompts_mod.CR_PIPEDRIVE_TITRE,
+             "contenu": prompts_mod.CR_PIPEDRIVE_CONTENU_V2}]}
+        chemin.write_text(json.dumps(donnees), encoding="utf-8")
+        contenu_initial = chemin.read_text(encoding="utf-8")
+        cfg = Config(chemin=chemin)
+        cfg.charger()
+        assert [p["titre"] for p in cfg.get("prompts")] == [prompts_mod.CR_PIPEDRIVE_TITRE]
+        assert chemin.read_text(encoding="utf-8") == contenu_initial
 
 
 class TestPrompts:

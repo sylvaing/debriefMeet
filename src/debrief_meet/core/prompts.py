@@ -186,7 +186,15 @@ def _cr_bluemind(destination: str, sortie: str) -> str:
             "Voici la transcription :")
 
 
-CR_PIPEDRIVE_CONTENU = _cr_bluemind(
+# Retiré des défauts par la copie mise en forme (docs/51) : demander au modèle des
+# <b>/<i>/<br> littéraux ne servait à rien, puisqu'un éditeur riche ne met en forme
+# que ce qu'il reçoit **en HTML sur le presse-papiers** — collées en texte brut, ces
+# balises restaient visibles, ce qui était le symptôme d'origine. Le « CR full .md »
+# suffit désormais : sa syntaxe markdown est convertie au moment du copier.
+#
+# La constante reste ici (comme `CR_SIMPLE_CONTENU_V1`) : la migration v4 s'en sert
+# pour reconnaître un prompt resté au défaut et ne retirer que celui-là.
+CR_PIPEDRIVE_CONTENU_V2 = _cr_bluemind(
     "collé dans une note Pipedrive",
     "- Tous les types (destination : note Pipedrive) — Pipedrive n'interprète pas le markdown. "
     "Utiliser exclusivement : <b>, <i>, <br> et des puces •. Interdits : ---, *, #, listes "
@@ -209,7 +217,6 @@ def prompts_par_defaut() -> list[dict]:
     """Liste de prompts par défaut (une copie fraîche à chaque appel)."""
     return [
         {"titre": CR_SIMPLE_TITRE, "contenu": CR_SIMPLE_CONTENU},
-        {"titre": CR_PIPEDRIVE_TITRE, "contenu": CR_PIPEDRIVE_CONTENU},
         {"titre": CR_FULL_MD_TITRE, "contenu": CR_FULL_MD_CONTENU},
     ]
 

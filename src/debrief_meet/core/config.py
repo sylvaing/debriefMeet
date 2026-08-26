@@ -15,7 +15,7 @@ from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
 
-VERSION_COURANTE = 3
+VERSION_COURANTE = 4
 
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
@@ -156,6 +156,8 @@ class Config:
             self._migrer_v2_prompts(donnees)
         if version < 3:
             self._migrer_v3_modele_cr(donnees)
+        if version < 4:
+            self._migrer_v4_retrait_prompt_pipedrive(donnees)
         donnees["version"] = VERSION_COURANTE
         return True
 
@@ -168,6 +170,11 @@ class Config:
         - « CR Pipedrive » et « CR full .md » : ajoutés en fin de liste s'ils n'existent
           pas déjà (comparaison par titre). `prompt_actif` reste valide : on n'insère
           qu'en fin.
+
+        NB : depuis v4, « CR Pipedrive » est ajouté ici puis retiré juste après, dans
+        la même passe, pour une config encore en v0/v1. C'est volontairement laissé
+        tel quel — une migration passée est un enregistrement de ce qui a été fait
+        sur les postes déjà migrés ; la réécrire fausserait ce qu'elle a signifié.
         """
         prompts = donnees.get("prompts")
         if not isinstance(prompts, list):
@@ -177,10 +184,44 @@ class Config:
                     and p.get("contenu") == _prompts.CR_SIMPLE_CONTENU_V1):
                 p["contenu"] = _prompts.CR_SIMPLE_CONTENU
         titres = {p.get("titre") for p in prompts if isinstance(p, dict)}
-        for titre, contenu in ((_prompts.CR_PIPEDRIVE_TITRE, _prompts.CR_PIPEDRIVE_CONTENU),
+        for titre, contenu in ((_prompts.CR_PIPEDRIVE_TITRE, _prompts.CR_PIPEDRIVE_CONTENU_V2),
                                (_prompts.CR_FULL_MD_TITRE, _prompts.CR_FULL_MD_CONTENU)):
             if titre not in titres:
                 prompts.append({"titre": titre, "contenu": contenu})
+
+    @staticmethod
+    def _migrer_v4_retrait_prompt_pipedrive(donnees: dict[str, Any]) -> None:
+        """v4 : retire le prompt « CR Pipedrive », rendu inutile par la copie mise en
+        forme (docs/51) — le « CR full .md » est converti en HTML au moment du copier.
+
+        Deux précautions :
+
+        - **Seul un prompt resté au défaut est retiré** (contenu identique à
+          `CR_PIPEDRIVE_CONTENU_V2`). Un prompt que l'utilisateur a retouché lui
+          appartient : on le laisse, comme le fait déjà la migration v2 pour le CR
+          simple.
+        - **`prompt_actif` est un index, pas un nom** : retirer un élément décale
+          tout ce qui suit. C'est précisément pour éviter ça que la v2 n'ajoutait
+          qu'en fin de liste. On recale donc l'index — ramené sur le CR simple s'il
+          désignait le prompt retiré.
+        """
+        prompts = donnees.get("prompts")
+        if not isinstance(prompts, list):
+            return
+        cible = next(
+            (i for i, p in enumerate(prompts)
+             if isinstance(p, dict) and p.get("titre") == _prompts.CR_PIPEDRIVE_TITRE
+             and p.get("contenu") == _prompts.CR_PIPEDRIVE_CONTENU_V2),
+            None)
+        if cible is None:
+            return
+        del prompts[cible]
+        actif = donnees.get("prompt_actif")
+        if isinstance(actif, int):
+            if actif == cible:
+                donnees["prompt_actif"] = _prompts.PROMPT_ACTIF_DEFAUT
+            elif actif > cible:
+                donnees["prompt_actif"] = actif - 1
 
     @staticmethod
     def _migrer_v3_modele_cr(donnees: dict[str, Any]) -> None:
