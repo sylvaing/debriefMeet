@@ -181,6 +181,41 @@ def _prefixe_horodatage(nom_dossier: str) -> str:
     return "_".join(tokens[:2]) if len(tokens) >= 2 else nom_dossier
 
 
+def resoudre_chemin_reunion(md: Path) -> Path:
+    """Ré-résout un chemin de réunion dont le **dossier a pu être renommé** entre-temps.
+
+    Les jobs de fond (CR Mistral, transcription différée, diarization) durent des
+    minutes et travaillent sur le chemin capturé à leur lancement. Pendant ce temps
+    l'utilisateur peut associer la réunion à un événement BlueMind ou éditer son titre :
+    les deux **renomment le dossier** (docs/43 §6, `renommer_dossier_reunion`), et le
+    job écrit alors dans un dossier disparu — `FileNotFoundError`, 5 échecs constatés
+    sur le poste de Sylvain entre le 2026-07-29 et le 2026-08-26 (CR perdu, à relancer
+    à la main). Aucune garde d'UI ne suffirait : le renommage est légitime et souhaitable
+    à ce moment précis (c'est même le geste que le flux pré-CR encourage).
+
+    L'identité stable d'une réunion est son **horodatage** — le renommage ne touche que
+    le slug du titre. On retrouve donc le dossier par son préfixe horodaté.
+
+    Retourne `md` inchangé si son dossier existe toujours (cas courant : un seul stat),
+    si aucun dossier ne correspond (réunion supprimée — l'appelant échoue comme avant),
+    ou si **plusieurs** correspondent : le compteur de collision (`-2`, posé après le
+    slug) ne survit pas au préfixe, et écrire dans la mauvaise réunion serait pire que
+    l'échec qu'on répare."""
+    md = Path(md)
+    dossier = md.parent
+    if dossier.is_dir():
+        return md
+    prefixe = _prefixe_horodatage(dossier.name)
+    parent = dossier.parent
+    if not _MOTIF_HORODATAGE.match(prefixe) or not parent.is_dir():
+        return md
+    candidats = [d for d in parent.iterdir()
+                 if d.is_dir() and _prefixe_horodatage(d.name) == prefixe]
+    if len(candidats) != 1:
+        return md
+    return candidats[0] / md.name
+
+
 def renommer_dossier_reunion(md: Path, titre: str | None) -> Path:
     """Renomme le dossier pour refléter `titre` (ou horodatage seul si vide/None) et
     retourne le nouveau chemin de `transcription.md`. No-op (retourne `md`) si le nom

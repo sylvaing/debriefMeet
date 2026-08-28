@@ -18,7 +18,11 @@ from pathlib import Path
 import numpy as np
 
 from debrief_meet.core.audio import decoder_audio_16k, normaliser_asr
-from debrief_meet.core.fichiers import chemin_locuteurs, chemins_audio_reunion
+from debrief_meet.core.fichiers import (
+    chemin_locuteurs,
+    chemins_audio_reunion,
+    resoudre_chemin_reunion,
+)
 from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 
 logger = logging.getLogger(__name__)
@@ -371,6 +375,10 @@ def generer_locuteurs(chemin_md, moteur_transcription,
         raise RuntimeError("Diarization : aucune piste exploitable (toutes en échec).")
 
     tours = fusionner(*attribues)
+    # Le dossier a pu être renommé pendant la passe (association BlueMind, édition du
+    # titre — docs/43 §6) : re-résolution avant d'écrire, sinon `locuteurs.md` tombe
+    # dans un dossier disparu.
+    chemin_md = resoudre_chemin_reunion(chemin_md)
     sortie = chemin_locuteurs(chemin_md)
     rendre_locuteurs_md(sortie, f"Réunion — {chemin_md.parent.name} — locuteurs", tours)
     logger.info("Débrief locuteurs écrit : %s", sortie)

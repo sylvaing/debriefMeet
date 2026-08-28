@@ -8,7 +8,7 @@ import pytest
 import respx
 from scipy.io import wavfile
 
-from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE
+from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, renommer_dossier_reunion
 from debrief_meet.core.mistral import pipeline
 from debrief_meet.core.mistral.client import ErreurMistral
 
@@ -481,3 +481,88 @@ def test_voxtral_reinsere_le_cartouche_invites(tmp_path, config_tmp):
     assert "Alice Martin" in contenu            # invité coché
     assert "Carol Absente" not in contenu       # invité non coché exclu
     assert "bonjour" in contenu                 # transcription Voxtral bien écrite
+
+
+# ── Renommage du dossier PENDANT le job (docs/43 §6) ───────────────────────────
+#
+# Le job dure des minutes ; pendant ce temps l'utilisateur peut associer la réunion à
+# un événement BlueMind ou éditer son titre — les deux renomment le dossier. Deux
+# échecs réels le 2026-08-26 (CR perdu, à relancer à la main) : l'un à l'écriture de
+# `transcription.md` juste après l'upload Voxtral, l'autre à l'écriture de `CR.md`.
+
+
+def _reunion_en_dossier(tmp_path, contenu, nom="2026-08-26_16-20-54"):
+    dossier = tmp_path / nom
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text(contenu, encoding="utf-8")
+    return md
+
+
+@respx.mock
+def test_cr_ecrit_dans_le_dossier_renomme_pendant_la_redaction(tmp_path, config_tmp):
+    """Cas du 2026-08-26 16:26 : lecture passée, `CR.md` écrit dans un dossier qui
+    n'existait plus. Le renommage survient ici pendant l'appel de rédaction."""
+    md = _reunion_en_dossier(
+        tmp_path, "# Réunion — 2026-08-26 16:20\n\n---\n\n**Moi :** Bonjour.\n")
+    _configurer(config_tmp)
+    apres = {}
+
+    def _renomme_puis_repond(request):
+        apres["md"] = renommer_dossier_reunion(md, "Point Acme")
+        return _REP_CR
+
+    respx.post(f"{URL}/v1/chat/completions").mock(side_effect=_renomme_puis_repond)
+
+    chemin_cr = pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert chemin_cr == apres["md"].with_name("CR.md")
+    assert chemin_cr.read_text(encoding="utf-8").strip() == "# CR généré"
+    assert not (tmp_path / "2026-08-26_16-20-54").exists()      # l'ancien dossier n'a pas repoussé
+
+
+@respx.mock
+def test_transcription_recuperee_dans_le_dossier_renomme_pendant_voxtral(tmp_path, config_tmp):
+    """Cas du 2026-08-26 16:19 : échec 347 ms après la fin de l'upload Voxtral, au moment
+    de réécrire `transcription.md` (récupération de la transcription en local)."""
+    md = _reunion_en_dossier(
+        tmp_path, f"# Réunion — 2026-08-26 16:20\n\n> {MARQUEUR_EN_ATTENTE}\n",
+        nom="2026-08-26_15-53-44")
+    _piste(md.parent, "moi")
+    _configurer(config_tmp)
+    apres = {}
+
+    def _renomme_puis_repond(request):
+        apres["md"] = renommer_dossier_reunion(md, "Point Marseille")
+        return httpx.Response(200, json={"text": "compte rendu de la réunion"})
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(side_effect=_renomme_puis_repond)
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    chemin_cr = pipeline.generer_cr_reunion(md, config_tmp)
+
+    nouveau_md = apres["md"]
+    contenu = nouveau_md.read_text(encoding="utf-8")
+    assert MARQUEUR_EN_ATTENTE not in contenu                    # transcription récupérée
+    assert "compte rendu de la réunion" in contenu
+    assert chemin_cr == nouveau_md.with_name("CR.md")
+
+
+@respx.mock
+def test_dossier_supprime_pendant_le_job_echoue_comme_avant(tmp_path, config_tmp):
+    """Garde-fou : la re-résolution répare un renommage, elle n'invente pas une réunion.
+    Un dossier supprimé doit toujours faire échouer le job (et non écrire ailleurs)."""
+    import shutil
+
+    md = _reunion_en_dossier(
+        tmp_path, "# Réunion\n\n---\n\n**Moi :** Bonjour.\n")
+    _configurer(config_tmp)
+
+    def _supprime_puis_repond(request):
+        shutil.rmtree(md.parent)
+        return _REP_CR
+
+    respx.post(f"{URL}/v1/chat/completions").mock(side_effect=_supprime_puis_repond)
+
+    with pytest.raises(FileNotFoundError):
+        pipeline.generer_cr_reunion(md, config_tmp)

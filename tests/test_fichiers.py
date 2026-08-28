@@ -24,6 +24,7 @@ from debrief_meet.core.fichiers import (
     nom_dossier_reunion,
     pistes_audio_existantes,
     renommer_dossier_reunion,
+    resoudre_chemin_reunion,
     slugifier_titre,
 )
 
@@ -902,3 +903,82 @@ def test_dedup_inclusion_ignore_les_segments_micro_tres_courts():
         participants=[(12.2, "Oui, tout à fait, exactement ce que je disais tantôt à propos "
                              "du calendrier de déploiement chez le client.")])
     assert [b[0] for b in blocs] == ["Moi", "Participants"]
+
+
+# ── resoudre_chemin_reunion : job de fond + dossier renommé sous ses pieds ──────
+#
+# 5 échecs réels sur le poste de Sylvain entre le 2026-07-29 et le 2026-08-26 : un job
+# (CR Mistral, transcription différée) tenait un chemin absolu capturé à son lancement
+# pendant que l'association BlueMind renommait le dossier. Cf. docs/43 §6.
+
+
+def _dossier_reunion(tmp_path, nom="2026-08-26_16-20-54"):
+    d = tmp_path / nom
+    d.mkdir()
+    (d / "transcription.md").write_text("# Réunion\n", encoding="utf-8")
+    return d / "transcription.md"
+
+
+def test_resoudre_no_op_si_le_dossier_existe_toujours(tmp_path):
+    md = _dossier_reunion(tmp_path)
+    assert resoudre_chemin_reunion(md) == md
+
+
+def test_resoudre_retrouve_le_dossier_renomme(tmp_path):
+    md = _dossier_reunion(tmp_path)
+    nouveau = renommer_dossier_reunion(md, "Point Acme")     # slug ajouté
+
+    # Le job, lui, tient toujours l'ancien chemin.
+    assert resoudre_chemin_reunion(md) == nouveau
+    assert nouveau.parent.name == "2026-08-26_16-20-54_Point-Acme"
+
+
+def test_resoudre_retrouve_apres_retrait_du_titre(tmp_path):
+    """Le renommage marche dans les deux sens : titre effacé → dossier horodaté seul."""
+    md = _dossier_reunion(tmp_path, "2026-08-26_16-20-54_Ancien-titre")
+    nu = renommer_dossier_reunion(md, "")
+    assert resoudre_chemin_reunion(md) == nu
+
+
+def test_resoudre_conserve_le_nom_de_fichier_demande(tmp_path):
+    """Le helper sert aussi pour `CR.md` et `locuteurs.md`, pas seulement la transcription."""
+    md = _dossier_reunion(tmp_path)
+    nouveau = renommer_dossier_reunion(md, "Point Acme")
+    cr_avant = chemin_cr_mistral(md)
+    assert resoudre_chemin_reunion(cr_avant) == nouveau.with_name("CR.md")
+
+
+def test_resoudre_inchange_si_la_reunion_a_ete_supprimee(tmp_path):
+    """Réunion supprimée (et non renommée) : on rend le chemin tel quel — l'appelant
+    échoue comme avant, avec le même message. Réparer un renommage n'est pas inventer
+    une réunion."""
+    md = _dossier_reunion(tmp_path)
+    import shutil
+    shutil.rmtree(md.parent)
+    assert resoudre_chemin_reunion(md) == md
+
+
+def test_resoudre_inchange_si_plusieurs_dossiers_partagent_l_horodatage(tmp_path):
+    """Le compteur de collision (`-2`) est posé APRÈS le slug : deux réunions démarrées
+    à la même seconde partagent donc le préfixe horodaté. Ambiguïté → on ne devine pas,
+    sous peine d'écrire le CR dans la mauvaise réunion."""
+    md = _dossier_reunion(tmp_path)
+    renommer_dossier_reunion(md, "Titre A")
+    autre = _dossier_reunion(tmp_path)                          # même horodatage, recréé
+    renommer_dossier_reunion(autre, "Titre B")
+    assert resoudre_chemin_reunion(md) == md
+
+
+def test_resoudre_ignore_les_dossiers_d_un_autre_horodatage(tmp_path):
+    md = _dossier_reunion(tmp_path)
+    voisine = _dossier_reunion(tmp_path, "2026-08-26_17-06-40")
+    renommer_dossier_reunion(voisine, "Une autre réunion")
+    import shutil
+    shutil.rmtree(md.parent)
+    assert resoudre_chemin_reunion(md) == md                     # surtout pas la voisine
+
+
+def test_resoudre_inchange_sur_un_nom_non_horodate(tmp_path):
+    """Journal (`AAAA-MM-JJ.md`, à plat) ou chemin arbitraire : rien à résoudre."""
+    md = tmp_path / "dossier-disparu" / "notes.md"
+    assert resoudre_chemin_reunion(md) == md

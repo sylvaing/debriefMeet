@@ -18,6 +18,7 @@ from debrief_meet.core.fichiers import (
     chemins_audio_reunion,
     definir_duree,
     duree_reunion,
+    resoudre_chemin_reunion,
 )
 from debrief_meet.platform.interfaces import MoteurTranscription, ResultatTranscription
 
@@ -76,6 +77,12 @@ def transcrire_reunion(chemin_md, moteur: MoteurTranscription, *,
     segs_moi = [(s.debut, s.texte) for s in res_moi.segments]
     segs_parts = [(s.debut, s.texte) for s in res_sys.segments]
     blocs = _entrelaces(res_moi.texte.strip(), res_sys.texte.strip(), segs_moi, segs_parts)
+
+    # La transcription a duré des minutes : le dossier a pu être renommé entre-temps
+    # (association BlueMind, édition du titre — docs/43 §6). Toutes les écritures qui
+    # suivent portent sur le chemin re-résolu, sinon elles tombent dans un dossier
+    # disparu (échec réel du 2026-08-12 15:06).
+    chemin_md = resoudre_chemin_reunion(chemin_md)
 
     # La réécriture remplace tout le fichier : on préserve la durée enregistrée en
     # fin de captation (le titre custom est conservé via `_titre`). Cf. docs/14.

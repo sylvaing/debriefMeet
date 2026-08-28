@@ -26,6 +26,7 @@ from debrief_meet.core.fichiers import (
     date_heure_reunion,
     definir_duree,
     duree_reunion,
+    resoudre_chemin_reunion,
     titre_reunion,
     transcription_en_attente,
 )
@@ -225,7 +226,10 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
 
     Lève `ErreurMistral` (ou une sous-classe de `core.mistral.client`) sur tout échec
     — jamais de fichier partiel écrit."""
-    chemin_md = Path(chemin_md)
+    # Le dossier a pu être renommé entre le clic et le démarrage effectif du worker
+    # (association BlueMind, édition du titre) — et il pourra l'être encore pendant les
+    # minutes qui suivent : chaque écriture re-résout le chemin (docs/43 §6).
+    chemin_md = resoudre_chemin_reunion(chemin_md)
     cle_api = config.get("mistral_cle_api")
     if not cle_api:
         raise ErreurMistral("Aucune clé API Mistral configurée (Préférences › Remote IA).")
@@ -257,12 +261,19 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
             transcript = res.transcript
             source = "voxtral"
             if en_attente:
+                # La transcription Voxtral a duré : le dossier a pu être renommé depuis
+                # les lectures ci-dessus (cas réel du 2026-08-26 16:19, échec à 347 ms
+                # de la fin de l'upload).
+                chemin_md = resoudre_chemin_reunion(chemin_md)
                 _ecrire_transcript_local(chemin_md, res)      # récupère la transcription en local
                 _reinserer_bloc_invites(chemin_md)            # la réécriture a effacé le cartouche
         cr_markdown, _usage_cr = generer_cr(
             client, transcript, prompt, config.get("mistral_modele_cr"),
             sujet=sujet, participants=infos.participants, date=_date_lisible(infos, chemin_md))
 
+    # Idem après la rédaction du CR, la plus longue étape (cas réel du 2026-08-26 16:26 :
+    # lecture passée, écriture du CR.md dans un dossier déjà renommé).
+    chemin_md = resoudre_chemin_reunion(chemin_md)
     chemin_cr = chemin_cr_mistral(chemin_md)
     chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")
     logger.info("CR Mistral généré (source=%s, %d invité(s)) : %s",

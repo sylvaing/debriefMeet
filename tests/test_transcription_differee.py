@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE
+from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, renommer_dossier_reunion
 from debrief_meet.core.transcription_differee import transcrire_reunion
 from debrief_meet.platform.interfaces import ResultatTranscription, Segment
 from tests.fakes.adapters import MoteurFake
@@ -145,3 +145,32 @@ def test_reunion_non_associee_reste_sans_cartouche(tmp_path):
     transcrire_reunion(md, MoteurFake())
 
     assert MARQUEUR_DEBUT not in md.read_text(encoding="utf-8")
+
+
+# ── Renommage du dossier PENDANT le job (docs/43 §6) ───────────────────────────
+
+def test_reecrit_le_md_dans_le_dossier_renomme_pendant_la_transcription(tmp_path):
+    """Échec réel du 2026-08-12 15:06 : l'utilisateur associe la réunion à un événement
+    BlueMind (donc renomme le dossier) pendant que la transcription tourne — la réécriture
+    tombait dans un dossier disparu et le job entier échouait."""
+    dossier = tmp_path / "2026-08-12_14-53-42"
+    dossier.mkdir()
+    md = _placeholder(dossier)
+    _piste(dossier, "moi")
+
+    moteur = MoteurFake()
+    apres = {}
+    transcrire_pret = moteur._transcrire_pret
+
+    def _renomme_puis_transcrit(audio, langue):
+        apres["md"] = renommer_dossier_reunion(md, "Point projet")
+        return transcrire_pret(audio, langue)
+
+    moteur._transcrire_pret = _renomme_puis_transcrit
+
+    resultat = transcrire_reunion(md, moteur)
+
+    assert resultat == apres["md"]
+    contenu = apres["md"].read_text(encoding="utf-8")
+    assert MARQUEUR_EN_ATTENTE not in contenu
+    assert "transcription de test" in contenu

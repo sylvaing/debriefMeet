@@ -508,3 +508,31 @@ def test_mode_offline_hf_restaure_meme_si_exception():
             assert constants.HF_HUB_OFFLINE is True
             raise ValueError("boum")
     assert constants.HF_HUB_OFFLINE is False
+
+
+def test_generer_locuteurs_ecrit_dans_le_dossier_renomme_pendant_la_passe(tmp_path):
+    """Même famille que le CR Mistral et la transcription différée : la passe dure des
+    minutes, l'association BlueMind renomme le dossier, `locuteurs.md` doit suivre
+    (docs/43 §6)."""
+    from debrief_meet.core.fichiers import renommer_dossier_reunion
+
+    dossier = tmp_path / "2026-08-18_09-37-43"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text("# brouillon", encoding="utf-8")
+    _ecrire_wav(dossier / "moi.wav")
+
+    apres = {}
+
+    class DiarQuiRenomme(FauxDiar):
+        def diariser(self, audio_16k):
+            apres["md"] = renommer_dossier_reunion(md, "Présentation outils")
+            return super().diariser(audio_16k)
+
+    sortie = diar.generer_locuteurs(
+        md,
+        FauxTranscription([[Segment(0.0, 1.0, "bonjour à tous")]]),
+        DiarQuiRenomme([[(0.0, 1.0, "SPK0")]]))
+
+    assert sortie == apres["md"].with_name("locuteurs.md")
+    assert "bonjour à tous" in sortie.read_text(encoding="utf-8")
