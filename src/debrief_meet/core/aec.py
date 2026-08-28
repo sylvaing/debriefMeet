@@ -84,6 +84,16 @@ RECALIBRAGES_AUTO_MAX = 3
 # court après un offset qui saute plus vite qu'elle ne se recale. Au-delà de cet écart
 # entre deux calages, on cesse de traiter — et surtout on cesse d'incriminer l'acoustique.
 SAUT_OFFSET_ECH = int(0.300 * SR_AEC)  # 300 ms entre deux calages = flux non synchronisables
+# Terrain 2026-08-27 (même poste, casque Bluetooth fermé) : les 4 calages d'une réunion
+# donnaient -188, -12523, -6725, -6913 éch — 771 ms d'écart, soit le double du seuil
+# ci-dessus — alors que les durées livrées par tranche ne bougeaient que de ±70 ms et que
+# le comblement des trous fonctionnait (3 trous, 14 ms au total). L'offset n'avait pas
+# sauté : c'est l'ESTIMATION du délai qui partait au hasard, faute d'écho à verrouiller
+# (casque fermé = aucun trajet acoustique, atténuation -0,2 dB de bout en bout).
+# Un saut d'offset RÉEL, lui, se voit dans les longueurs livrées : la tranche amputée
+# arrive courte et déplace le cumul micro−système d'autant. On exige donc cette
+# confirmation avant d'accuser les flux — en deçà de `SAUT_OFFSET_ECH` de déplacement
+# réel, le suivi de dérive sait rattraper, donc il n'y a rien à dénoncer (docs/48 §8.6).
 
 
 # ── Estimation du délai (cross-corrélation bornée) ───────────────────────────
@@ -207,7 +217,14 @@ class ProcesseurAEC:
         # flux sont synchronisables, il serait perdu à chaque recalage.
         self._recalibrages_auto = 0
         self._delais_calages: list[int] = []
+        # Offset micro−système RÉELLEMENT observé (échantillons 16 kHz), et sa valeur au
+        # moment de chaque calage : c'est le fait auquel `_saut_offset_max` confronte ses
+        # estimations de délai. Hors `_reset_etat` pour les mêmes raisons que
+        # `_delais_calages` — un recalage ne remet pas les pistes à zéro.
+        self._cumul_ecart_ech = 0
+        self._ecarts_calages: list[int] = []
         self._abandonne = False
+        self._abandon_confirme = False
         self._reset_etat()
 
     def _reset_etat(self) -> None:
@@ -237,7 +254,10 @@ class ProcesseurAEC:
         self._reset_etat()
         self._recalibrages_auto = 0
         self._delais_calages = []
+        self._cumul_ecart_ech = 0
+        self._ecarts_calages = []
         self._abandonne = False
+        self._abandon_confirme = False
         self._moteur = moteur
         self._demarre = True
 
@@ -253,7 +273,10 @@ class ProcesseurAEC:
         # disent rien de celui-ci — comparer les deux ferait crier au saut à tort).
         self._recalibrages_auto = 0
         self._delais_calages = []
+        self._cumul_ecart_ech = 0
+        self._ecarts_calages = []
         self._abandonne = False
+        self._abandon_confirme = False
         self._recaler_alignement()
 
     def _recaler_alignement(self) -> None:
@@ -267,12 +290,15 @@ class ProcesseurAEC:
         if not self._demarre:
             raise RuntimeError("ProcesseurAEC.demarrer() doit précéder pousser().")
 
-        self._buf_micro = np.concatenate(
-            [self._buf_micro, reechantillonner(np.asarray(micro, dtype=np.float32), self._sr_micro)]
-        )
-        self._buf_ref = np.concatenate(
-            [self._buf_ref, reechantillonner(np.asarray(systeme, dtype=np.float32), self._sr_systeme)]
-        )
+        micro_16 = reechantillonner(np.asarray(micro, dtype=np.float32), self._sr_micro)
+        systeme_16 = reechantillonner(np.asarray(systeme, dtype=np.float32), self._sr_systeme)
+        # Même mesure que « Durées livrées » de `core/reunion.py`, tenue ici parce que le
+        # garde-fou en a besoin : sans elle, il ne peut pas distinguer un offset qui saute
+        # d'un délai qu'il n'arrive pas à mesurer. Comptée AVANT toute sortie anticipée —
+        # les pistes continuent d'arriver même quand l'AEC a renoncé.
+        self._cumul_ecart_ech += len(micro_16) - len(systeme_16)
+        self._buf_micro = np.concatenate([self._buf_micro, micro_16])
+        self._buf_ref = np.concatenate([self._buf_ref, systeme_16])
 
         if self._abandonne:
             # Abandon acté (`_surveiller_efficacite`) : micro rendu BRUT, sans traitement.
@@ -331,6 +357,7 @@ class ProcesseurAEC:
 
         self._delai_estime = delai
         self._delais_calages.append(delai)
+        self._ecarts_calages.append(self._cumul_ecart_ech)
         # On veut que la référence PRÉCÈDE l'écho de `marge` → décalage = délai - marge.
         decalage = delai - self._marge
         # Décalage négatif → avancer la référence (sauter le début de la réf) ;
@@ -460,20 +487,42 @@ class ProcesseurAEC:
             self._alerte_efficacite_emise = True
             saut = self._saut_offset_max()
             if saut is not None:
-                # Les calages successifs ne se ressemblent pas : le problème n'est pas
-                # l'acoustique, ce sont les deux flux qui ne se tiennent pas. Conseiller
-                # un casque ici serait faux — et l'utilisatrice du terrain 2026-08-26 en
-                # portait un. On le dit, et on arrête de traiter.
+                # Les calages successifs ne se ressemblent pas. Reste à savoir POURQUOI —
+                # et les longueurs livrées le disent, elles ne se trompent pas de sujet.
+                ecart_delais, deplacement = saut
                 self._abandonne = True
-                logger.warning(
-                    "AEC DÉSACTIVÉE pour cette session : l'offset entre les pistes a sauté "
-                    "de %d ms entre deux calages (délais calés : %s éch) — les deux flux ne "
-                    "sont pas synchronisables, ce n'est PAS un problème acoustique et un "
-                    "casque n'y changerait rien. Cause probable : des échantillons perdus "
-                    "non compensés (cf. le WARNING « comblement des trous HORS SERVICE » "
-                    "du micro). Micro laissé brut — cf. docs/48 §8.",
-                    round(saut / SR_AEC * 1000),
-                    ", ".join(str(d) for d in self._delais_calages))
+                calages = ", ".join(str(d) for d in self._delais_calages)
+                if deplacement > SAUT_OFFSET_ECH:
+                    # Les pistes ont bougé l'une par rapport à l'autre, pour de vrai.
+                    # Conseiller un casque ici serait faux — et l'utilisatrice du terrain
+                    # 2026-08-26 en portait un. On le dit, et on arrête de traiter.
+                    self._abandon_confirme = True
+                    logger.warning(
+                        "AEC DÉSACTIVÉE pour cette session : l'offset entre les pistes a "
+                        "sauté de %d ms entre deux calages (délais calés : %s éch), "
+                        "confirmé par les longueurs livrées (%d ms de déplacement réel) — "
+                        "les deux flux ne sont pas synchronisables, ce n'est PAS un "
+                        "problème acoustique et un casque n'y changerait rien. Cause "
+                        "probable : des échantillons perdus non compensés (cf. le WARNING "
+                        "« comblement des trous HORS SERVICE » du micro). Micro laissé "
+                        "brut — cf. docs/48 §8.",
+                        round(ecart_delais / SR_AEC * 1000), calages,
+                        round(deplacement / SR_AEC * 1000))
+                    return
+                # Les pistes, elles, sont restées alignées : ce ne sont pas elles qui ont
+                # bougé, c'est la mesure de délai qui n'a rien à verrouiller. Sans trajet
+                # acoustique (casque fermé), la cross-corrélation n'a pas de vrai pic et
+                # chaque calage tire un lag au hasard dans ±DELAI_MAX_MS. Rien d'anormal,
+                # rien à annuler, rien à faire dire à l'utilisateur : INFO, et on rend la
+                # main (le micro brut EST le résultat correct dans ce cas).
+                logger.info(
+                    "AEC sans objet pour cette session : aucun écho à annuler — les "
+                    "longueurs livrées montrent des pistes alignées (%d ms de déplacement "
+                    "réel) alors que les délais calés ne concordent pas (%s éch, %d ms "
+                    "d'écart). Configuration sans trajet acoustique (casque). Micro "
+                    "laissé brut — cf. docs/48 §8.6.",
+                    round(deplacement / SR_AEC * 1000), calages,
+                    round(ecart_delais / SR_AEC * 1000))
                 return
             logger.warning(
                 "AEC inefficace : écho toujours corrélé à la référence après %d recalages "
@@ -491,18 +540,27 @@ class ProcesseurAEC:
             self._recalibrages_auto, RECALIBRAGES_AUTO_MAX)
         self._recaler_alignement()
 
-    def _saut_offset_max(self) -> int | None:
-        """Plus grand écart entre deux calages CONSÉCUTIFS, s'il dépasse
-        `SAUT_OFFSET_ECH` ; None sinon (offset stable → l'écho est bien acoustique).
+    def _saut_offset_max(self) -> tuple[int, int] | None:
+        """`(écart entre deux calages CONSÉCUTIFS, déplacement RÉEL de l'offset sur le
+        même intervalle)` pour le pire écart, s'il dépasse `SAUT_OFFSET_ECH` ; None sinon
+        (délais concordants → l'écho est bien acoustique).
 
         Consécutifs et non min/max global : une dérive lente cumulée sur une longue
         réunion finirait par dépasser le seuil sans qu'aucun saut n'ait eu lieu, et la
-        dérive lente, elle, l'AEC sait la suivre (`_suivre_alignement`)."""
+        dérive lente, elle, l'AEC sait la suivre (`_suivre_alignement`).
+
+        Le second membre est ce qui permet de conclure. Des délais qui ne concordent pas,
+        ça peut être deux choses opposées : des pistes qui se désynchronisent pour de bon,
+        ou une mesure de délai qui tire au hasard faute d'écho. Seule la première déplace
+        les longueurs livrées (terrain 2026-08-27, cf. `SAUT_OFFSET_ECH`)."""
         if len(self._delais_calages) < 2:
             return None
         ecarts = [abs(b - a) for a, b in zip(self._delais_calages, self._delais_calages[1:])]
-        pire = max(ecarts)
-        return pire if pire > SAUT_OFFSET_ECH else None
+        i = max(range(len(ecarts)), key=ecarts.__getitem__)
+        if ecarts[i] <= SAUT_OFFSET_ECH:
+            return None
+        deplacement = abs(self._ecarts_calages[i + 1] - self._ecarts_calages[i])
+        return ecarts[i], deplacement
 
     def _maj_attenuation(self, brut: np.ndarray, nettoye: np.ndarray) -> None:
         """Indicateur d'atténuation (auto-vérif). Affiné en étape 3 (fenêtres de silence)."""
@@ -534,8 +592,11 @@ class ProcesseurAEC:
         Rend l'état lisible sans reconstituer l'historique DEBUG à la main — ce qu'il a
         fallu faire pour analyser le terrain du 2026-08-26."""
         if self._abandonne:
-            return (f"désactivée (flux non synchronisables, calages "
-                    f"{', '.join(str(d) for d in self._delais_calages)} éch)")
+            calages = ", ".join(str(d) for d in self._delais_calages)
+            if self._abandon_confirme:
+                return f"désactivée (flux non synchronisables, calages {calages} éch)"
+            return (f"désactivée (aucun écho à annuler — pistes alignées, délais calés "
+                    f"erratiques : {calages} éch)")
         if not self._calibre:
             return "jamais calée (aucun écho franc détecté — micro passé brut)"
         att = self._derniere_attenuation_db

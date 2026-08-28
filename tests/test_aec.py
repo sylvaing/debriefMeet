@@ -438,12 +438,19 @@ def test_demarrer_reouvre_le_budget_de_recalages():
     assert proc._recalibrages_auto == 0
 
 
-# ── Flux non synchronisables : abdiquer au lieu d'incriminer l'acoustique ─────────
+# ── Délais qui ne concordent pas : deux causes opposées, deux verdicts ────────────
 #
 # Terrain 2026-08-26 (Windows, micro sous MME) : 4 calages à +11240, −9765, −19427,
-# −11802 éch sur une même réunion — des SAUTS d'offset de 0,6 à 1,2 s, pas une dérive.
-# L'AEC courait après une cible qui bougeait plus vite qu'elle, finissait à −0,3 dB, et
-# concluait « casque recommandé » à une utilisatrice qui en portait un.
+# −11802 éch sur une même réunion. L'AEC courait après une cible qui bougeait plus vite
+# qu'elle, finissait à −0,3 dB, et concluait « casque recommandé » à une utilisatrice qui
+# en portait un. D'où le premier garde-fou : « flux non synchronisables ».
+#
+# Terrain 2026-08-27 (même poste, casque Bluetooth) : des calages tout aussi erratiques
+# (−188, −12523, −6725, −6913 éch, 771 ms d'écart) — mais cette fois les durées livrées
+# par tranche ne bougeaient que de ±70 ms. Les pistes étaient alignées : c'est la MESURE
+# du délai qui tirait au hasard, faute d'écho à verrouiller (casque fermé). Le garde-fou
+# accusait donc une perte d'échantillons inexistante. Les deux tests ci-dessous figent
+# les deux cas, et c'est le déplacement RÉEL de l'offset qui les sépare.
 
 def _pousser_par_tranches(proc, mic, ref, secondes=12):
     pas = SR_AEC * secondes
@@ -451,36 +458,87 @@ def _pousser_par_tranches(proc, mic, ref, secondes=12):
         proc.pousser(mic[debut:debut + pas], ref[debut:debut + pas])
 
 
-def test_offset_qui_saute_desactive_l_aec_sans_accuser_l_acoustique(caplog):
-    """Le délai de l'écho change de plusieurs centaines de ms d'un calage au suivant :
-    le verdict doit être « flux non synchronisables », pas « casque recommandé »."""
+def _mic_a_delai_alternant(ref, tranches, pas, saut=int(0.7 * SR_AEC)):
+    """Micro dont le délai d'écho ALTERNE de `saut` toutes les 6 tranches — au lieu du
+    délai constant du test de bornage. Alterner plutôt que croître, comme sur le terrain
+    (des sauts dans les deux sens) : une croissance monotone finirait par sortir de
+    ±DELAI_MAX_MS et ne se recalerait plus du tout."""
+    mic = np.zeros_like(ref)
+    for i in range(tranches):
+        delai = 400 if (i // 6) % 2 == 0 else 400 + saut
+        bloc = ref[i * pas:(i + 1) * pas]
+        mic[i * pas:(i + 1) * pas] = _echo_decale(bloc, delai)
+    return mic
+
+
+def test_delais_erratiques_sans_deplacement_reel_ne_condamnent_pas_les_flux(caplog):
+    """Terrain 2026-08-27 : les calages ne concordent pas, mais les deux pistes livrent
+    autant d'échantillons l'une que l'autre — elles ne se sont donc pas désynchronisées.
+    Il n'y a rien à annuler (casque fermé) : verdict en INFO, sans accuser les flux ni
+    conseiller un casque à quelqu'un qui en porte un."""
     import logging as _logging
     rng = np.random.default_rng(101)
     tranches = 6 * (RECALIBRAGES_AUTO_MAX + 4)
     pas = SR_AEC * 12
     ref = rng.normal(0, 0.3, pas * tranches).astype(np.float32)
-    # Le délai d'écho ALTERNE de ~700 ms toutes les 6 tranches, au lieu du délai
-    # constant du test de bornage. Alterner plutôt que croître, comme sur le terrain
-    # (+11240, −9765, −19427, −11802 : des sauts dans les deux sens) — une croissance
-    # monotone finirait par sortir de ±DELAI_MAX_MS et ne se recalerait plus du tout.
-    mic = np.zeros_like(ref)
-    for i in range(tranches):
-        delai = 400 if (i // 6) % 2 == 0 else 400 + int(0.7 * SR_AEC)
-        bloc = ref[i * pas:(i + 1) * pas]
-        mic[i * pas:(i + 1) * pas] = _echo_decale(bloc, delai)
+    mic = _mic_a_delai_alternant(ref, tranches, pas)
 
     proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
     proc.demarrer()
-    with caplog.at_level(_logging.WARNING, logger="debrief_meet.core.aec"):
-        _pousser_par_tranches(proc, mic, ref)
+    with caplog.at_level(_logging.INFO, logger="debrief_meet.core.aec"):
+        _pousser_par_tranches(proc, mic, ref)   # tranches micro et système de même taille
+
+    messages = [r.getMessage() for r in caplog.records]
+    verdicts = [m for m in messages if "AEC sans objet" in m]
+    assert len(verdicts) == 1
+    assert "aucun écho à annuler" in verdicts[0]
+    assert not any("DÉSACTIVÉE" in m for m in messages)
+    assert not any("casque recommandé" in m for m in messages)
+    # Le verdict est en INFO : rien d'anormal ne s'est produit, le log rotatif du terrain
+    # n'a pas à porter un WARNING pour une configuration parfaitement saine.
+    assert all(r.levelno < _logging.WARNING
+               for r in caplog.records if "AEC sans objet" in r.getMessage())
+    assert proc._abandonne is True             # on cesse quand même de traiter pour rien
+    assert proc._abandon_confirme is False
+    assert "aucun écho à annuler" in proc.bilan()
+
+
+def test_saut_confirme_par_les_longueurs_livrees_condamne_bien_les_flux(caplog):
+    """Terrain 2026-08-26 : même désaccord entre calages, mais la piste micro arrive
+    AMPUTÉE — des échantillons perdus que rien ne compense. Là, le déplacement de
+    l'offset est réel et le verdict « flux non synchronisables » est le bon."""
+    import logging as _logging
+    rng = np.random.default_rng(101)
+    tranches = 6 * (RECALIBRAGES_AUTO_MAX + 4)
+    pas = SR_AEC * 12
+    saut = int(0.7 * SR_AEC)
+    ref = rng.normal(0, 0.3, pas * tranches).astype(np.float32)
+    mic = _mic_a_delai_alternant(ref, tranches, pas, saut)
+
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0, moteur=_Identite())
+    proc.demarrer()
+    with caplog.at_level(_logging.INFO, logger="debrief_meet.core.aec"):
+        # À chaque changement de délai, la tranche micro livre `saut` échantillons de
+        # moins (ou de plus) : c'est la signature d'une perte de paquets non compensée,
+        # et c'est ce qui manquait au cas du casque.
+        for i in range(tranches):
+            tranche_mic = mic[i * pas:(i + 1) * pas]
+            if i % 6 == 0 and i:
+                tranche_mic = (tranche_mic[:-saut] if (i // 6) % 2
+                               else np.concatenate([tranche_mic, tranche_mic[:saut]]))
+            proc.pousser(tranche_mic, ref[i * pas:(i + 1) * pas])
 
     messages = [r.getMessage() for r in caplog.records]
     desactivations = [m for m in messages if "DÉSACTIVÉE" in m]
     assert len(desactivations) == 1
     assert "ne sont pas synchronisables" in desactivations[0]
     assert "casque n'y changerait rien" in desactivations[0]
+    assert "longueurs livrées" in desactivations[0]      # la preuve est citée
     assert not any("casque recommandé" in m for m in messages)
+    assert not any("AEC sans objet" in m for m in messages)
     assert proc._abandonne is True
+    assert proc._abandon_confirme is True
+    assert "flux non synchronisables" in proc.bilan()
 
 
 def test_abandon_rend_le_micro_brut_sans_appeler_le_moteur():
@@ -508,21 +566,52 @@ def test_abandon_rend_le_micro_brut_sans_appeler_le_moteur():
     assert moteur.appels == 0
 
 
+def test_offset_observe_compte_meme_quand_l_aec_a_renonce():
+    """Les pistes continuent d'arriver après l'abandon. Si la mesure s'arrêtait là, un
+    `recalibrer()` en cours de session repartirait sur un offset faussement figé."""
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, marge_lead_ms=0,
+                         delai_ms=0, moteur=_Identite())
+    proc.demarrer()
+    proc._abandonne = True
+    micro = np.zeros(TRAME * 10, dtype=np.float32)
+
+    proc.pousser(micro, np.zeros(TRAME * 4, dtype=np.float32))
+
+    assert proc._cumul_ecart_ech == TRAME * 6
+
+
 def test_saut_offset_mesure_entre_calages_consecutifs_pas_en_cumul():
     """Une dérive lente qui finit par cumuler plus que le seuil ne doit PAS être prise
     pour un saut : la dérive lente, `_suivre_alignement` sait la rattraper."""
     proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, moteur=_Identite())
     pas = SAUT_OFFSET_ECH // 4                      # chaque pas est sous le seuil…
     proc._delais_calages = [i * pas for i in range(6)]   # …mais le cumul le dépasse
+    proc._ecarts_calages = [0] * 6
     assert proc._saut_offset_max() is None
 
     proc._delais_calages = [0, SAUT_OFFSET_ECH + 1]     # un seul vrai saut suffit
-    assert proc._saut_offset_max() == SAUT_OFFSET_ECH + 1
+    proc._ecarts_calages = [0, 0]
+    assert proc._saut_offset_max() == (SAUT_OFFSET_ECH + 1, 0)
+
+
+def test_saut_offset_rend_le_deplacement_reel_du_pire_intervalle():
+    """Le déplacement rendu est celui de l'intervalle où les délais divergent le plus —
+    pas un cumul de session : c'est LUI qui dit si les pistes ont bougé à ce moment-là."""
+    proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, moteur=_Identite())
+    proc._delais_calages = [0, 500, 500 + 4 * SAUT_OFFSET_ECH, 500 + 4 * SAUT_OFFSET_ECH]
+    # L'offset a beaucoup bougé AVANT le pire écart de délais, et rien pendant.
+    proc._ecarts_calages = [0, 9 * SAUT_OFFSET_ECH, 9 * SAUT_OFFSET_ECH, 0]
+
+    ecart, deplacement = proc._saut_offset_max()
+
+    assert ecart == 4 * SAUT_OFFSET_ECH
+    assert deplacement == 0
 
 
 def test_un_seul_calage_ne_conclut_rien():
     proc = ProcesseurAEC(sr_micro=SR_AEC, sr_systeme=SR_AEC, moteur=_Identite())
     proc._delais_calages = [12345]
+    proc._ecarts_calages = [0]
     assert proc._saut_offset_max() is None
 
 
@@ -533,14 +622,26 @@ def test_demarrer_et_recalibrer_rearment_l_abandon():
                          delai_ms=0, moteur=_Identite())
     proc.demarrer()
     proc._abandonne = True
+    proc._abandon_confirme = True
     proc._delais_calages = [0, 99999]
+    proc._ecarts_calages = [0, 99999]
+    proc._cumul_ecart_ech = 99999
 
     proc.recalibrer()
     assert proc._abandonne is False
+    assert proc._abandon_confirme is False
     assert proc._delais_calages == []
+    # L'offset observé repart de zéro avec les calages : un cumul hérité d'AVANT le
+    # changement de micro ferait conclure à un déplacement réel qui n'a pas eu lieu.
+    assert proc._ecarts_calages == []
+    assert proc._cumul_ecart_ech == 0
 
     proc._abandonne = True
     proc._delais_calages = [0, 99999]
+    proc._ecarts_calages = [0, 99999]
+    proc._cumul_ecart_ech = 99999
     proc.demarrer()
     assert proc._abandonne is False
     assert proc._delais_calages == []
+    assert proc._ecarts_calages == []
+    assert proc._cumul_ecart_ech == 0

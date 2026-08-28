@@ -343,3 +343,58 @@ annulé** (−25/−40 dB, RMS système fort sur toutes), pas de la voix détrui
   jamais avoir à se déclencher.
 - Rappel terrain indépendant du code : micro interne + haut-parleurs = écho garanti,
   un casque supprime le problème à la racine.
+
+### 8.6 Terrain 2026-08-27 — le garde-fou accusait les flux à tort (casque)
+
+Diagnostic Alix du 2026-08-27 (build `1cbbd5d`), deux réunions, **les deux** terminées
+par « AEC DÉSACTIVÉE — l'offset entre les pistes a sauté de 771 / 1200 ms ». Le verdict
+était faux, et l'instrumentation « Durées livrées » (ajoutée au même moment) le prouve.
+
+**Ce que disent les mesures.** Écart micro−système par tranche de 30 s : **±5 à ±70 ms**,
+quelques pointes à 140-219 ms, jamais de marche ; cumul **+1,20 s sur 1970 s** (~600 ppm,
+dérive lente régulière d'une horloge Bluetooth). Le comblement des trous fonctionnait
+(3 trous, 14 et 34 ms de déficit total) et le WARNING « comblement HORS SERVICE » que le
+message incriminait n'a **jamais** été émis. Atténuation **−0,2 dB de bout en bout**.
+
+**Ce qui sautait, c'est l'estimation, pas l'offset** : calages à −188, −12523, −6725,
+−6913 puis −2859, +16349, +5218, +14334 éch — signes opposés, et une estimation à −23923
+éch pile en butée de fenêtre (±24000). Alix était en **casque fermé** (écouteurs Bluetooth,
+micro *et* sortie en WASAPI ; les semaines précédentes, micro Realtek + sortie BT —
+même conclusion). Sans trajet acoustique il n'y a pas d'écho, donc **pas de vrai pic de
+corrélation** : chaque calage tire un lag au hasard dans ±`DELAI_MAX_MS`, et
+`QUALITE_CORR_CALAGE = 25` ne les filtre pas dans cette configuration. `_saut_offset_max`
+lisait ces tirages successifs comme un offset qui bouge.
+
+**À noter** : la branche « flux non synchronisables » n'a **aucun cas terrain confirmé**.
+Le cas du 2026-08-26 qui l'avait motivée (§8.4, calages +11240/−9765/−19427/−11802) est
+sorti par l'ancienne branche « casque recommandé » — l'instrumentation des durées livrées
+n'existait pas encore ce jour-là, et l'utilisatrice portait déjà un casque. Rien ne
+distingue rétrospectivement ce cas de celui du 27/08.
+
+**Correctif — une preuve exigée avant d'accuser les flux.** Un saut d'offset RÉEL laisse
+une trace dans les longueurs livrées : la tranche amputée arrive courte et déplace le
+cumul micro−système d'autant. `ProcesseurAEC` tient donc son propre `_cumul_ecart_ech`
+(même mesure que `core/reunion.py`, comptée dans `pousser()` **avant** toute sortie
+anticipée) et mémorise sa valeur à chaque calage. `_saut_offset_max()` rend désormais
+`(écart entre deux calages consécutifs, déplacement réel sur le même intervalle)`, et le
+verdict terminal a deux sorties :
+
+- déplacement réel > `SAUT_OFFSET_ECH` → WARNING actuel, qui cite la confirmation ;
+- déplacement réel sous le seuil → **INFO** « AEC sans objet — aucun écho à annuler,
+  pistes alignées, délais erratiques ». On cesse quand même de traiter (le micro brut
+  *est* le bon résultat sans trajet acoustique, et renoncer rend le GIL, cf. §8.4).
+
+Seuil : le même `SAUT_OFFSET_ECH`. En deçà de 300 ms de déplacement réel,
+`_suivre_alignement` sait rattraper — c'est déjà ce que la constante encode.
+
+`bilan()` distingue les deux cas de la même façon. Les deux tests de bout en bout figent
+les deux terrains : délais erratiques à longueurs égales → INFO (27/08) ; mêmes délais
+erratiques mais tranches micro amputées → WARNING (le cas que §8.4 décrit).
+
+**Non traité, mesuré, sans conséquence** : la dérive Bluetooth de ~600 ppm (+1,2 s sur
+33 min). Face à des tours de parole de plusieurs secondes, elle ne perturbe pas la fusion.
+
+**Reste ouvert** : la branche de repli « écho résiste malgré des délais concordants »
+conseille toujours un casque, ce qui reste faux pour quelqu'un qui en porte un (c'est ce
+qui s'est produit le 25/08). Elle n'a pas le même discriminant à sa disposition — à
+instruire séparément.
