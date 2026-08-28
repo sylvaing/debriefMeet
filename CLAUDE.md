@@ -39,6 +39,19 @@ exige donc les secondes : un dossier nommé `AAAA-MM-JJ_HH-MM` seul serait list�
 mais sans date ni durée (`date_heure_reunion` → `None`). Un éventuel compteur de
 collision en fin de nom (`-2`, `-3`…) est ignoré à la lecture.
 
+**Un renommage peut survenir pendant un job de fond.** Renommer est interdit pendant un
+*enregistrement* (handles audio ouverts → WinError 32), mais reste possible — et
+encouragé, c'est le geste du flux pré-CR — pendant un **job a posteriori** qui dure des
+minutes en tenant le chemin capturé à son lancement. Tout code qui écrit dans le dossier
+d'une réunion après une opération longue doit donc passer par
+`core/fichiers.resoudre_chemin_reunion(md)`, qui retrouve le dossier par son **préfixe
+horodaté** (seule identité stable : le renommage ne touche que le slug). Il rend le chemin
+**inchangé** si le dossier existe encore (un seul `stat`), si la réunion a été supprimée
+(l'appelant échoue comme avant) ou si **plusieurs** dossiers partagent le préfixe (le
+compteur de collision est posé *après* le slug — écrire dans la mauvaise réunion serait
+pire que l'échec réparé). Câblé sur les 5 points d'écriture des 3 pipelines et dans les
+handlers de fin des 2 gestionnaires. Cf. docs/43 §6.4 et §16.
+
 **Réunion active exclue du listing** : son `transcription.md` est créé dès le démarrage
 de l'enregistrement, et elle est déjà représentée par la ligne « en cours » → sans
 exclusion elle s'affiche **deux fois** (bug pré-existant, constaté en test manuel le
@@ -270,6 +283,27 @@ la fixture, sinon le test ne verrait plus rien si la flèche de copie devenait u
 conditionnelle). Build Windows + fumée automatisée **verts** le soir même sur ce
 commit (`debriefMeet-setup-0.3.0+20260826.1cbbd5d.exe`).
 
+Après le correctif « renommage pendant un job de fond » (docs/43 §16, 2026-08-28) :
+**1599 passed**, 0 échec en environnement complet, +15 tests, en 2 commits verts
+indépendamment (1597 sur le premier). Un job a posteriori (CR Mistral, transcription
+différée, diarization) dure des minutes et tenait le chemin **absolu** capturé à son
+lancement, pendant que l'association BlueMind ou l'édition du titre **renommait le
+dossier** : 5 `FileNotFoundError` réelles entre le 2026-07-29 et le 2026-08-26, dont
+2 datées à la seconde qui documentent 2 étapes distinctes du pipeline CR (réécriture de
+`transcription.md` 347 ms après l'upload Voxtral, puis écriture de `CR.md` après la
+rédaction). ⚠️ Le flux pré-CR n'était **pas** en cause (`_proposer_association_avant_cr`
+retourne bien `dlg.chemin_md`) : le trou est structurel, rien ne verrouille l'association
+ni `CaptureModel.setData` pendant un job — `setData` ne se protège que de `ligne.en_cours`,
+c'est-à-dire de l'**enregistrement**. Corrigé côté job (`resoudre_chemin_reunion`, cf.
+§ « Stockage des réunions ») plutôt que par un verrou d'UI, qui bloquerait l'utilisateur
+plusieurs minutes précisément au moment où on lui propose d'associer. Effet de bord
+trouvé en chemin : les gestionnaires émettaient `termine`/`echoue` au chemin périmé, donc
+`_inserer_bloc_invites_si_associe` lisait un sidecar disparu et le cartouche invités
+manquait **silencieusement**. ⚠️ Piège de test figé dans docs/43 §16.6 : le renommage doit
+être déclenché **depuis le mock lui-même** (`side_effect` respx, `_transcrire_pret`,
+`diariser`) — posé avant l'appel, il teste un cas plus facile que le code d'entrée gérait
+déjà, et resterait vert en cas de régression.
+
 Après le garde-fou AEC recalé sur une preuve (docs/48 §8.6, fusionné le 2026-08-28) :
 **+3 tests** (1577 passed en clone partiel sur le correctif seul, 1574 avant), et
 **1592 passed** au sommet de `main` une fois rebasé sur les 2 commits `fix(jobs)` du
@@ -343,7 +377,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 | **Interco Mistral — CR cloud adaptatif, transcription Voxtral (docs/42)** | ✅ TERMINÉ + **fusionné dans `main`** (2026-07-21) — code + tests (1046 passed sur `main`) + validation manuelle clé API réelle OK. **Complété le 2026-08-04** : le flux « Générer le CR (Mistral) » **propose l'association BlueMind avant l'envoi** quand un événement correspond (le CR n'étant jamais régénéré, c'est le dernier moment pour enrichir sujet/date/participants + `context_bias` Voxtral) — resync forcée et **attendue**, dialogue F1 à 3 sorties (Associer / Sans association / Annuler), association **avant** la confirmation de confidentialité. ⚠️ « Associer » applique le titre donc **renomme le dossier** : le job doit partir sur `dlg.chemin_md`. Fusionné (`56a4462`), validé manuellement, 1222 passed. **2026-08-05** : « Générer le CR » devient un **bouton dédié** de la ligne avec flèche de choix ponctuel du prompt + bouton « Copier le CR », menu ⋯ exhaustif, confirmation avant remplacement d'un CR existant (cf. § tests du 2026-08-05). cf. docs/42 §4.1 |
 | **Édition lite Windows — enregistrement Opus + IA distante (docs/44)** | 🔄 code + tests + **builds réels + fumée** ✅ (2026-07-30) — `debriefMeet-lite-setup-0.2.0+20260730.59fa002.exe` **116 Mo** contre 159 Mo pour la complète (−27 %), **aucun modèle téléchargé** au 1ᵉʳ lancement. Gates VM : **982 passed/5 skipped** (complète) et **971/16** (lite) — l'écart de 11 dans les 2 sens = les `importorskip("huggingface_hub")`. Fumée **0 échec** sur les 2 setups, dont l'assertion décisive « ctranslate2 retiré par le passage à lite » (valide `[InstallDelete]`). **Livrée et utilisée en réel** chez une utilisatrice Windows (docs/44 §8) : CR Voxtral produit avec une vraie clé API. Embarque un bouton « Exporter les logs (.zip)… » (Préférences › Journalisation, indépendant de l'édition), dont le zip **caviarde les secrets** — un diagnostic réel avait transmis clé Mistral et token BlueMind en clair. Révélé au passage **4 bugs pré-existants** : `tzdata` absent sous Windows (récurrences BlueMind en régression DST silencieuse), 2 hypothèses macOS non gardées dans les tests, et une **tempête de reconnexions micro** (3082 en 65 min sur puce Realtek SST → micro non enregistré), corrigée **sur Windows uniquement**. Reste : chaîne de bout en bout avec du vrai contenu audio, + 4 points mineurs (docs/44 §8.7). **⚠️ Remplacée par le mode de transcription unifié (docs/45, 2026-08-04) — plus de build lite.** cf. docs/44 §6-8 |
 | **Mode de transcription unifié — un seul build, réglage Préférences (docs/45)** | 🔄 code + tests ✅ (2026-08-04, **1228 passed** clone partiel) — remplace les éditions complete/lite : clé `mode_transcription` (défaut **distant** pour tous), figée au démarrage par `core/mode_transcription.initialiser()`, prédicats `avec_*` inchangés sur les 17 sites. Préférences réorganisées (9 sections inconditionnelles, section « Transcription » = choix du mode + réglages locaux, « IA en ligne » = ex-Remote IA), écran de bienvenue au 1ᵉʳ lancement (`accueil_fait`, joue aussi sur les installations existantes), redémarrage proposé au changement de mode (`core/redemarrage.py`, relance détachée après `app.exec()`). Chaîne de build lite supprimée (spec, `.iss`, `--lite`, extra `windows-lite`) ; `[InstallDelete]` conservé pour la transition depuis un poste lite. Reste : build VM + fumée du setup unifié, validation manuelle de la relance (3 environnements), transition réelle chez Alix. cf. docs/45 §5 |
-| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. |
+| **Réorganisation 1 dossier/réunion (docs/43)** | ✅ **TERMINÉ** — fusionné dans `main` et **validé manuellement** par Sylvain (2026-07-27, 1099 passed). La migration des réunions à plat a tourné une fois sur le poste de Sylvain (23 réunions → dossiers), puis son **code a été retiré** (app non déployée ailleurs) — les dossiers en précision minute qu'elle avait laissés ont ensuite été **normalisés en `HH-MM-00`** pour permettre le retrait du code de compatibilité (docs/43 §7 ; secondes désormais obligatoires, cf. § « Stockage des réunions »). ⚠️ Un rollback avant `1ed3b17` rendrait les réunions invisibles (ancien listing à plat) et il n'y a plus de migration à rejouer. Correctif embarqué : réunion active exclue du listing (ligne en double). Bilan & écarts : docs/43 §15. **Correctif du 2026-08-28** : renommage pendant un **job de fond** (CR Mistral, transcription différée, diarization) — 5 `FileNotFoundError` réelles, corrigées par `resoudre_chemin_reunion` (re-résolution par préfixe horodaté avant chaque écriture) plutôt que par un verrou d'UI ; docs/43 §6.4 et §16. |
 | **Lexique de corrections — tableau « entendu → à écrire » injecté dans les prompts (docs/46)** | ✅ **fusionné dans `main`** (41cfe8a, 2026-08-05, **1285 passed** 0 échec env complet), section Préférences **validée manuellement** (en-têtes de colonnes raccourcis suite au test : Qt centre et tronque des deux côtés un en-tête plus large que la colonne) — module pur `core/lexique.py` (bloc d'instructions + `completer_prompt`, seul point d'entrée des 2 sites d'injection : pipeline CR Mistral après résolution du prompt, copie avec prompt de l'Historique), clés `lexique_corrections`/`lexique_actif` (défauts pré-remplis vocabulaire BlueMind, **actif d'office** — les installations existantes en bénéficient sans config), section Préférences dédiée « Lexique » (10ᵉ, tableau 2 colonnes + case, grisé si inactif), termes « à écrire » ajoutés au `context_bias` Voxtral **derrière** les invités BlueMind (même interrupteur). Reste : un CR Mistral réel avec le lexique (clé API). cf. docs/46 |
 
 ## Packaging macOS (Phase 4) — pièges
@@ -451,7 +485,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
 | **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR** | `docs/42` |
-| **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15)** | `docs/43` |
+| **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15 ; §6.4 et §16 = renommage pendant un job de fond, correctif du 2026-08-28)** | `docs/43` |
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |
 | **Lexique de corrections (tableau « entendu → à écrire » injecté dans les prompts + biais Voxtral) — ✅ fusionné dans `main`, UI validée manuellement** | `docs/46` |

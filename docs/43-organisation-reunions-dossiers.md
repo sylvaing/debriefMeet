@@ -9,6 +9,16 @@
 > de titre. 1113 tests passent sur `main`.
 >
 > Bilan d'exécution, écarts au plan et pièges rencontrés : **§15** en fin de document.
+>
+> **Correctif du 2026-08-28 — renommage pendant un job de fond (§6.4 et §16).** Le
+> renommage du dossier est interdit pendant un *enregistrement* (§6.3, piège Windows),
+> mais rien ne l'empêchait pendant un **job a posteriori** (CR Mistral, transcription
+> différée, diarization), qui dure des minutes en tenant le chemin capturé à son
+> lancement : 5 échecs réels entre le 2026-07-29 et le 2026-08-26, dont un CR perdu
+> qu'il a fallu relancer à la main. Corrigé côté job — `resoudre_chemin_reunion`
+> retrouve le dossier par son préfixe horodaté — et non par un verrou d'UI, l'association
+> restant le geste que le flux pré-CR encourage à ce moment précis. Commits `01e2b8a`
+> et `85fd33d`, +15 tests, 1599 passed.
 
 ---
 
