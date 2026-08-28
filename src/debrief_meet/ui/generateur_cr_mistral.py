@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolu(md: Path | None) -> Path | None:
+    """`resoudre_chemin_reunion` tolérant au None (aucun job en cours) : le dossier a pu
+    être renommé pendant le job (association BlueMind, édition du titre)."""
+    from debrief_meet.core.fichiers import resoudre_chemin_reunion
+    return None if md is None else resoudre_chemin_reunion(md)
+
+
 class _WorkerCRMistral(QObject):
     """Exécute `pipeline.generer_cr_reunion` dans un QThread. Ne lève jamais."""
 
@@ -105,14 +112,14 @@ class GestionnaireCRMistral(QObject):
 
     @Slot(object)
     def _sur_terminee(self, sortie: object) -> None:
-        md = self._job_en_cours
+        md = _resolu(self._job_en_cours)
         self._job_en_cours = None
         logger.info("CR Mistral terminé : %s", sortie)
         self.termine.emit(md, Path(str(sortie)))
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:
-        md = self._job_en_cours
+        md = _resolu(self._job_en_cours)
         self._job_en_cours = None
         logger.error("CR Mistral échoué (%s) : %s", md, message)
         self.echoue.emit(md, message)

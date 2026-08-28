@@ -61,3 +61,34 @@ def test_sur_terminee_appelle_le_hook_seulement_pour_diarization(qapp, tmp_path)
     gest._type_job = "diarization"
     gest._sur_terminee(loc)
     assert MARQUEUR_DEBUT in loc.read_text(encoding="utf-8")
+
+
+def test_sur_terminee_suit_le_dossier_renomme_pendant_le_job(qapp, tmp_path):
+    """Le dossier a été renommé pendant la passe (association BlueMind, édition du titre) :
+    le gestionnaire doit émettre — et poser le cartouche invités sur — le NOUVEAU chemin.
+    Avec l'ancien, `reinserer_depuis_sidecar` ne trouve plus rien et se tait."""
+    from debrief_meet.core.fichiers import renommer_dossier_reunion
+
+    dossier = tmp_path / "2026-07-08_14-00-00"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text("# X\n")
+    loc = dossier / "locuteurs.md"
+    loc.write_text("# X\n\nSPEAKER_00: bonjour\n")
+    ecrire(md, Association(
+        event_uid="e1", cal_uid="cal", titre="X", debut="2026-07-08T14:00:00+02:00",
+        invites=[InviteAssocie(nom="Jean", email="jean@ex.com", part_status=None,
+                                organisateur=False, coche=True)],
+    ))
+    nouveau = renommer_dossier_reunion(md, "Point projet X")
+
+    gest = GestionnaireDiarization(None, _config(tmp_path))
+    emis = []
+    gest.termine.connect(lambda md_, sortie: emis.append((md_, sortie)))
+    gest._job_en_cours = md                       # chemin capturé au lancement, périmé
+    gest._type_job = "diarization"
+    gest._sur_terminee(nouveau.with_name("locuteurs.md"))
+
+    assert emis == [(nouveau, nouveau.with_name("locuteurs.md"))]
+    assert gest.dernier_termine() == nouveau
+    assert MARQUEUR_DEBUT in nouveau.with_name("locuteurs.md").read_text(encoding="utf-8")

@@ -22,6 +22,12 @@ if False:  # TYPE_CHECKING léger sans import circulaire
 logger = logging.getLogger(__name__)
 
 
+def _resolu(md: "Path | None") -> "Path | None":
+    """`resoudre_chemin_reunion` tolérant au None (aucun job en cours)."""
+    from debrief_meet.core.fichiers import resoudre_chemin_reunion
+    return None if md is None else resoudre_chemin_reunion(md)
+
+
 class _WorkerDiarization(QObject):
     """Exécute `generer_locuteurs` dans un QThread. Ne lève jamais (erreurs remontées)."""
 
@@ -164,7 +170,11 @@ class GestionnaireDiarization(QObject):
 
     @Slot(object)
     def _sur_terminee(self, sortie: object) -> None:
-        md = self._job_en_cours
+        # Chemin re-résolu : le dossier a pu être renommé pendant le job (association
+        # BlueMind, édition du titre). Sans ça, `_inserer_bloc_invites_si_associe` lirait
+        # un sidecar disparu (no-op silencieux) et la vue re-sélectionnerait une ligne
+        # inexistante. Cf. `core.fichiers.resoudre_chemin_reunion`.
+        md = _resolu(self._job_en_cours)
         type_job = self._type_job
         self._job_en_cours = None
         self._type_job = None
@@ -185,7 +195,7 @@ class GestionnaireDiarization(QObject):
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:
-        md = self._job_en_cours
+        md = _resolu(self._job_en_cours)
         type_job = self._type_job
         self._job_en_cours = None
         self._type_job = None

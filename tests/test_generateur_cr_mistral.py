@@ -101,3 +101,33 @@ def test_lancer_refuse_si_job_deja_en_cours(config_tmp, tmp_path, qapp, qtbot, m
 
     peut_continuer.set()
     qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+
+def test_termine_emet_le_chemin_renomme_pendant_le_job(config_tmp, tmp_path, qapp, qtbot,
+                                                       monkeypatch):
+    """Le job renomme (indirectement) sa propre réunion : l'utilisateur l'associe à un
+    événement BlueMind pendant la génération. Le signal doit porter le chemin réel, sinon
+    la vue re-sélectionne une ligne qui n'existe plus."""
+    from debrief_meet.core.fichiers import renommer_dossier_reunion
+
+    config_tmp.set("mistral_cle_api", "x")
+    dossier = tmp_path / "2026-08-26_16-20-54"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text("# Réunion", encoding="utf-8")
+    apres = {}
+
+    def _genere(chemin, config, prompt=None):
+        apres["md"] = renommer_dossier_reunion(md, "Point Acme")
+        return apres["md"].with_name("CR.md")
+
+    monkeypatch.setattr(pipeline, "generer_cr_reunion", _genere)
+
+    g = GestionnaireCRMistral(config_tmp)
+    termines = []
+    g.termine.connect(lambda md_, sortie: termines.append((md_, sortie)))
+
+    assert g.lancer(md) is True
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+    assert termines == [(apres["md"], apres["md"].with_name("CR.md"))]

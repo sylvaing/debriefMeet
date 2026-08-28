@@ -414,6 +414,16 @@ Les deux autres déclencheurs (édition manuelle, association F1) n'ont lieu que
 l'historique, réunion terminée. `renommer_dossier_reunion` reste donc toujours appelé **hors
 enregistrement**.
 
+### 6.4 ⚠️ Renommer pendant un **job de fond** — les chemins capturés se périment
+
+Hors enregistrement ne veut pas dire « au repos » : un job a posteriori (CR Mistral,
+transcription différée, diarization) dure des minutes et travaille sur le chemin capturé
+à son lancement. Les deux déclencheurs de renommage restent disponibles pendant ce
+temps — et le flux pré-CR **encourage** même l'association juste avant l'envoi (docs/42
+§4.1). Le renommage réussit (aucun fichier ouvert), mais le job continue d'écrire à
+l'ancienne adresse. Défaut réel, 5 échecs sur le poste de Sylvain entre le 2026-07-29 et
+le 2026-08-26 ; **corrigé le 2026-08-28**, cf. §16.
+
 ---
 
 ## 7. Migration des réunions à plat — **retirée**, dossiers normalisés (2026-07-27)
@@ -615,3 +625,118 @@ de l'ancien listing. Pour tester un worktree :
 (aucune réunion correspondante, restes de tests manuels de docs/42). La migration les
 ignore volontairement — elle ne traite que les `.md` de réunion. Invisibles dans
 l'Historique, supprimables à la main.
+
+---
+
+## 16. Correctif du 2026-08-28 — renommage pendant un job de fond
+
+### 16.1 Symptôme et preuves
+
+Cinq `FileNotFoundError` dans le log du poste de Sylvain, sur trois types de job
+différents, tous du même moule — un `[Errno 2]` sur un chemin dont le **dossier** avait
+été renommé entre-temps :
+
+```
+2026-07-29 12:12  CR Mistral échoué   (.../2026-07-29_10-48-11/transcription.md)
+2026-08-12 15:06  Job transcription   (.../2026-08-12_14-53-42/transcription.md)
+2026-08-12 16:45  CR Mistral échoué   (.../2026-08-12_15-47-28/transcription.md)
+2026-08-26 16:19  CR Mistral échoué   : No such file .../2026-08-26_15-53-44/transcription.md
+2026-08-26 16:26  CR Mistral échoué   : No such file .../2026-08-26_16-20-54/CR.md
+```
+
+Les deux cas du 26/08 sont datés à la seconde et documentent **deux étapes distinctes**
+du même pipeline :
+
+- **16:19** — job lancé à 16:19:14, upload Voxtral terminé à 16:19:31,043, échec
+  **347 ms plus tard** : c'est la réécriture de `transcription.md`
+  (`_ecrire_transcript_local`, récupération de la transcription en local) qui tombe dans
+  le vide. Le renommage a donc eu lieu pendant les ~17 s de l'upload.
+- **16:26** — la lecture initiale était passée (dossier encore à l'ancien nom), l'échec
+  porte sur `CR.md` : le renommage est survenu **pendant la rédaction**, l'étape la plus
+  longue.
+
+Dans les deux cas la réunion a été associée à un événement BlueMind depuis l'Historique
+pendant que le job tournait, et le CR a dû être relancé à la main (le second l'a d'ailleurs
+été deux fois, un 503 Mistral s'étant intercalé).
+
+### 16.2 Pourquoi ce n'est pas le flux pré-CR qui est en cause
+
+`reunion_view._proposer_association_avant_cr` est correct : il retourne bien
+`dlg.chemin_md` — le chemin **d'après** renommage — avec repli si le nouveau chemin
+n'existe pas. Le trou est ailleurs, et il est structurel :
+
+- `GestionnaireCRMistral.lancer` fige `chemin_md` dans le worker
+  (`ui/generateur_cr_mistral.py`), idem `GestionnaireDiarization` ;
+- `pipeline.generer_cr_reunion` touche le disque à **quatre moments séparés par des
+  minutes** (sidecar + transcript, pistes audio, réécriture du `.md`, écriture du `CR.md`) ;
+- **rien** ne verrouille l'association ni l'édition du titre pendant un job :
+  `_etat_cr_mistral` ne grise que le bouton « Générer le CR », l'icône calendrier reste
+  volontairement cliquable (§5.4) et `CaptureModel.setData` ne se protège que de
+  `ligne.en_cours`, c'est-à-dire de l'**enregistrement** actif, pas d'un job.
+
+### 16.3 Décision : rendre le job insensible au renommage, pas interdire le renommage
+
+L'option « griser l'association et l'édition du titre tant qu'un job tourne » a été
+écartée : elle bloque l'utilisateur plusieurs minutes **précisément au moment où il a
+envie d'associer** — c'est le geste que le flux pré-CR (docs/42 §4.1) lui propose.
+
+Retenu : l'**identité stable d'une réunion est son horodatage**, le renommage ne touchant
+que le slug du titre (§2.1). `core/fichiers.resoudre_chemin_reunion(md)` retrouve donc le
+dossier par son préfixe `AAAA-MM-JJ_HH-MM-SS`, et les jobs re-résolvent leur chemin avant
+chaque écriture.
+
+Trois garde-fous, tous délibérés :
+
+| Situation | Comportement | Pourquoi |
+|---|---|---|
+| Dossier toujours présent | retour immédiat (**un seul `stat`**) | cas courant — le helper est appelé sur des chemins chauds |
+| Aucun candidat (réunion supprimée) | chemin rendu **tel quel** | l'appelant échoue comme avant, avec le même message : réparer un renommage n'est pas inventer une réunion |
+| **Plusieurs** candidats | chemin rendu **tel quel** | le compteur de collision (`-2`) est posé **après** le slug (§2.2) : deux réunions démarrées à la même seconde partagent le préfixe. Écrire le CR dans la mauvaise serait pire que l'échec réparé |
+
+### 16.4 Points de re-résolution
+
+Un avant chaque écriture, aux endroits exacts où ça a cassé en production :
+
+| Fichier | Moment | Cas réel couvert |
+|---|---|---|
+| `core/mistral/pipeline.py` | entrée de `generer_cr_reunion` | renommage entre le clic et le démarrage effectif du worker |
+| `core/mistral/pipeline.py` | après l'upload Voxtral, avant `_ecrire_transcript_local` | 2026-08-26 16:19 |
+| `core/mistral/pipeline.py` | avant l'écriture de `CR.md` | 2026-08-26 16:26 |
+| `core/transcription_differee.py` | avant la réécriture du `.md` | 2026-08-12 15:06 |
+| `core/diarization.py` | avant l'écriture de `locuteurs.md` | même famille (jamais observé, même mécanisme) |
+
+`_date_lisible` / `date_heure_reunion` n'ont pas besoin d'être protégés : ils ne lisent que
+le **nom** du dossier, et l'horodatage survit au renommage.
+
+### 16.5 Effet de bord trouvé en chemin : des signaux au chemin périmé
+
+Les deux gestionnaires émettaient `termine`/`echoue` avec le chemin capturé au lancement.
+Conséquence silencieuse côté diarization : `_inserer_bloc_invites_si_associe` lisait un
+sidecar disparu et **ne disait rien** — le cartouche invités manquait sans le moindre
+message (docs/40 §6.3). `_sur_terminee`/`_sur_erreur` re-résolvent désormais le chemin,
+en **conservant l'ordre** `_job_en_cours = None` avant l'émission (invariant figé par les
+tests de l'icône de job, cf. `CLAUDE.md`).
+
+L'UI n'a **pas** été touchée par ailleurs : l'association reste cliquable pendant un job.
+La seule séquelle est cosmétique — après le renommage la ligne perd l'icône de son job en
+cours, jusqu'à la fin de celui-ci — et le bouton « Générer le CR » reste correctement
+grisé entre-temps via `un_autre_job_tourne`.
+
+### 16.6 Tests (15 nouveaux, 1599 passed)
+
+Tous vérifiés **en contre-épreuve** (helper neutralisé → les 9 tests de régression
+échouent, les 6 autres restent verts) :
+
+- `test_fichiers.py` (8) : no-op, renommage dans les deux sens, nom de fichier conservé
+  (`CR.md`/`locuteurs.md`), réunion supprimée, ambiguïté d'horodatage, dossier voisin non
+  volé, nom non horodaté (journal) ;
+- `test_mistral_pipeline.py` (3) : renommage pendant la rédaction, renommage pendant
+  Voxtral, et **dossier supprimé → échoue toujours** (sans ce dernier, la re-résolution
+  pourrait un jour masquer une vraie perte de données) ;
+- `test_transcription_differee.py`, `test_diarization.py`,
+  `test_generateur_cr_mistral.py`, `test_gestionnaire_diarization_bluemind.py` (1 chacun).
+
+⚠️ Les tests de régression déclenchent le renommage **depuis le mock lui-même** (dans le
+`side_effect` respx, dans `_transcrire_pret`, dans `diariser`) : c'est la vraie fenêtre de
+course. Un renommage posé *avant* l'appel testerait un cas beaucoup plus facile — celui
+que le code d'entrée gérait déjà — et resterait vert même en cas de régression.
