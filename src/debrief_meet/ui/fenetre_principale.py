@@ -115,6 +115,12 @@ class FenetrePrincipale(QMainWindow):
             # ⚠️ Les marges de 1 px ne sont PAS cosmétiques : à marges nulles, les
             # widgets enfants peignent par-dessus le liseré et seul le bord haut
             # survit (livré ainsi le 2026-08-18, invisible sur les côtés).
+            #
+            # ⚠️ Le liseré borde la zone CLIENT, pas la fenêtre : le bandeau système
+            # (titre + boutons) est peint par le plugin de décoration `libadwaita.so`,
+            # hors de portée de tout style ou `paintEvent` de l'app — il reste donc
+            # sans contour. Limite acceptée, avec les 2 sorties écartées : docs/49
+            # §6.5.1. Ne pas la traiter comme un bug de feuille de style.
             layout.setContentsMargins(1, 1, 1, 1)
             centre.setStyleSheet(
                 f"#fenetreCentre {{ border: 1px solid {C.CONTOUR_FENETRE}; }}")

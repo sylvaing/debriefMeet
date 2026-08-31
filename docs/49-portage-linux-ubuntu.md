@@ -492,6 +492,34 @@ correctifs sont gatés par plateforme et couverts dans les deux sens (Linux **et
 autres), y compris une vérification **par les pixels** que l'icône du REPOS est bien
 claire sur bandeau sombre.
 
+#### 6.5.1 Le bandeau système reste sans contour — limite acceptée (2026-08-31)
+
+Signalé par Sylvain sur capture d'écran : **la barre du haut** (titre « debriefMeet »
++ boutons − ▫ ×) n'a, elle, aucun contour — le liseré de §6.5 ne borde que la zone
+*client*, 65 px plus bas. Le symptôme est donc identique à celui qu'il corrigeait,
+simplement déplacé sur le bandeau.
+
+**Ce n'est pas un oubli, c'est une frontière de code.** Sous Wayland/GNOME ce bandeau
+est peint par le plugin de décoration côté client — `libadwaita.so`, embarqué dans le
+`.deb` (`_internal/PySide6/Qt/plugins/wayland-decoration-client/`, vérifié sur
+`debriefmeet_0.3.0+20260831.4f49d19_amd64.deb`) : il dessine le fond, les coins
+arrondis et les boutons, **sans bordure extérieure ni ombre portée**, contrairement à
+une application GTK qui peint son ombre dans ses propres marges. Aucune feuille de
+style ni aucun `paintEvent` de l'application ne touche cette région : elle est hors du
+widget central, donc hors de portée.
+
+Les trois seules sorties, et pourquoi on n'en prend aucune :
+
+| Sortie | Coût | Verdict |
+|--------|------|---------|
+| `FramelessWindowHint` + barre de titre maison (boutons − ▫ × dans la toolbar existante, `startSystemMove` / `startSystemResize`) | ~150 lignes + hit-testing des bords, validation manuelle du déplacement/redimensionnement | **Écarté** — seul moyen d'obtenir un contour complet, mais on réécrit la gestion de fenêtre pour un défaut cosmétique |
+| `QT_QPA_PLATFORM=xcb` (XWayland) : GNOME reprend le cadre et dessine sa vraie bordure + son ombre | une ligne dans le `.desktop` | **Écarté** — on quitterait Wayland natif (flou en échelle fractionnaire, plus de DPI par écran) pour un liseré |
+| Statu quo | néant | **Retenu** (décision de Sylvain, 2026-08-31) |
+
+⚠️ **Ne pas rouvrir en croyant à un bug de style.** Le liseré `CONTOUR_FENETRE` est
+bien posé et testé sur les quatre bords de la zone client ; ce qui manque est
+structurellement inatteignable sans changer de stratégie de fenêtre.
+
 ### 6.6 Scripts (miroirs de l'existant Windows)
 
 - `scripts/build_app_linux_lxc.sh` — tar over ssh, gate pytest, PyInstaller,
