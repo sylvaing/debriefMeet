@@ -27,6 +27,7 @@ from debrief_meet.core.mistral.client import (
     ErreurFormatMistral,
     ErreurQuotaMistral,
     ErreurReseauMistral,
+    ErreurServeurMistral,
 )
 from debrief_meet.core.mistral.decoupage import LIMITE_SEGMENT_S, decouper_piste
 from debrief_meet.core.mistral.silences import PlanCompaction, compacter_piste, plan_compaction
@@ -207,7 +208,16 @@ def _transcrire_avec_replis(client: ClientMistral, chemin: Path, modele: str,
     """Envoi entier puis cascade de replis.
 
     Repli automatique : format refusé (4xx) → transcodage WAV puis réessai ; erreur
-    réseau persistante (timeout malgré les reprises du client) → découpage (§10).
+    réseau persistante (timeout malgré les reprises du client) → découpage (§10) ;
+    erreur serveur persistante (5xx malgré les reprises du client) → découpage aussi.
+
+    Le 5xx a longtemps traversé cette cascade sans être rattrapé : il remontait au
+    pipeline et perdait le CR, alors que le découpage était disponible et adapté.
+    Terrain 2026-08-31 : 139 min envoyées d'un bloc, 503, aucun repli — or les envois
+    réussis du même poste plafonnaient à 36 min, et découper en segments de
+    `LIMITE_SEGMENT_S` les aurait tous ramenés dans cet ordre de grandeur. Qu'un 503
+    vienne d'un hoquet serveur ou de la taille de l'envoi, découper est la bonne
+    réponse dans les deux cas (docs/42 §10.1).
 
     Quota (429) sur l'envoi entier : le sens du 429 dépend de `precedente_entiere`
     (comment la piste PRÉCÉDENTE de la même réunion a fini — None si aucune) :
@@ -234,6 +244,9 @@ def _transcrire_avec_replis(client: ClientMistral, chemin: Path, modele: str,
         return _transcrire_avec_repli_wav(client, chemin, modele, langue, context_bias)
     except ErreurReseauMistral:
         logger.warning("Échec réseau persistant pour %s — repli découpage", chemin.name)
+        return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
+    except ErreurServeurMistral:
+        logger.warning("Erreur serveur persistante pour %s — repli découpage", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
     except ErreurQuotaMistral:
         if precedente_entiere:

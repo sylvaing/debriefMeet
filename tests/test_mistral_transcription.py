@@ -212,6 +212,65 @@ def test_repli_decoupage_si_reseau_persiste(tmp_path, monkeypatch):
     assert resultat.segments[1].debut == pytest.approx(t.LIMITE_SEGMENT_S)
 
 
+# ── repli découpage sur erreur serveur 5xx (terrain 2026-08-31, poste Linux) ────────
+#
+# Un COMEX de 139 min parti d'un bloc a pris un 503, deux fois à 26 min d'écart. Le 5xx
+# n'était rattrapé nulle part : ni reprise dans le client, ni branche dans cette
+# cascade. Il remontait au pipeline et perdait le CR — alors que le découpage existait
+# et aurait ramené l'envoi à des segments de 14 min, l'ordre de grandeur de tout ce qui
+# passait sur ce poste.
+
+@respx.mock
+def test_repli_decoupage_si_erreur_serveur_persiste(tmp_path, monkeypatch):
+    chemin = tmp_path / "comex.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    # Les 2 tentatives du client sur l'envoi ENTIER échouent en 503, puis les 2 segments
+    # du découpage passent — exactement le scénario que le terrain a perdu.
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(503),
+        httpx.Response(503),
+        httpx.Response(200, json={"text": "premier segment",
+                                  "segments": [{"start": 0.0, "end": 5.0, "text": "premier segment"}]}),
+        httpx.Response(200, json={"text": "second segment",
+                                  "segments": [{"start": 0.0, "end": 5.0, "text": "second segment"}]}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+    assert "premier segment" in resultat.texte
+    assert "second segment" in resultat.texte
+    assert resultat.decoupee is True      # le pipeline découpera la piste suivante d'emblée
+    assert resultat.segments[1].debut == pytest.approx(t.LIMITE_SEGMENT_S)
+
+
+@respx.mock
+def test_erreur_serveur_sur_les_segments_remonte(tmp_path, monkeypatch):
+    """Le découpage est le DERNIER repli : si les segments eux-mêmes prennent des 5xx,
+    il n'y a plus rien à tenter et l'échec doit remonter — surtout pas boucler."""
+    from debrief_meet.core.mistral.client import ErreurServeurMistral
+
+    chemin = tmp_path / "comex.opus"
+    chemin.write_bytes(b"faux-opus-long")
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(return_value=httpx.Response(503))
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1])
+
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurServeurMistral):
+        t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+
 # ── repli découpage sur quota 429, sans retry (§10, vécu 74 min le 2026-08-05) ──────
 
 @respx.mock

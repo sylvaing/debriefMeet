@@ -528,6 +528,46 @@ eux aussi, en séquentiel.
 > « jamais de découpage ». Un seuil de sécurité (ex. découper au-delà de ~90 min sans même
 > tenter) est acceptable si on veut éviter un premier appel voué à l'échec.
 
+### 10.1 Le 5xx ne déclenchait aucun repli (terrain 2026-08-31, corrigé)
+
+Un COMEX de **139 min** parti d'un bloc depuis le poste Linux a pris un **503** sur
+`v1/audio/transcriptions`. Deux tentatives manuelles à 26 min d'écart, deux fois le même
+503, **aucun repli tenté** — CR perdu, alors que la piste micro était parfaitement
+exploitable (elle contenait toute la réunion, captée par un speakerphone de salle).
+
+**Le trou était double**, et aucune des deux moitiés ne se voyait seule :
+
+* `ClientMistral._gerer_reponse` retentait sur les erreurs **réseau** et sur **429**,
+  mais tout `>= 400` non spécifiquement classé tombait directement en
+  `ErreurServeurMistral`, sans une seule reprise ;
+* `_transcrire_avec_replis` rattrapait `ErreurFormatMistral`, `ErreurReseauMistral` et
+  `ErreurQuotaMistral` — **jamais `ErreurServeurMistral`**. L'exception traversait la
+  cascade intacte et remontait au pipeline.
+
+Le découpage existait pourtant, éprouvé, et il était le bon remède : `LIMITE_SEGMENT_S`
+vaut 14 min, donc les 139 min seraient parties en 10 segments — l'ordre de grandeur de
+**tout** ce qui passait sur ce poste (envois réussis : 3 s, 6 min, 12 min, 19 min,
+26 min, 36 min). Que le 503 vienne d'un hoquet serveur ou de la taille de l'envoi,
+découper répond aux deux.
+
+**Correctif.** Reprise sur 5xx dans le client (`_TENTATIVES_5XX`, `Retry-After` honoré),
+placée **avant** les autres classifications pour qu'une reprise retombant sur un 429 ou
+un 4xx reçoive son traitement normal ; puis branche `except ErreurServeurMistral` dans
+la cascade, qui découpe comme le cas réseau.
+
+⚠️ **Le budget de reprises est volontairement plus court** que celui du réseau (2 contre
+3). Quand le 5xx vient de la taille de l'envoi, chaque reprise re-téléverse la piste
+entière pour rien — ici 23 Mo, ~70 s avant chaque 503. Deux tentatives absorbent le
+hoquet ; au-delà, la main revient à la cascade, qui découpe. Augmenter ce budget
+retarderait le seul repli qui marche.
+
+⚠️ **`mistral_duree_max_min` (180) n'a pas protégé** : la réunion faisait 139 min, sous
+le plafond. Ce garde-fou vise les réunions absurdement longues, pas le point de rupture
+réel de l'endpoint, qui est manifestement plus bas. Le seuil de sécurité évoqué en fin
+de §10 (« découper au-delà de ~90 min sans même tenter ») reste une option ouverte —
+non retenue pour l'instant : le repli sur 5xx couvre le cas sans jamais dégrader la
+qualité des réunions qui passent entières.
+
 ### 10.2 Compaction des silences avant envoi (`silences.py`, 2026-08-18)
 
 Distinct du découpage : on ne coupe pas en morceaux, on **retire les silences** d'une

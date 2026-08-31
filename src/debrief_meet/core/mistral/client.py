@@ -50,6 +50,14 @@ def valider_url(url: str) -> str:
 _TIMEOUT = httpx.Timeout(connect=10.0, read=600.0, write=600.0, pool=10.0)
 _TENTATIVES_RESEAU = 3
 _TENTATIVES_429 = 3
+# Un 5xx est transitoire par nature (surcharge, passerelle) : on retente, comme pour
+# une erreur réseau. Budget PLUS COURT que les deux autres, et c'est délibéré — quand
+# le 5xx vient de la taille de l'envoi et non d'un hoquet, chaque reprise re-téléverse
+# la piste entière pour rien, alors que le vrai remède est le découpage (§10). Deux
+# tentatives absorbent le hoquet ; au-delà, on rend la main à la cascade de replis, qui
+# découpe. Terrain 2026-08-31 (poste Linux) : 139 min envoyées d'un bloc, 503 aux deux
+# tentatives manuelles à 26 min d'écart, aucun repli tenté — CR perdu (docs/42 §10.1).
+_TENTATIVES_5XX = 2
 
 
 def _dormir(secondes: float) -> None:
@@ -136,8 +144,34 @@ class ClientMistral:
             raise ErreurReseauMistral(f"Connexion impossible ({self._base_url})") from derniere_exc
         return self._gerer_reponse(reponse, methode, chemin, kwargs, retries_429=retries_429)
 
+    def _reessayer_5xx(self, reponse: httpx.Response, methode: str, chemin: str,
+                       kwargs: dict) -> httpx.Response:
+        """Rejoue la requête tant qu'elle rend un 5xx, dans la limite de
+        `_TENTATIVES_5XX`. Rend la dernière réponse obtenue — 5xx comprise, que
+        l'appelant classera.
+
+        Le corps multipart est passé en **bytes** (cf. `poster_transcription`), donc
+        rejouer est sûr : rien n'a été consommé. `Retry-After` est honoré quand le
+        serveur le fournit (les 503 en portent souvent un)."""
+        for tentative in range(1, _TENTATIVES_5XX):
+            attente = _delai_retry_after(reponse)
+            if attente is None:
+                attente = 2.0 * tentative
+            logger.warning("Erreur serveur Mistral (%d) sur %s — reprise dans %.1fs "
+                           "(tentative %d/%d)",
+                           reponse.status_code, chemin, attente, tentative, _TENTATIVES_5XX)
+            _dormir(attente)
+            reponse = self._client.request(methode, chemin, **kwargs)
+            if reponse.status_code < 500:
+                break
+        return reponse
+
     def _gerer_reponse(self, reponse: httpx.Response, methode: str, chemin: str, kwargs: dict,
                        *, retries_429: bool = True) -> httpx.Response:
+        # AVANT les autres classifications : une reprise peut rendre un 429 ou un 4xx,
+        # qui doivent alors recevoir leur traitement normal (le 429 sa propre attente).
+        if reponse.status_code >= 500:
+            reponse = self._reessayer_5xx(reponse, methode, chemin, kwargs)
         if reponse.status_code == 429:
             if not retries_429:
                 raise ErreurQuotaMistral(f"Quota dépassé (429) sur {chemin}")

@@ -6,6 +6,7 @@ import pytest
 import respx
 
 from debrief_meet.core.mistral.client import (
+    _TENTATIVES_5XX,
     ClientMistral,
     ErreurAuthMistral,
     ErreurFormatMistral,
@@ -120,6 +121,70 @@ def test_erreur_serveur():
     client = ClientMistral(URL, "cle")
     with pytest.raises(ErreurServeurMistral):
         client.get("v1/models")
+
+
+# ── reprise sur 5xx (terrain 2026-08-31 : 503 sur un envoi de 139 min) ──────────────
+
+@respx.mock
+def test_5xx_est_rejoue_puis_leve():
+    """Un 5xx est transitoire par nature : on rejoue avant d'abandonner. Le budget est
+    volontairement court — au-delà, c'est à la cascade de replis de découper."""
+    route = respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(503))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurServeurMistral):
+        client.get("v1/models")
+    # Valeur en dur ET constante : comparer à la seule constante laisserait passer un
+    # budget ramené à 1, c'est-à-dire la suppression pure et simple de la reprise.
+    assert route.call_count == 2 == _TENTATIVES_5XX
+
+
+@respx.mock
+def test_5xx_suivi_d_un_succes_rend_la_reponse():
+    route = respx.get(f"{URL}/v1/models")
+    route.side_effect = [httpx.Response(503), httpx.Response(200, json={"data": []})]
+    client = ClientMistral(URL, "cle")
+
+    reponse = client.get("v1/models")
+
+    assert reponse.status_code == 200
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_5xx_puis_429_recoit_le_traitement_du_429():
+    """La reprise 5xx passe AVANT les autres classifications, donc une reprise qui
+    retombe sur un 429 doit recevoir l'attente du quota — pas être maquillée en erreur
+    serveur par le `>= 400` final."""
+    route = respx.get(f"{URL}/v1/models")
+    route.side_effect = [httpx.Response(503)] + [httpx.Response(429)] * 8
+    client = ClientMistral(URL, "cle")
+
+    with pytest.raises(ErreurQuotaMistral):
+        client.get("v1/models")
+
+
+@respx.mock
+def test_5xx_puis_4xx_recoit_le_traitement_du_4xx():
+    route = respx.get(f"{URL}/v1/models")
+    route.side_effect = [httpx.Response(502), httpx.Response(401)]
+    client = ClientMistral(URL, "cle")
+
+    with pytest.raises(ErreurAuthMistral):
+        client.get("v1/models")
+
+
+@respx.mock
+def test_5xx_honore_retry_after(monkeypatch):
+    attentes = []
+    monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", attentes.append)
+    route = respx.get(f"{URL}/v1/models")
+    route.side_effect = [httpx.Response(503, headers={"Retry-After": "7"}),
+                         httpx.Response(200, json={})]
+    client = ClientMistral(URL, "cle")
+
+    client.get("v1/models")
+
+    assert attentes == [7.0]
 
 
 @respx.mock
