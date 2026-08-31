@@ -11,7 +11,10 @@ Les deux modes de panne mesurés, radicalement différents (docs/49 §5.1 Q4 et 
 * **Le son part sur une autre sortie** (le sink reste présent, passe `IDLE`) : le flux
   continue de livrer des **zéros parfaits**, indéfiniment, sans erreur — 760 s
   observées. Indiscernable d'une réunion réellement silencieuse ⇒ la seule détection
-  possible est de **surveiller la sortie par défaut** avec `pactl`.
+  possible passe par `pactl`. ⚠️ Surveiller la **sortie par défaut** ne suffit pas :
+  une application peut router son flux ailleurs sans que la sortie par défaut change
+  (terrain 2026-08-31, 2 h 19 perdues). On résout donc la sortie depuis les **flux de
+  lecture réels** — `sink_a_surveiller`, docs/49 §11.
 * **Le sink disparaît** (casque BT déconnecté, dock débranché) : le flux **gèle** —
   plus une seule trame — pendant que `stream.active` reste `True`, sans exception ni
   statut PortAudio ⇒ la seule détection possible est l'**absence de trames**.
@@ -37,6 +40,7 @@ journalise et on tient la piste en silence.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -81,6 +85,13 @@ _PERIODE_LOG_SILENCE_S = 30.0
 
 _ECHECS_MAX_AVANT_SILENCE = 3
 
+# Une bascule de sortie coûte une réouverture, donc un trou comblé par du silence : on
+# ne la déclenche pas sur un clignotement. Un flux de lecture disparaît brièvement à
+# chaque pause, changement de piste ou renégociation de la visio ; sans confirmation, la
+# capture ferait l'aller-retour à chaque fois. Deux sondages concordants (≈ 4 s) suffisent
+# à distinguer un vrai changement de sortie d'un à-coup.
+_CONFIRMATIONS_AVANT_BASCULE = 2
+
 
 # ── Résolution du moniteur ───────────────────────────────────────────────────────
 
@@ -93,8 +104,11 @@ def _pactl(*args: str) -> str | None:
     if shutil.which("pactl") is None:
         return None
     try:
+        # LC_ALL=C : `pactl list` traduit ses étiquettes (« Sink: », « Corked: ») dans
+        # la locale de l'utilisateur, et on les parse. Le poste terrain est en français.
         resultat = subprocess.run(["pactl", *args], capture_output=True, text=True,
-                                  timeout=5, check=True)
+                                  timeout=5, check=True,
+                                  env={**os.environ, "LC_ALL": "C", "LANGUAGE": "C"})
         return resultat.stdout.strip()
     except (subprocess.SubprocessError, OSError) as exc:
         logger.debug("pactl %s a échoué (%s)", " ".join(args), exc)
@@ -107,19 +121,104 @@ def sink_par_defaut() -> str | None:
     return nom or None
 
 
-def index_moniteur(sd, nom_sink: str) -> int | None:
-    """Index PortAudio de la source `.monitor` du sink donné, ou None.
+def _sinks_par_index() -> dict[int, str]:
+    """`index → nom` depuis `pactl list short sinks` (tabulé, jamais traduit)."""
+    sortie = _pactl("list", "short", "sinks")
+    if not sortie:
+        return {}
+    table: dict[int, str] = {}
+    for ligne in sortie.splitlines():
+        champs = ligne.split("\t")
+        if len(champs) >= 2 and champs[0].strip().isdigit():
+            table[int(champs[0])] = champs[1].strip()
+    return table
 
-    Deux constats du spike commandent cette fonction :
 
-    * les moniteurs ne sont visibles que sous le **hostapi PulseAudio** (jamais ALSA,
-      qui n'expose que `default`/`sysdefault`/`pipewire`, lesquels n'identifient aucun
-      sink) ;
-    * le nom PortAudio est **exactement** `<nom du sink>.monitor`.
+def sinks_en_lecture() -> set[str]:
+    """Noms des sorties portant au moins un flux de lecture **actif**.
 
-    Aucun repli sur « le premier moniteur venu » : sur le poste testé, qui a quatre
-    sorties, cela aurait capturé une sortie HDMI inactive — une piste système muette,
-    sans que rien ne le signale."""
+    `pactl list sink-inputs` énumère les flux de lecture ; chaque bloc porte le sink de
+    destination (`Sink: <index>`) et son état de pause (`Corked: yes|no`). Un flux
+    suspendu ne joue rien — un onglet en pause ne doit pas désigner une sortie.
+
+    Rend un ensemble vide quand rien ne joue : c'est un état parfaitement légitime (une
+    réunion physique autour d'un speakerphone n'a aucun flux de lecture), et l'appelant
+    doit alors s'en tenir à la sortie par défaut."""
+    sortie = _pactl("list", "sink-inputs")
+    if not sortie:
+        return set()
+    noms = _sinks_par_index()
+    actifs: set[str] = set()
+    index_courant: int | None = None
+    suspendu = False
+    for ligne in sortie.splitlines():
+        depouillee = ligne.strip()
+        if depouillee.startswith("Sink Input #"):
+            index_courant, suspendu = None, False
+        elif depouillee.startswith("Sink:"):
+            valeur = depouillee.split(":", 1)[1].strip()
+            index_courant = int(valeur) if valeur.isdigit() else None
+        elif depouillee.startswith("Corked:"):
+            suspendu = depouillee.split(":", 1)[1].strip().lower() == "yes"
+            if index_courant is not None and not suspendu and index_courant in noms:
+                actifs.add(noms[index_courant])
+    return actifs
+
+
+def sink_a_surveiller(sd) -> str | None:
+    """Sortie à capturer : celle où le son se trouve RÉELLEMENT (docs/49 §11).
+
+    `pactl get-default-sink` seul ne suffit pas. Terrain 2026-08-31 : la sortie par
+    défaut était les haut-parleurs internes, l'utilisateur travaillait sur un
+    speakerphone USB, et le navigateur y routait son flux — 2 h 19 de piste système à
+    99,97 % de zéros, sans qu'aucune garde n'ait de raison de broncher (la sortie par
+    défaut n'avait pas changé : elle n'était simplement jamais utilisée).
+
+    Politique, du plus sûr au plus utile — jamais de repli aveugle :
+
+    1. rien ne joue nulle part → **sortie par défaut**. C'est le cas d'une réunion
+       physique, parfaitement normal : il n'y a rien à capter et rien à deviner ;
+    2. la sortie par défaut porte un flux actif → **elle**, sans discussion. Cas le
+       plus courant, et comportement identique à celui d'avant ce correctif ;
+    3. une seule autre sortie porte des flux → **elle**. C'est le cas de Dario ;
+    4. plusieurs autres sorties en portent, et pas la sortie par défaut → **sortie par
+       défaut**, avec un WARNING nommant les candidates. Départager au hasard
+       (« la première venue ») est exactement ce que `index_moniteur` s'interdit.
+
+    Une sortie retenue dont le moniteur est **invisible de PortAudio** est abandonnée au
+    profit de la sortie par défaut : la table n'est pas rafraîchie en cours de réunion
+    (cf. en-tête), et il vaut mieux capturer la mauvaise sortie que rien du tout — c'est
+    le comportement d'avant ce correctif, on ne régresse pas dessous."""
+    defaut = sink_par_defaut()
+    try:
+        actifs = sinks_en_lecture()
+    except Exception as exc:  # noqa: BLE001 — jamais au prix de la réunion
+        logger.debug("Flux de lecture illisibles (%s) — sortie par défaut", exc)
+        return defaut
+
+    if not actifs or (defaut is not None and defaut in actifs):
+        return defaut
+    if len(actifs) > 1:
+        logger.warning("Plusieurs sorties portent du son (%s) et aucune n'est la sortie "
+                       "par défaut (%s) — on s'en tient à la sortie par défaut, "
+                       "cf. docs/49 §11", ", ".join(sorted(actifs)), defaut)
+        return defaut
+
+    retenu = next(iter(actifs))
+    if _index_moniteur(sd, retenu) is None:
+        logger.warning("Le son joue sur %r mais son moniteur est invisible de PortAudio "
+                       "(sortie apparue après le début de la réunion) — repli sur la "
+                       "sortie par défaut %r", retenu, defaut)
+        return defaut
+    if retenu != defaut:
+        logger.info("Le son ne passe pas par la sortie par défaut (%s) mais par %s "
+                    "— c'est elle qu'on capture", defaut, retenu)
+    return retenu
+
+
+def _index_moniteur(sd, nom_sink: str) -> int | None:
+    """Cœur silencieux de `index_moniteur` — la politique de `sink_a_surveiller`
+    l'interroge toutes les 2 s et n'a pas à noyer le journal."""
     attendu = f"{nom_sink}.monitor"
     try:
         hostapis = sd.query_hostapis()
@@ -136,10 +235,28 @@ def index_moniteur(sd, nom_sink: str) -> int | None:
     for index, d in enumerate(peripheriques):
         if d.get("max_input_channels", 0) > 0 and d.get("name") == attendu and _pulse(d):
             return index
-
-    logger.warning("Moniteur %r introuvable parmi les périphériques PortAudio "
-                   "(sortie apparue après le démarrage de la réunion ?)", attendu)
     return None
+
+
+def index_moniteur(sd, nom_sink: str) -> int | None:
+    """Index PortAudio de la source `.monitor` du sink donné, ou None.
+
+    Deux constats du spike commandent cette fonction :
+
+    * les moniteurs ne sont visibles que sous le **hostapi PulseAudio** (jamais ALSA,
+      qui n'expose que `default`/`sysdefault`/`pipewire`, lesquels n'identifient aucun
+      sink) ;
+    * le nom PortAudio est **exactement** `<nom du sink>.monitor`.
+
+    Aucun repli sur « le premier moniteur venu » : sur le poste testé, qui a quatre
+    sorties, cela aurait capturé une sortie HDMI inactive — une piste système muette,
+    sans que rien ne le signale."""
+    index = _index_moniteur(sd, nom_sink)
+    if index is None:
+        logger.warning("Moniteur %r introuvable parmi les périphériques PortAudio "
+                       "(sortie apparue après le démarrage de la réunion ?)",
+                       f"{nom_sink}.monitor")
+    return index
 
 
 # ── Adaptateur ───────────────────────────────────────────────────────────────────
@@ -168,12 +285,12 @@ class CaptureAudioSystemeMonitor(CaptureAudioSysteme):
         Chaque échec est journalisé avec sa cause : c'est ce qui décide d'une réunion
         sans piste système, et l'utilisateur est distant (docs/49 L5)."""
         try:
-            nom_sink = sink_par_defaut()
+            import sounddevice as sd
+            nom_sink = sink_a_surveiller(sd)
             if nom_sink is None:
                 logger.warning("Capture système indisponible : `pactl get-default-sink` "
                                "muet (pulseaudio-utils absent, ou aucun serveur audio)")
                 return False
-            import sounddevice as sd
             return index_moniteur(sd, nom_sink) is not None
         except Exception as exc:
             logger.warning("Capture système indisponible (%s)", exc, exc_info=True)
@@ -284,10 +401,12 @@ class CaptureAudioSystemeMonitor(CaptureAudioSysteme):
         import sounddevice as sd
 
         flux = None
-        sink_courant = sink_par_defaut()
+        sink_courant = sink_a_surveiller(sd)
         ouvert_a = 0.0
         derniere_verif = 0.0
         echecs = 0
+        candidat = None            # sortie pressentie, en attente de confirmation
+        confirmations = 0
 
         while not self._arret.is_set():
             maintenant = time.monotonic()
@@ -301,11 +420,20 @@ class CaptureAudioSystemeMonitor(CaptureAudioSysteme):
             else:
                 if maintenant - derniere_verif >= _INTERVALLE_SURVEILLANCE_S:
                     derniere_verif = maintenant
-                    nouveau = sink_par_defaut()
-                    if nouveau is not None and nouveau != sink_courant:
-                        logger.info("Sortie audio changée : %s → %s", sink_courant, nouveau)
-                        sink_courant = nouveau
-                        raison_reouverture = "changement de sortie"
+                    nouveau = sink_a_surveiller(sd)
+                    if nouveau is None or nouveau == sink_courant:
+                        candidat, confirmations = None, 0
+                    else:
+                        # Hystérésis : on n'abandonne la sortie courante que sur deux
+                        # sondages concordants (cf. _CONFIRMATIONS_AVANT_BASCULE).
+                        confirmations = confirmations + 1 if nouveau == candidat else 1
+                        candidat = nouveau
+                        if confirmations >= _CONFIRMATIONS_AVANT_BASCULE:
+                            logger.info("Sortie audio changée : %s → %s",
+                                        sink_courant, nouveau)
+                            sink_courant = nouveau
+                            candidat, confirmations = None, 0
+                            raison_reouverture = "changement de sortie"
 
                 # Chien de garde — le SEUL signal quand le sink est détruit : ni
                 # exception, ni statut, et `flux.active` reste True (docs/49 §5.1 Q6).
@@ -320,7 +448,7 @@ class CaptureAudioSystemeMonitor(CaptureAudioSysteme):
             if raison_reouverture is not None:
                 self._fermer(flux)
                 flux = None
-                sink_courant = sink_par_defaut() or sink_courant
+                sink_courant = sink_a_surveiller(sd) or sink_courant
                 try:
                     if sink_courant is not None:
                         flux = self._ouvrir(sd, sink_courant)

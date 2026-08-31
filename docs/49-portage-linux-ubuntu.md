@@ -565,16 +565,14 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 | Risque | Parade |
 |--------|--------|
 | ~~Nom/visibilité de la source `.monitor` via PortAudio~~ | **Levé** par le spike du 2026-08-12 (§5.1) : visibles sous le hostapi PulseAudio, nom = `<sink>.monitor`, résolus via `pactl` |
-| **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence. ⚠️ **Parade incomplète** : elle ne voit que les changements de sortie **par défaut**, pas un flux routé par application vers une autre sortie — cf. §11 (terrain 2026-08-31) |
+| **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Résolution par les **flux de lecture réels** (`pactl list sink-inputs`) + surveillance et réouverture (§5.1, §11) ; **jamais** de détection par exception ou par seuil de silence |
 | ~~Un sink qui **disparaît** pourrait tuer le flux~~ | **Mesuré** (Q6) : le flux **gèle en silence**, `active` reste `True`, aucune exception → chien de garde sur les trames + repli silence (§5.1) |
 | Tray absent si l'extension AppIndicator est désactivée sur le poste cible | Vérifier au déploiement ; documenter dans la notice (`gnome-extensions enable ubuntu-appindicators…`) |
 | Casque Bluetooth : bascule de profil A2DP↔HFP quand le micro BT est utilisé (le monitor change de format) | Même famille que les cas BT Windows (docs/34 §2.3) : réouverture à chaud + logs ; recommander micro filaire/intégré en premier déploiement |
 | Python 3.13 non packagé dans l'archive 26.04 | PPA deadsnakes (constat au provisionnement) |
 | Liste `Depends` Qt incomplète → app qui ne démarre pas sur un poste nu | La fumée LXC part d'un conteneur sans deps de dev ; compléter `Depends` jusqu'à `--version` vert |
 
-## 11. Point ouvert — le moniteur suit la sortie *par défaut*, pas le son réel
-
-**À instruire dans une session dédiée. Rien n'est corrigé à ce jour.**
+## 11. Le moniteur suit le son réel, pas la sortie *par défaut* (corrigé 2026-08-31)
 
 ### 11.1 Ce qui a été mesuré (terrain 2026-08-31, poste Ubuntu 26.04)
 
@@ -609,44 +607,59 @@ voix distantes comprises, donc la réunion était intégralement récupérable d
 `moi.opus`. **En visio avec un casque, la même configuration perdrait définitivement les
 voix distantes**, et le log dirait que tout va bien.
 
-### 11.2 Piste à instruire : `pactl list sink-inputs`
+### 11.2 Correctif livré — résolution par `pactl list sink-inputs`
 
-Résoudre le moniteur depuis **où le son se trouve réellement**, et non depuis la sortie
-par défaut. `pactl list sink-inputs` énumère les flux de lecture actifs avec, pour
-chacun, le sink de destination et l'application émettrice :
+Le moniteur est désormais résolu depuis **où le son se trouve réellement**.
+`sinks_en_lecture()` lit `pactl list sink-inputs`, retient le sink de chaque flux dont
+`Corked: no` (un onglet en pause ne joue rien et ne doit désigner aucune sortie), et
+`sink_a_surveiller(sd)` applique la politique — **du plus sûr au plus utile, jamais de
+repli aveugle** :
 
-```
-Sink Input #42
-    Sink: 15
-    Properties:
-        application.name = "Firefox"
-        media.name = "Playback"
-```
+| Situation | Sortie retenue | Pourquoi |
+|---|---|---|
+| Rien ne joue nulle part | **Sortie par défaut** | Réunion physique : il n'y a rien à capter et rien à deviner |
+| La sortie par défaut porte un flux | **Elle** | Cas courant — comportement identique à avant le correctif |
+| Une seule autre sortie porte des flux | **Elle** | Le cas de Dario |
+| Plusieurs autres, et pas la sortie par défaut | **Sortie par défaut** + WARNING nommant les candidates | Départager au hasard est ce que `index_moniteur` s'interdit déjà |
 
-Questions à trancher avant d'écrire la moindre ligne — aucune n'est tranchée
-aujourd'hui :
+Réponses aux cinq questions que posait la version précédente de cette section :
 
-1. **Quel sink choisir** quand plusieurs portent des flux actifs (musique dans un onglet,
-   visio dans un autre, notifications système) ? Le plus récemment actif ? Celui d'une
-   application reconnue comme visio ? Le premier venu serait un retour au « repli aveugle »
-   que §5.1 s'interdit explicitement.
-2. **Quand résoudre** ? À l'ouverture seulement, ou en continu ? Un flux visio peut
-   n'apparaître qu'après le démarrage de la réunion (l'utilisateur rejoint la visio après
-   avoir lancé l'enregistrement) — cas très probable en pratique.
-3. **Que faire si le sink retenu change en cours de réunion** ? Rouvrir la capture, avec
-   le repli silence de §5.1 pour ne pas décaler les pistes (docs/48) — mais une bascule
-   par erreur de jugement coûterait plus cher que l'immobilisme.
-4. **Interaction avec la table PortAudio non rafraîchie** (§5.1) : un sink apparu après le
-   début de la réunion reste invisible à `sounddevice`. Le WARNING « Moniteur … introuvable
-   parmi les périphériques PortAudio » du 2026-08-27 le montre déjà en vrai. Résoudre le
-   bon sink ne sert à rien si on ne peut pas l'ouvrir — cette limite-là doit être levée
-   d'abord, ou en même temps.
-5. **Coût** : `pactl list sink-inputs` est plus lourd que `get-default-sink` (déjà appelé
-   toutes les 2 s, cf. §5.1). Mesurer avant d'adopter la même cadence.
+1. **Quel sink quand plusieurs jouent** — on ne tranche pas, et on le dit. Le journal
+   nomme les candidates, ce qui suffit à diagnostiquer si le cas se présente en vrai.
+   Il n'a jamais été observé.
+2. **Quand résoudre** — à l'ouverture *et* dans la surveillance existante (2 s). C'est
+   nécessaire : le cas nominal est que l'utilisateur lance l'enregistrement **avant** de
+   rejoindre la visio, donc le flux de lecture n'existe pas encore au démarrage.
+3. **Bascule en cours de réunion** — réouverture par le chemin existant, avec son
+   comblement de silence (docs/48). Protégée par une **hystérésis** :
+   `_CONFIRMATIONS_AVANT_BASCULE = 2` sondages concordants (≈ 4 s). Un flux disparaît
+   brièvement à chaque pause ou renégociation ; sans confirmation, la capture ferait
+   l'aller-retour et trouerait la piste à chaque fois.
+4. **Table PortAudio non rafraîchie** — traitée par un **repli explicite** : si le
+   moniteur de la sortie retenue est invisible de PortAudio (sortie apparue après le
+   début de la réunion), on retombe sur la sortie par défaut avec un WARNING. Capturer
+   la mauvaise sortie reste préférable à ne rien capturer, et c'est le comportement
+   d'avant le correctif — **on ne régresse pas dessous**. La limitation de fond, elle,
+   reste entière (cf. en-tête du module).
+5. **Coût** — un `pactl` de plus par sondage, soit deux toutes les 2 s au lieu d'un.
+   Non mesuré sur le poste cible ; à surveiller au premier retour terrain.
+
+⚠️ **`LC_ALL=C` est désormais forcé dans `_pactl`.** On parse les étiquettes `Sink:` et
+`Corked:`, or `pactl list` les traduit dans la locale de l'utilisateur — et le poste
+terrain est en français. Sans cela le correctif serait muet précisément là où il sert.
 
 ⚠️ **Ne pas régler ça par un seuil de silence.** « La piste système est vide donc quelque
 chose ne va pas » est faux : une réunion physique autour d'un speakerphone produit
-légitimement une piste système vide, et c'est exactement le cas ci-dessus. Le verdict doit
-venir du **routage**, jamais du niveau audio — c'est la même leçon que le garde-fou AEC de
+légitimement une piste système vide, et c'est exactement le cas ci-dessus. Le verdict
+vient du **routage**, jamais du niveau audio — même leçon que le garde-fou AEC de
 docs/48 §8.6, qui accusait les flux à partir d'une mesure incapable de trancher.
 
+### 11.3 Ce qui n'est pas couvert
+
+- **Validation terrain** : le correctif est adossé au diagnostic du 2026-08-31 et à des
+  tests, **pas** à un rejeu sur le poste de Dario. Le prochain diagnostic doit montrer
+  « Le son ne passe pas par la sortie par défaut … — c'est elle qu'on capture ».
+- **Le cas « plusieurs sorties jouent »** n'a aucun cas terrain : la branche existe, elle
+  est testée, elle n'a jamais servi.
+- **La table PortAudio non rafraîchie** reste la limitation de fond : une sortie apparue
+  pendant la réunion demeure inouvrable, on la journalise et on tient la piste en silence.

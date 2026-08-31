@@ -22,11 +22,26 @@ from debrief_meet.platform.linux.capture_systeme_monitor import (
     CaptureAudioSystemeMonitor,
     TAUX,
     index_moniteur,
+    sink_a_surveiller,
     sink_par_defaut,
+    sinks_en_lecture,
 )
 
 SINK_A = "alsa_output.pci-0000_00_1f.3.HiFi__HDMI1__sink"
 SINK_B = "bluez_output.A0:0C:E2:8B:A6:29"
+SINK_USB = "alsa_output.usb-Logitech_Logi_Group_Speakerphone-00.analog-stereo"
+
+
+@pytest.fixture(autouse=True)
+def _jamais_le_vrai_pactl(monkeypatch):
+    """Aucun test ne doit interroger le `pactl` de la machine hôte.
+
+    `sink_a_surveiller` consulte les flux de lecture : sans ce garde-fou, les tests
+    seraient verts par accident sur un Mac (pas de `pactl`) et imprévisibles sur un
+    poste Linux où de la musique joue. Les tests unitaires de `sinks_en_lecture`
+    utilisent le nom importé directement en tête de fichier, que ce correctif
+    n'atteint pas."""
+    monkeypatch.setattr(mod, "sinks_en_lecture", set)
 
 
 # ── Doubles ──────────────────────────────────────────────────────────────────────
@@ -103,9 +118,16 @@ def sd_faux(monkeypatch):
 
 @pytest.fixture
 def pactl_faux(monkeypatch):
-    """Contrôle la sortie par défaut vue par l'adaptateur."""
-    etat = {"sink": SINK_A}
+    """Contrôle ce que l'adaptateur voit de `pactl` : sortie par défaut ET flux de
+    lecture actifs.
+
+    Les DEUX doivent être bouchonnés. `sink_a_surveiller` interroge aussi
+    `sinks_en_lecture()` : la laisser appeler le vrai `pactl` rendrait ces tests
+    dépendants de la machine hôte (verts par accident sur un Mac, qui n'a pas `pactl`,
+    et imprévisibles sur un poste Linux où de la musique joue)."""
+    etat = {"sink": SINK_A, "en_lecture": set()}
     monkeypatch.setattr(mod, "sink_par_defaut", lambda: etat["sink"])
+    monkeypatch.setattr(mod, "sinks_en_lecture", lambda: set(etat["en_lecture"]))
     return etat
 
 
@@ -116,6 +138,133 @@ def _attendre(predicat, delai=5.0):
             return True
         time.sleep(0.02)
     return False
+
+
+# ── Flux de lecture réels : `pactl list sink-inputs` (docs/49 §11) ───────────────
+
+_SINKS_COURTS = (
+    f"0\t{SINK_A}\tPipeWire\ts32le 2ch 48000Hz\tIDLE\n"
+    f"1\t{SINK_USB}\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n"
+)
+
+
+def _bloc_sink_input(numero, sink_index, suspendu="no"):
+    return (f"Sink Input #{numero}\n"
+            f"\tDriver: PipeWire\n"
+            f"\tSink: {sink_index}\n"
+            f"\tSample Specification: float32le 2ch 48000Hz\n"
+            f"\tCorked: {suspendu}\n"
+            f"\tMute: no\n")
+
+
+def _pactl_bouchonne(monkeypatch, blocs):
+    def faux(*args):
+        if args == ("list", "short", "sinks"):
+            return _SINKS_COURTS
+        if args == ("list", "sink-inputs"):
+            return blocs
+        return None
+    monkeypatch.setattr(mod, "_pactl", faux)
+
+
+def test_sinks_en_lecture_retient_le_sink_du_flux_actif(monkeypatch):
+    _pactl_bouchonne(monkeypatch, _bloc_sink_input(42, 1))
+    assert sinks_en_lecture() == {SINK_USB}
+
+
+def test_sinks_en_lecture_ignore_les_flux_suspendus(monkeypatch):
+    """Un onglet en pause ne joue rien : il ne doit pas désigner une sortie."""
+    _pactl_bouchonne(monkeypatch, _bloc_sink_input(42, 1, suspendu="yes"))
+    assert sinks_en_lecture() == set()
+
+
+def test_sinks_en_lecture_agrege_plusieurs_flux(monkeypatch):
+    _pactl_bouchonne(monkeypatch,
+                     _bloc_sink_input(42, 1) + _bloc_sink_input(43, 0)
+                     + _bloc_sink_input(44, 1, suspendu="yes"))
+    assert sinks_en_lecture() == {SINK_A, SINK_USB}
+
+
+def test_sinks_en_lecture_vide_si_pactl_muet(monkeypatch):
+    monkeypatch.setattr(mod, "_pactl", lambda *a: None)
+    assert sinks_en_lecture() == set()
+
+
+def test_pactl_force_la_locale_c(monkeypatch):
+    """On parse « Sink: » et « Corked: » : `pactl list` traduit ses étiquettes dans la
+    locale de l'utilisateur, et le poste terrain est en français."""
+    vu = {}
+
+    def faux_run(cmd, **kwargs):
+        vu.update(kwargs.get("env") or {})
+        class _R:
+            stdout = ""
+        return _R()
+
+    monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/pactl")
+    monkeypatch.setattr(mod.subprocess, "run", faux_run)
+    mod._pactl("list", "sink-inputs")
+
+    assert vu.get("LC_ALL") == "C"
+
+
+# ── Politique de choix de la sortie (docs/49 §11) ────────────────────────────────
+
+def test_rien_ne_joue_on_garde_la_sortie_par_defaut(sd_faux, pactl_faux):
+    """Réunion physique autour d'un speakerphone : aucun flux de lecture, et c'est
+    parfaitement normal. Il n'y a rien à capter et rien à deviner."""
+    pactl_faux["en_lecture"] = set()
+    assert sink_a_surveiller(sd_faux) == SINK_A
+
+
+def test_la_sortie_par_defaut_joue_on_la_garde(sd_faux, pactl_faux):
+    """Cas courant : comportement identique à celui d'avant le correctif."""
+    pactl_faux["en_lecture"] = {SINK_A}
+    assert sink_a_surveiller(sd_faux) == SINK_A
+
+
+def test_le_son_joue_ailleurs_on_suit_le_son(sd_faux, pactl_faux, caplog):
+    """LE cas de Dario : sortie par défaut inutilisée, tout le son sur le speakerphone."""
+    sd_faux.definir_sinks((SINK_A, SINK_USB))
+    pactl_faux["en_lecture"] = {SINK_USB}
+
+    with caplog.at_level(logging.INFO, logger=mod.__name__):
+        assert sink_a_surveiller(sd_faux) == SINK_USB
+
+    assert any("ne passe pas par la sortie par défaut" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_plusieurs_sorties_jouent_on_ne_devine_pas(sd_faux, pactl_faux, caplog):
+    """Départager au hasard est exactement ce que `index_moniteur` s'interdit : on
+    reste sur la sortie par défaut et on NOMME les candidates dans le journal."""
+    sd_faux.definir_sinks((SINK_A, SINK_USB, SINK_B))
+    pactl_faux["en_lecture"] = {SINK_USB, SINK_B}
+
+    with caplog.at_level(logging.WARNING, logger=mod.__name__):
+        assert sink_a_surveiller(sd_faux) == SINK_A
+
+    message = " ".join(r.getMessage() for r in caplog.records)
+    assert SINK_USB in message and SINK_B in message
+
+
+def test_sortie_active_invisible_de_portaudio_repli_sur_le_defaut(sd_faux, pactl_faux, caplog):
+    """La table PortAudio n'est pas rafraîchie en cours de réunion : une sortie apparue
+    après le début est introuvable. Mieux vaut capturer la mauvaise que rien — c'est le
+    comportement d'avant le correctif, on ne régresse pas dessous."""
+    sd_faux.definir_sinks((SINK_A,))          # le moniteur du USB n'existe pas côté PortAudio
+    pactl_faux["en_lecture"] = {SINK_USB}
+
+    with caplog.at_level(logging.WARNING, logger=mod.__name__):
+        assert sink_a_surveiller(sd_faux) == SINK_A
+
+    assert any("invisible de PortAudio" in r.getMessage() for r in caplog.records)
+
+
+def test_flux_de_lecture_illisibles_ne_font_pas_tomber_la_reunion(sd_faux, pactl_faux, monkeypatch):
+    monkeypatch.setattr(mod, "sinks_en_lecture",
+                        lambda: (_ for _ in ()).throw(OSError("pactl cassé")))
+    assert sink_a_surveiller(sd_faux) == SINK_A
 
 
 # ── Résolution du moniteur ───────────────────────────────────────────────────────
@@ -242,6 +391,48 @@ def test_changement_de_sortie_rouvre_sur_le_nouveau_moniteur(sd_faux, pactl_faux
     finally:
         capture.arreter()
     assert sd_faux.flux_crees[0].ferme is True
+
+
+def test_le_son_qui_part_ailleurs_fait_basculer_la_capture(sd_faux, pactl_faux, monkeypatch):
+    """Bout en bout du terrain 2026-08-31 : la capture démarre sur la sortie par défaut
+    (rien ne joue encore — l'utilisateur lance l'enregistrement AVANT de rejoindre la
+    visio), puis le son apparaît sur le speakerphone. La capture doit suivre.
+
+    Avant le correctif, elle restait sur la sortie par défaut et enregistrait 2 h 19 de
+    zéros parfaits sans qu'aucune garde n'ait de raison de broncher."""
+    monkeypatch.setattr(mod, "_INTERVALLE_SURVEILLANCE_S", 0.05)
+    sd_faux.definir_sinks([SINK_A, SINK_USB])
+    capture = CaptureAudioSystemeMonitor()
+    capture.demarrer()
+    try:
+        assert _attendre(lambda: bool(sd_faux.flux_crees))
+        # La visio démarre : son flux de lecture apparaît sur le speakerphone, alors que
+        # la sortie par défaut ne bouge pas d'un pouce.
+        pactl_faux["en_lecture"] = {SINK_USB}
+        assert _attendre(lambda: len(sd_faux.flux_crees) == 2), "la capture n'a pas suivi le son"
+    finally:
+        capture.arreter()
+    assert sd_faux.flux_crees[0].ferme is True
+
+
+def test_un_clignotement_du_flux_ne_fait_pas_basculer(sd_faux, pactl_faux, monkeypatch):
+    """Hystérésis : un flux de lecture disparaît brièvement à chaque pause ou
+    renégociation. Une bascule coûte une réouverture, donc un trou comblé par du
+    silence — on ne la déclenche pas sur un sondage isolé."""
+    monkeypatch.setattr(mod, "_INTERVALLE_SURVEILLANCE_S", 0.05)
+    monkeypatch.setattr(mod, "_CONFIRMATIONS_AVANT_BASCULE", 5)
+    sd_faux.definir_sinks([SINK_A, SINK_USB])
+    capture = CaptureAudioSystemeMonitor()
+    capture.demarrer()
+    try:
+        assert _attendre(lambda: bool(sd_faux.flux_crees))
+        pactl_faux["en_lecture"] = {SINK_USB}     # un seul sondage le verra…
+        time.sleep(0.08)
+        pactl_faux["en_lecture"] = set()          # …puis ça repart comme avant
+        time.sleep(0.4)
+        assert len(sd_faux.flux_crees) == 1, "bascule sur un simple clignotement"
+    finally:
+        capture.arreter()
 
 
 def test_sortie_inchangee_ne_rouvre_pas(sd_faux, pactl_faux, monkeypatch):
