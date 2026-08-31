@@ -35,13 +35,29 @@ def test_combo_modele_transcription_persiste(qapp, tmp_path):
 
 
 def test_combo_modele_cr_persiste(qapp, tmp_path):
+    # small, pas medium : medium est le défaut depuis la v5, le sélectionner
+    # n'émettrait pas currentIndexChanged et le test ne persisterait rien.
     cfg = _config(tmp_path)
     vue = RemoteIAView(cfg)
-    idx = vue._combo_modele_cr.findData("mistral-medium-latest")
+    idx = vue._combo_modele_cr.findData("mistral-small-latest")
     vue._combo_modele_cr.setCurrentIndex(idx)
     relu = Config(chemin=tmp_path / "config.json")
     relu.charger()
-    assert relu.get("mistral_modele_cr") == "mistral-medium-latest"
+    assert relu.get("mistral_modele_cr") == "mistral-small-latest"
+
+
+def test_combo_modele_cr_demarre_sur_le_defaut(qapp, tmp_path):
+    cfg = _config(tmp_path)
+    vue = RemoteIAView(cfg)
+    assert vue._combo_modele_cr.currentData() == "mistral-medium-latest"
+
+
+def test_mistral_large_retire_du_selecteur(qapp, tmp_path):
+    """403 tier_not_allowed depuis fin août 2026 (migration config v5) : le
+    proposer reconduirait l'échec qu'on vient de migrer."""
+    cfg = _config(tmp_path)
+    vue = RemoteIAView(cfg)
+    assert vue._combo_modele_cr.findData("mistral-large-latest") == -1
 
 
 def test_case_forcer_voxtral_decochee_par_defaut(qapp, tmp_path):

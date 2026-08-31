@@ -32,7 +32,9 @@ _DELAI_AUTOSAVE_MS = 400
 
 # Modèles proposés au combo — à reconfirmer sur docs.mistral.ai (docs/42 §5).
 _MODELES_TRANSCRIPTION = ["voxtral-mini-latest"]
-_MODELES_CR = ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"]
+# mistral-large retiré le 2026-08-31 : 403 tier_not_allowed sur notre abonnement
+# (restreint aux tiers supérieurs par Mistral) — migration config v5.
+_MODELES_CR = ["mistral-small-latest", "mistral-medium-latest"]
 
 
 def _libelle_champ(texte: str) -> QLabel:

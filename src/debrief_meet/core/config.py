@@ -15,7 +15,7 @@ from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
 
-VERSION_COURANTE = 4
+VERSION_COURANTE = 5
 
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
@@ -90,10 +90,11 @@ _DEFAUTS: dict[str, Any] = {
     # décision adaptative §1) ; "voxtral" : force la re-transcription cloud.
     "mistral_source_transcription": "auto",
     "mistral_modele_transcription": "voxtral-mini-latest",
-    # large par défaut (2026-08-06) : les prompts CR portent des consignes exigeantes
-    # (camps, anti-invention) — on aligne le défaut sur le modèle le plus robuste,
-    # déjà utilisé en réel sur le poste de Sylvain.
-    "mistral_modele_cr": "mistral-large-latest",
+    # medium par défaut (2026-08-31) : mistral-large refuse désormais nos clés
+    # (403 tier_not_allowed, restreint aux abonnements supérieurs — constaté en réel
+    # sur le CR de la réunion commerce). mistral-medium est le plus robuste des
+    # modèles encore accessibles sur notre tier.
+    "mistral_modele_cr": "mistral-medium-latest",
     "mistral_duree_max_min": 180,
     "mistral_confidentialite_acceptee": False,
 }
@@ -158,6 +159,8 @@ class Config:
             self._migrer_v3_modele_cr(donnees)
         if version < 4:
             self._migrer_v4_retrait_prompt_pipedrive(donnees)
+        if version < 5:
+            self._migrer_v5_modele_cr_medium(donnees)
         donnees["version"] = VERSION_COURANTE
         return True
 
@@ -230,3 +233,13 @@ class Config:
         un autre choix explicite est conservé."""
         if donnees.get("mistral_modele_cr") == "mistral-small-latest":
             donnees["mistral_modele_cr"] = "mistral-large-latest"
+
+    @staticmethod
+    def _migrer_v5_modele_cr_medium(donnees: dict[str, Any]) -> None:
+        """v5 : mistral-large → mistral-medium. Contrairement aux migrations v2/v4,
+        on migre AUSSI un choix explicite : mistral-large répond 403
+        `tier_not_allowed` sur notre tier depuis fin août 2026 (constaté le
+        2026-08-31), et le modèle est retiré du sélecteur — conserver la valeur
+        figerait un échec que l'UI ne permet plus de corriger vers autre chose."""
+        if donnees.get("mistral_modele_cr") in ("mistral-large-latest", "mistral-large-2512"):
+            donnees["mistral_modele_cr"] = "mistral-medium-latest"

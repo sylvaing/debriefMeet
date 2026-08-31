@@ -31,7 +31,7 @@ class TestDefauts:
         assert config_tmp.get("mistral_base_url") == "https://api.mistral.ai"
         assert config_tmp.get("mistral_source_transcription") == "auto"
         assert config_tmp.get("mistral_modele_transcription") == "voxtral-mini-latest"
-        assert config_tmp.get("mistral_modele_cr") == "mistral-large-latest"
+        assert config_tmp.get("mistral_modele_cr") == "mistral-medium-latest"
         assert config_tmp.get("mistral_duree_max_min") == 180
         assert config_tmp.get("mistral_confidentialite_acceptee") is False
 
@@ -224,12 +224,14 @@ class TestMigrationV2Prompts:
 
 
 class TestMigrationV3ModeleCr:
-    """v2 → v3 : modèle de CR par défaut mistral-small → mistral-large."""
+    """v2 → v3 : modèle de CR par défaut mistral-small → mistral-large.
+    Depuis la v5, la chaîne complète aboutit à mistral-medium (large → 403
+    tier_not_allowed) — les assertions portent sur l'état final."""
 
     def test_ancien_defaut_migre(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier(
             {"version": 2, "mistral_modele_cr": "mistral-small-latest"})
-        assert cfg.get("mistral_modele_cr") == "mistral-large-latest"
+        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
         assert cfg.get("version") == VERSION_COURANTE
 
     def test_choix_explicite_conserve(self, config_tmp_avec_fichier):
@@ -242,10 +244,34 @@ class TestMigrationV3ModeleCr:
         cfg = config_tmp_avec_fichier(
             {"version": 1, "mistral_modele_cr": "mistral-small-latest",
              "prompts": [{"titre": "Perso", "contenu": "X"}]})
-        assert cfg.get("mistral_modele_cr") == "mistral-large-latest"
+        # v3 l'a passé à large, v5 à medium : résultat net.
+        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
         titres = [p["titre"] for p in cfg.get("prompts")]
         # v2 a ajouté les deux CR BlueMind, v4 a retiré le Pipedrive : résultat net.
         assert titres == ["Perso", "CR full .md"]
+        assert cfg.get("version") == VERSION_COURANTE
+
+
+class TestMigrationV5ModeleCrMedium:
+    """v4 → v5 : mistral-large → mistral-medium (403 tier_not_allowed depuis fin
+    août 2026, modèle retiré du sélecteur). Migre AUSSI un choix explicite —
+    conserver large figerait un échec que l'UI ne permet plus de corriger."""
+
+    def test_large_latest_migre(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 4, "mistral_modele_cr": "mistral-large-latest"})
+        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert cfg.get("version") == VERSION_COURANTE
+
+    def test_large_date_migre(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 4, "mistral_modele_cr": "mistral-large-2512"})
+        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+
+    def test_small_explicite_conserve(self, config_tmp_avec_fichier):
+        cfg = config_tmp_avec_fichier(
+            {"version": 4, "mistral_modele_cr": "mistral-small-latest"})
+        assert cfg.get("mistral_modele_cr") == "mistral-small-latest"
         assert cfg.get("version") == VERSION_COURANTE
 
 
