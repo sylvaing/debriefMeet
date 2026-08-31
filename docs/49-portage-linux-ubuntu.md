@@ -565,9 +565,88 @@ diarization (docs/29), pas de dictée/journal muets (docs/27). Restent applicabl
 | Risque | Parade |
 |--------|--------|
 | ~~Nom/visibilité de la source `.monitor` via PortAudio~~ | **Levé** par le spike du 2026-08-12 (§5.1) : visibles sous le hostapi PulseAudio, nom = `<sink>.monitor`, résolus via `pactl` |
-| **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence |
+| **Bascule de sortie silencieuse** : le moniteur d'un sink inactif rend du silence parfait sans erreur — indiscernable d'une réunion calme | Surveillance active de `pactl get-default-sink` + réouverture (§5.1) ; **jamais** de détection par exception ou par seuil de silence. ⚠️ **Parade incomplète** : elle ne voit que les changements de sortie **par défaut**, pas un flux routé par application vers une autre sortie — cf. §11 (terrain 2026-08-31) |
 | ~~Un sink qui **disparaît** pourrait tuer le flux~~ | **Mesuré** (Q6) : le flux **gèle en silence**, `active` reste `True`, aucune exception → chien de garde sur les trames + repli silence (§5.1) |
 | Tray absent si l'extension AppIndicator est désactivée sur le poste cible | Vérifier au déploiement ; documenter dans la notice (`gnome-extensions enable ubuntu-appindicators…`) |
 | Casque Bluetooth : bascule de profil A2DP↔HFP quand le micro BT est utilisé (le monitor change de format) | Même famille que les cas BT Windows (docs/34 §2.3) : réouverture à chaud + logs ; recommander micro filaire/intégré en premier déploiement |
 | Python 3.13 non packagé dans l'archive 26.04 | PPA deadsnakes (constat au provisionnement) |
 | Liste `Depends` Qt incomplète → app qui ne démarre pas sur un poste nu | La fumée LXC part d'un conteneur sans deps de dev ; compléter `Depends` jusqu'à `--version` vert |
+
+## 11. Point ouvert — le moniteur suit la sortie *par défaut*, pas le son réel
+
+**À instruire dans une session dédiée. Rien n'est corrigé à ce jour.**
+
+### 11.1 Ce qui a été mesuré (terrain 2026-08-31, poste Ubuntu 26.04)
+
+Réunion de 2 h 19 (`2026-08-31_09-15-44_COMEX`). `systeme.opus` est à **99,97 %
+d'échantillons exactement nuls** — deux brèves bouffées seulement, vers 70 et 100 min.
+`moi.opus`, elle, est saine de bout en bout (RMS −24,8 dB, parole continue).
+
+Le log est sans ambiguïté :
+
+```
+09:15:44  Capture système ouverte sur 'alsa_output.pci-…HiFi__Speaker__sink.monitor' (index 20)
+11:35:57  Liste des entrées MODIFIÉE : -['Logi Group Speakerphone Stéréo analogique']
+```
+
+L'application a donc surveillé les **haut-parleurs internes**, pendant que l'utilisateur
+travaillait sur un **speakerphone Logitech USB** (débranché une minute après la fin de la
+réunion). Aucune des deux gardes de §5.1 n'a rien signalé, et c'est logique :
+
+* la garde « bascule de sortie » guette un **changement** de `pactl get-default-sink` —
+  or la sortie par défaut n'a **jamais changé**, elle n'était simplement jamais utilisée ;
+* la garde « flux gelé » guette l'**absence de trames** — or le moniteur d'un sink inactif
+  livre des trames, pleines de zéros, indéfiniment.
+
+Les deux gardes fonctionnent exactement comme spécifié. C'est la **prémisse** qui est
+fausse : `sink_par_defaut()` suppose que le son de la réunion passe par la sortie par
+défaut. Un flux routé par application (le navigateur ou le client visio qui pointe vers
+un périphérique choisi dans sa propre interface) invalide cette prémisse sans rien
+déclencher.
+
+⚠️ **Ce jour-là le coût a été nul** — le micro du speakerphone captait toute la salle,
+voix distantes comprises, donc la réunion était intégralement récupérable depuis
+`moi.opus`. **En visio avec un casque, la même configuration perdrait définitivement les
+voix distantes**, et le log dirait que tout va bien.
+
+### 11.2 Piste à instruire : `pactl list sink-inputs`
+
+Résoudre le moniteur depuis **où le son se trouve réellement**, et non depuis la sortie
+par défaut. `pactl list sink-inputs` énumère les flux de lecture actifs avec, pour
+chacun, le sink de destination et l'application émettrice :
+
+```
+Sink Input #42
+    Sink: 15
+    Properties:
+        application.name = "Firefox"
+        media.name = "Playback"
+```
+
+Questions à trancher avant d'écrire la moindre ligne — aucune n'est tranchée
+aujourd'hui :
+
+1. **Quel sink choisir** quand plusieurs portent des flux actifs (musique dans un onglet,
+   visio dans un autre, notifications système) ? Le plus récemment actif ? Celui d'une
+   application reconnue comme visio ? Le premier venu serait un retour au « repli aveugle »
+   que §5.1 s'interdit explicitement.
+2. **Quand résoudre** ? À l'ouverture seulement, ou en continu ? Un flux visio peut
+   n'apparaître qu'après le démarrage de la réunion (l'utilisateur rejoint la visio après
+   avoir lancé l'enregistrement) — cas très probable en pratique.
+3. **Que faire si le sink retenu change en cours de réunion** ? Rouvrir la capture, avec
+   le repli silence de §5.1 pour ne pas décaler les pistes (docs/48) — mais une bascule
+   par erreur de jugement coûterait plus cher que l'immobilisme.
+4. **Interaction avec la table PortAudio non rafraîchie** (§5.1) : un sink apparu après le
+   début de la réunion reste invisible à `sounddevice`. Le WARNING « Moniteur … introuvable
+   parmi les périphériques PortAudio » du 2026-08-27 le montre déjà en vrai. Résoudre le
+   bon sink ne sert à rien si on ne peut pas l'ouvrir — cette limite-là doit être levée
+   d'abord, ou en même temps.
+5. **Coût** : `pactl list sink-inputs` est plus lourd que `get-default-sink` (déjà appelé
+   toutes les 2 s, cf. §5.1). Mesurer avant d'adopter la même cadence.
+
+⚠️ **Ne pas régler ça par un seuil de silence.** « La piste système est vide donc quelque
+chose ne va pas » est faux : une réunion physique autour d'un speakerphone produit
+légitimement une piste système vide, et c'est exactement le cas ci-dessus. Le verdict doit
+venir du **routage**, jamais du niveau audio — c'est la même leçon que le garde-fou AEC de
+docs/48 §8.6, qui accusait les flux à partir d'une mesure incapable de trancher.
+
