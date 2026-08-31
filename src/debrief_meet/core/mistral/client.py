@@ -193,7 +193,13 @@ class ClientMistral:
             else:
                 raise ErreurQuotaMistral(f"Quota dépassé (429) sur {chemin}")
         if reponse.status_code in (401, 403):
-            raise ErreurAuthMistral(f"Authentification refusée ({reponse.status_code}) sur {chemin}")
+            # Le corps porte la vraie cause — cas réel du 2026-08-31 : 403
+            # tier_not_allowed (mistral-large restreint à un tier supérieur), que le
+            # statut seul faisait passer pour une clé invalide. Corps de réponse
+            # serveur uniquement : la clé API n'y figure jamais.
+            raise ErreurAuthMistral(
+                f"Authentification refusée ({reponse.status_code}) sur {chemin} : "
+                f"{reponse.text[:300]}")
         if reponse.status_code in (400, 415, 422):
             raise ErreurFormatMistral(
                 f"Requête refusée ({reponse.status_code}) sur {chemin} : {reponse.text[:300]}")

@@ -106,6 +106,26 @@ def test_erreur_auth(code):
         client.get("v1/models")
 
 
+@respx.mock
+def test_erreur_auth_inclut_le_corps_de_la_reponse():
+    """Le corps porte la vraie cause (cas réel du 2026-08-31 : 403 tier_not_allowed
+    que le statut seul faisait passer pour une clé invalide)."""
+    corps = '{"message":"This model is not available in your subscription tier","code":"1910"}'
+    respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(403, text=corps))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurAuthMistral, match="subscription tier"):
+        client.get("v1/models")
+
+
+@respx.mock
+def test_erreur_auth_tronque_le_corps():
+    respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(401, text="x" * 1000))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurAuthMistral) as exc:
+        client.get("v1/models")
+    assert len(str(exc.value)) < 400
+
+
 @pytest.mark.parametrize("code", [400, 415, 422])
 @respx.mock
 def test_erreur_format(code):
