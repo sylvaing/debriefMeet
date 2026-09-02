@@ -4,11 +4,13 @@ Calqué sur l'onboarding diarization (`ui/assistant_diarization.py`, docs/13) : 
 utilisateur non technique de « je n'ai rien » à « ma clé est saisie et testée ». Pas
 d'ordre de grandeur de coût (règle transverse, docs/42 §11) — seulement confidentialité
 (serveurs UE) et existence d'un tier gratuit, sans chiffres.
+
+Les pièces d'étape (maquette SVG, titre, bouton d'ouverture du navigateur) sont
+communes avec l'assistant diarization : cf. `ui/assistant_etape.py`.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, QUrl, Qt, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QThread, Slot
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from debrief_meet.core.arret_threads import proteger_thread
 from debrief_meet.core.config import Config
+from debrief_meet.ui.assistant_etape import illustration, page_etape, titre_etape
 from debrief_meet.ui.dialogues import CarteFlottante
 from debrief_meet.ui.testeur_connexion_mistral import TesteurConnexionMistral
 
@@ -35,7 +38,7 @@ _PAGE_TEST = 3
 
 class AssistantMistral(CarteFlottante):
     def __init__(self, config: Config, parent: QWidget | None = None) -> None:
-        super().__init__(parent, largeur_carte=460)
+        super().__init__(parent, largeur_carte=520)
         self.setWindowTitle("Activer Mistral — debriefMeet")
         self._config = config
         self._succes = False
@@ -49,12 +52,14 @@ class AssistantMistral(CarteFlottante):
     def _construire_ui(self) -> None:
         layout = self.corps
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._page(
+        self._stack.addWidget(page_etape(
+            "mistral_etape_1.svg",
             "1. Créer un compte Mistral",
             "debriefMeet génère les comptes-rendus via l'API Mistral (serveurs "
             "européens). Créez un compte si vous n'en avez pas.",
             URL_COMPTE, "Créer un compte"))
-        self._stack.addWidget(self._page(
+        self._stack.addWidget(page_etape(
+            "mistral_etape_2.svg",
             "2. Générer une clé API",
             "Ouvrez la page des clés API, cliquez « Create new key », donnez-lui un "
             "nom puis copiez la clé générée — elle ne s'affiche qu'une seule fois. "
@@ -76,27 +81,11 @@ class AssistantMistral(CarteFlottante):
         barre.addWidget(self._btn_suiv)
         layout.addLayout(barre)
 
-    def _page(self, titre: str, texte: str, url: str, libelle_lien: str) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        t = QLabel(titre)
-        t.setStyleSheet("font-weight:bold;font-size:15px;")
-        lay.addWidget(t)
-        corps = QLabel(texte)
-        corps.setWordWrap(True)
-        lay.addWidget(corps)
-        lien = QPushButton(libelle_lien)
-        lien.clicked.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
-        lay.addWidget(lien, alignment=Qt.AlignmentFlag.AlignLeft)
-        lay.addStretch()
-        return w
-
     def _page_cle(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        t = QLabel("3. Coller la clé")
-        t.setStyleSheet("font-weight:bold;font-size:15px;")
-        lay.addWidget(t)
+        lay.addWidget(illustration("mistral_etape_3.svg"))
+        lay.addWidget(titre_etape("3. Coller la clé"))
         corps = QLabel("Collez ici la clé de l'étape précédente.")
         corps.setWordWrap(True)
         lay.addWidget(corps)
@@ -113,6 +102,16 @@ class AssistantMistral(CarteFlottante):
     def _page_test(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
+        # Maquette d'ARRIVÉE, pas de lieu à visiter : masquée tant que le test n'a pas
+        # réussi, sinon elle annonce « Connexion réussie » pendant que le libellé juste
+        # en dessous dit encore « Test de la connexion… », et pire encore après un échec.
+        # Sa place reste prise (le QStackedWidget se dimensionne sur la page la plus
+        # haute) : rien ne saute quand elle apparaît, et le ressort ci-dessus centre le
+        # contenu dans cet espace au lieu de laisser la barre seule en haut du vide.
+        lay.addStretch()
+        self._illustration_fin = illustration("mistral_etape_4.svg")
+        self._illustration_fin.setVisible(False)
+        lay.addWidget(self._illustration_fin)
         self._label_resultat = QLabel("Test de la connexion…")
         self._label_resultat.setWordWrap(True)
         lay.addWidget(self._label_resultat)
@@ -170,6 +169,7 @@ class AssistantMistral(CarteFlottante):
             return
         self._succes = False
         self._aller(_PAGE_TEST)
+        self._illustration_fin.setVisible(False)
         self._label_resultat.setText("Test de la connexion…")
         self._barre.setRange(0, 0)
         self._barre.show()
@@ -194,6 +194,7 @@ class AssistantMistral(CarteFlottante):
         self._config.set("mistral_cle_api", cle)
         self._config.sauvegarder()
         self._barre.hide()
+        self._illustration_fin.setVisible(True)
         self._label_resultat.setText("✅ Connexion réussie. Vous pouvez fermer cette fenêtre.")
         self._btn_suiv.setText("Terminer")
         self._btn_suiv.setEnabled(True)

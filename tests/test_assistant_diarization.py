@@ -7,13 +7,12 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel
 
 from debrief_meet.ui.assistant_diarization import (
-    _DOSSIER_ASSETS,
     _PAGE_TELECHARGEMENT,
     _PAGE_TOKEN,
     AssistantDiarization,
-    _pixmap_svg,
     _WorkerTelechargement,
 )
+from debrief_meet.ui.assistant_etape import DOSSIER_ASSETS
 
 
 # ── Navigation entre les étapes ─────────────────────────────────────────────────
@@ -40,12 +39,15 @@ def test_precedent_desactive_a_la_premiere_etape(qapp):
 
 def test_assets_illustrations_presents():
     for i in range(1, 6):
-        assert (_DOSSIER_ASSETS / f"diar_etape_{i}.svg").exists()
+        assert (DOSSIER_ASSETS / f"diar_etape_{i}.svg").exists()
 
 
-def test_pixmap_svg_rend_une_image(qapp):
-    pm = _pixmap_svg(_DOSSIER_ASSETS / "diar_etape_1.svg")
-    assert not pm.isNull() and pm.width() > 0
+def test_maquette_de_fin_masquee_avant_le_succes(qapp):
+    """Elle affirme « Diarization activée » : la montrer pendant le téléchargement (ou
+    après un échec) contredirait le libellé juste en dessous."""
+    a = AssistantDiarization()
+    a._stack.setCurrentIndex(_PAGE_TELECHARGEMENT)
+    assert a._illustration_fin.isVisibleTo(a) is False
 
 
 def test_chaque_etape_a_son_illustration(qapp):
@@ -107,6 +109,7 @@ def test_verifier_telecharge_puis_succes(qapp, qtbot, monkeypatch):
     assert appels == ["hf_abc"]
     assert "activée" in a._label_resultat.text().lower()
     assert a._btn_suiv.text() == "Terminer"
+    assert a._illustration_fin.isVisibleTo(a) is True       # maquette révélée au succès
 
 
 def test_echec_permet_de_reessayer(qapp, qtbot, monkeypatch):
@@ -123,3 +126,4 @@ def test_echec_permet_de_reessayer(qapp, qtbot, monkeypatch):
     assert a._succes is False
     assert "token incorrect" in a._label_resultat.text().lower()
     assert a._btn_suiv.text() == "Réessayer"
+    assert a._illustration_fin.isVisibleTo(a) is False      # jamais de succès affiché

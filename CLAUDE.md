@@ -336,6 +336,46 @@ n'existait pas encore ce jour-là, et l'utilisatrice portait déjà un casque. *
 livré à Alix** : son poste tourne `1cbbd5d`, le correctif attend le prochain build
 Windows (cosmétique — ses CR sortent correctement).
 
+Après les assistants de configuration rendus lisibles (2026-09-02, **validé
+manuellement** par Sylvain) : **1636 passed, 0 échec** sur `main` en environnement
+complet (1625 avant, +11 tests) — 1629 passed en clone partiel, avec les 2 échecs
+d'environnement habituels (helper Swift non compilé, audio canonique du benchmark). Deux défauts d'affordance sur les assistants guidés (diarization docs/13,
+clé API Mistral docs/42 §9.4), plus un troisième trouvé en regardant le rendu :
+
+1. **Le bouton « Créer un compte » ne se voyait pas comme cliquable** — il était
+   construit en `QPushButton` **sans `objectName`**, or `theme.qss` ne donne fond et
+   bordure qu'aux boutons nommés (`#primary`/`#secondary`/…) : la règle nue ne pose que
+   police et rayon, donc il se peignait en gras noir sur blanc, indiscernable d'un
+   paragraphe. C'étaient les 2 seuls `QPushButton` anonymes de tout `ui/`. Ils passent en
+   `secondary` + icône Phosphor `arrow-square-out` (dire *qu'on quitte l'app pour le
+   navigateur*, ce qu'aucune couleur ne porte ; le bleu reste à « Suivant », seule sortie
+   de l'étape). Garde-fou : `test_assistant_etape.py` parcourt les pages **réelles** des
+   deux assistants et refuse tout bouton de page sans nom de style ni icône.
+2. **L'assistant Mistral n'avait aucune illustration** — et c'était structurel : tout le
+   mécanisme (`_pixmap_svg`, `_illustration`) vivait *dans* `assistant_diarization.py`.
+   Extrait dans `ui/assistant_etape.py` (maquette, titre, bouton de lien, fabrique
+   `page_etape`), qui dédoublonne au passage les deux `_page()` identiques. 4 maquettes
+   `mistral_etape_1..4.svg` dans le style des 5 existantes — schématiques et portant les
+   **libellés exacts à chercher sur la vraie page** (« Create new key ») plutôt que
+   fidèles au pixel : ce sont des UI tierces qui bougent, une maquette approximative
+   reste utile après un redesign, une capture fidèle devient trompeuse. Carte passée de
+   460 à 520 px comme la diarization — une maquette rendue à 460 ne tient pas dans les
+   416 px utiles d'une carte de 460 (`CarteFlottante` retire 22 px de chaque côté).
+3. **La maquette de la dernière page mentait** (préexistant côté diarization) : elle
+   affirmait « Diarization activée » / « Connexion réussie » **pendant** le
+   téléchargement ou le test, et restait affichée après un **échec**, au-dessus du
+   libellé qui disait le contraire. Une maquette d'arrivée n'est plus révélée qu'au
+   succès ; sa place restant prise par la page la plus haute de la pile, un ressort de
+   centrage évite que l'attente ne montre une barre de progression seule en haut du
+   vide. ⚠️ `test_chaque_etape_a_son_illustration` ne pouvait pas voir ce défaut : il
+   vérifie qu'un `QLabel` porte un pixmap, jamais qu'il est **visible** — les 3 tests
+   ajoutés portent sur `isVisibleTo` dans les 3 états (attente, succès, échec).
+
+⚠️ Méthode qui a sorti les points 3 et le dégradé de la marque Mistral (15 tuiles
+fusionnées en un aplat faute de jours) : **rendre les écrans offscreen et les regarder**
+(`QT_QPA_PLATFORM=offscreen`, `carte.grab().save(...)`), pas relire le code. Les deux
+sont invisibles à la lecture.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |

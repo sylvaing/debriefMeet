@@ -4,16 +4,14 @@ Cinq étapes : créer un compte Hugging Face → accepter la licence du modèle 
 token (read) → coller le token → télécharger. Le token est utilisé **à la volée** au
 téléchargement puis **oublié** (jamais stocké). Cf. docs/13-diarization-onboarding.md.
 
-Lot 1 : assistant fonctionnel avec **placeholders visuels** (les illustrations finales
-sont conçues en Lot 2).
+Les pièces d'étape (maquette SVG, titre, bouton d'ouverture du navigateur) sont
+communes avec l'assistant Mistral : cf. `ui/assistant_etape.py`.
 """
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QImage, QPainter, QPixmap
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -26,32 +24,10 @@ from PySide6.QtWidgets import (
 )
 
 from debrief_meet.core.arret_threads import proteger_thread
+from debrief_meet.ui.assistant_etape import illustration, page_etape, titre_etape
 from debrief_meet.ui.dialogues import CarteFlottante
 
 logger = logging.getLogger(__name__)
-
-_DOSSIER_ASSETS = Path(__file__).parent / "assets"
-_LARGEUR_ILLUSTRATION = 460
-
-
-def _pixmap_svg(chemin: Path, largeur: int = _LARGEUR_ILLUSTRATION, dpr: int = 2) -> QPixmap:
-    """Rend un SVG d'asset en QPixmap à `largeur` (ratio préservé, net en Retina via dpr)."""
-    from PySide6.QtSvg import QSvgRenderer
-
-    rendu = QSvgRenderer(str(chemin))
-    taille = rendu.defaultSize()
-    if not taille.isValid() or taille.width() <= 0:
-        return QPixmap()
-    hauteur = round(largeur * taille.height() / taille.width())
-    image = QImage(largeur * dpr, hauteur * dpr, QImage.Format.Format_ARGB32)
-    image.fill(Qt.GlobalColor.transparent)
-    peintre = QPainter(image)
-    peintre.setRenderHint(QPainter.RenderHint.Antialiasing)
-    rendu.render(peintre)
-    peintre.end()
-    pixmap = QPixmap.fromImage(image)
-    pixmap.setDevicePixelRatio(dpr)
-    return pixmap
 
 URL_COMPTE = "https://huggingface.co/join"
 URL_LICENCE = "https://huggingface.co/pyannote/speaker-diarization-community-1"
@@ -97,19 +73,19 @@ class AssistantDiarization(CarteFlottante):
     def _construire_ui(self) -> None:
         layout = self.corps
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._page(
+        self._stack.addWidget(page_etape(
             "diar_etape_1.svg",
             "1. Créer un compte Hugging Face",
             "La diarization (« qui a parlé ») utilise un modèle gratuit hébergé sur "
             "Hugging Face. Créez un compte si vous n'en avez pas.",
             URL_COMPTE, "Créer un compte"))
-        self._stack.addWidget(self._page(
+        self._stack.addWidget(page_etape(
             "diar_etape_2.svg",
             "2. Accepter la licence du modèle",
             "Ouvrez la page du modèle et cliquez « Agree and access repository » pour "
             "accepter ses conditions d'utilisation (gratuit).",
             URL_LICENCE, "Ouvrir la page du modèle"))
-        self._stack.addWidget(self._page(
+        self._stack.addWidget(page_etape(
             "diar_etape_3.svg",
             "3. Créer un jeton d'accès",
             "Créez un token de type « Read ». Il sert uniquement à télécharger le modèle.",
@@ -130,43 +106,11 @@ class AssistantDiarization(CarteFlottante):
         barre.addWidget(self._btn_suiv)
         layout.addLayout(barre)
 
-    def _illustration(self, fichier: str) -> QLabel:
-        """Illustration de l'étape (SVG d'asset). Repli discret si l'asset manque."""
-        lab = QLabel()
-        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        chemin = _DOSSIER_ASSETS / fichier
-        pixmap = _pixmap_svg(chemin) if chemin.exists() else QPixmap()
-        if pixmap.isNull():
-            lab.setText("(illustration indisponible)")
-            lab.setStyleSheet("color:gray;")
-        else:
-            lab.setPixmap(pixmap)
-        return lab
-
-    def _page(self, fichier: str, titre: str, texte: str,
-              url: str, libelle_lien: str) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.addWidget(self._illustration(fichier))
-        t = QLabel(titre)
-        t.setStyleSheet("font-weight:bold;font-size:15px;")
-        lay.addWidget(t)
-        corps = QLabel(texte)
-        corps.setWordWrap(True)
-        lay.addWidget(corps)
-        lien = QPushButton(libelle_lien)
-        lien.clicked.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
-        lay.addWidget(lien, alignment=Qt.AlignmentFlag.AlignLeft)
-        lay.addStretch()
-        return w
-
     def _page_token(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.addWidget(self._illustration("diar_etape_4.svg"))
-        t = QLabel("4. Coller le token")
-        t.setStyleSheet("font-weight:bold;font-size:15px;")
-        lay.addWidget(t)
+        lay.addWidget(illustration("diar_etape_4.svg"))
+        lay.addWidget(titre_etape("4. Coller le token"))
         corps = QLabel(
             "Collez ici le token de l'étape 3. Il est utilisé seulement pour télécharger "
             "le modèle, puis oublié — il n'est jamais enregistré.")
@@ -190,7 +134,14 @@ class AssistantDiarization(CarteFlottante):
     def _page_telechargement(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.addWidget(self._illustration("diar_etape_5.svg"))
+        # Maquette d'ARRIVÉE, masquée tant que le téléchargement n'a pas abouti : elle
+        # affirmait « Diarization activée » pendant le téléchargement, et après un échec.
+        # Même construction que `assistant_mistral._page_test` (ressort de centrage
+        # inclus), où elle est commentée en détail.
+        lay.addStretch()
+        self._illustration_fin = illustration("diar_etape_5.svg")
+        self._illustration_fin.setVisible(False)
+        lay.addWidget(self._illustration_fin)
         self._label_resultat = QLabel("Téléchargement du modèle…")
         self._label_resultat.setWordWrap(True)
         lay.addWidget(self._label_resultat)
@@ -248,6 +199,7 @@ class AssistantDiarization(CarteFlottante):
             return
         self._succes = False
         self._aller(_PAGE_TELECHARGEMENT)
+        self._illustration_fin.setVisible(False)
         self._label_resultat.setText(
             "Téléchargement du modèle… (une seule fois, cela peut prendre une minute)")
         self._barre.setRange(0, 0)
@@ -272,6 +224,7 @@ class AssistantDiarization(CarteFlottante):
     def _sur_succes(self) -> None:
         self._succes = True
         self._barre.hide()
+        self._illustration_fin.setVisible(True)
         self._label_resultat.setText("✅ Diarization activée. Vous pouvez fermer cette fenêtre.")
         self._btn_suiv.setText("Terminer")
         self._btn_suiv.setEnabled(True)

@@ -1,0 +1,17 @@
+<svg width="360" height="196" viewBox="0 0 360 196" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Arial, sans-serif">
+  <title>Étape 3 — Coller la clé dans debriefMeet</title>
+  <rect x="6" y="6" width="348" height="184" rx="12" fill="#ffffff" stroke="#D2D6DC" stroke-width="1.5"/>
+  <line x1="6" y1="40" x2="354" y2="40" stroke="#E9ECF1"/>
+  <rect x="16" y="14" width="22" height="22" rx="6" fill="#0A84FF"/>
+  <rect x="20" y="24" width="2.4" height="4" rx="1.2" fill="#fff"/><rect x="24" y="21" width="2.4" height="10" rx="1.2" fill="#fff"/><rect x="28" y="18" width="2.4" height="16" rx="1.2" fill="#fff"/><rect x="32" y="22" width="2.4" height="8" rx="1.2" fill="#fff"/>
+  <text x="46" y="29" font-size="12" fill="#1F2933" font-weight="500">debriefMeet</text>
+  <text x="24" y="62" font-size="11" fill="#7B8794">Coller la clé</text>
+  <rect x="24" y="70" width="312" height="28" rx="7" fill="#F7F8FA" stroke="#0A84FF"/>
+  <text x="34" y="88" font-size="12" fill="#5A6573" font-family="Menlo, monospace">••••••••••••••••••••••••</text>
+  <rect x="26" y="116" width="12" height="10" rx="2" fill="#7B8794"/>
+  <path d="M28 116 v-3 a4 4 0 0 1 8 0 v3" fill="none" stroke="#7B8794" stroke-width="1.8"/>
+  <text x="46" y="125" font-size="10.5" fill="#7B8794">Enregistrée sur ce poste — serveurs Mistral en UE</text>
+  <rect x="24" y="150" width="204" height="30" rx="9" fill="none" stroke="#0A84FF" stroke-opacity="0.30" stroke-width="3"/>
+  <rect x="28" y="154" width="196" height="22" rx="7" fill="#0A84FF"/>
+  <text x="126" y="169" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="500">Vérifier et enregistrer</text>
+</svg>

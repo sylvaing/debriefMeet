@@ -1,0 +1,23 @@
+<svg width="360" height="196" viewBox="0 0 360 196" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Arial, sans-serif">
+  <title>Étape 1 — Créer un compte Mistral</title>
+  <rect x="6" y="6" width="348" height="184" rx="12" fill="#ffffff" stroke="#D2D6DC" stroke-width="1.5"/>
+  <line x1="6" y1="40" x2="354" y2="40" stroke="#E9ECF1"/>
+  <circle cx="24" cy="23" r="4" fill="#FF5F57"/><circle cx="40" cy="23" r="4" fill="#FEBC2E"/><circle cx="56" cy="23" r="4" fill="#28C840"/>
+  <rect x="78" y="14" width="262" height="18" rx="9" fill="#F1F3F6"/>
+  <text x="90" y="26" font-size="11" fill="#7B8794">console.mistral.ai</text>
+  <!-- Marque Mistral schématique : cinq bandes, du jaune au rouge (couleurs officielles). -->
+  <g>
+    <rect x="153" y="56" width="17" height="5" fill="#FFD800"/><rect x="172" y="56" width="17" height="5" fill="#FFD800"/><rect x="191" y="56" width="17" height="5" fill="#FFD800"/>
+    <rect x="153" y="62" width="17" height="5" fill="#FFAF00"/><rect x="172" y="62" width="17" height="5" fill="#FFAF00"/><rect x="191" y="62" width="17" height="5" fill="#FFAF00"/>
+    <rect x="153" y="68" width="17" height="5" fill="#FF8205"/><rect x="172" y="68" width="17" height="5" fill="#FF8205"/><rect x="191" y="68" width="17" height="5" fill="#FF8205"/>
+    <rect x="153" y="74" width="17" height="5" fill="#FA500F"/><rect x="172" y="74" width="17" height="5" fill="#FA500F"/><rect x="191" y="74" width="17" height="5" fill="#FA500F"/>
+    <rect x="153" y="80" width="17" height="5" fill="#E10500"/><rect x="172" y="80" width="17" height="5" fill="#E10500"/><rect x="191" y="80" width="17" height="5" fill="#E10500"/>
+  </g>
+  <rect x="100" y="98" width="160" height="20" rx="6" fill="#F7F8FA" stroke="#E5E7EB"/>
+  <text x="110" y="112" font-size="10.5" fill="#9AA5B1">name@email.com</text>
+  <rect x="100" y="124" width="160" height="20" rx="6" fill="#F7F8FA" stroke="#E5E7EB"/>
+  <text x="110" y="138" font-size="10.5" fill="#9AA5B1">••••••••</text>
+  <rect x="96" y="152" width="168" height="30" rx="9" fill="none" stroke="#0A84FF" stroke-opacity="0.30" stroke-width="3"/>
+  <rect x="100" y="156" width="160" height="22" rx="7" fill="#0A84FF"/>
+  <text x="180" y="171" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="500">Sign up</text>
+</svg>

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import httpx
 import respx
+from PySide6.QtWidgets import QLabel
 
+from debrief_meet.ui.assistant_etape import DOSSIER_ASSETS
 from debrief_meet.ui.assistant_mistral import _PAGE_CLE, _PAGE_TEST, AssistantMistral
 
 URL = "https://api.mistral.ai"
@@ -43,6 +45,28 @@ def test_cle_vide_ne_lance_pas_de_test(qapp, tmp_path):
     assert a._thread is None
 
 
+# ── Illustrations (assets SVG rendus) ───────────────────────────────────────────
+
+def test_assets_illustrations_presents():
+    for i in range(1, 5):
+        assert (DOSSIER_ASSETS / f"mistral_etape_{i}.svg").exists()
+
+
+def test_maquette_de_fin_masquee_avant_le_succes(qapp, tmp_path):
+    """Elle affirme « Connexion réussie » : la montrer pendant le test (ou après un
+    échec) contredirait le libellé juste en dessous."""
+    a = AssistantMistral(_config(tmp_path))
+    a._stack.setCurrentIndex(_PAGE_TEST)
+    assert a._illustration_fin.isVisibleTo(a) is False
+
+
+def test_chaque_etape_a_son_illustration(qapp, tmp_path):
+    a = AssistantMistral(_config(tmp_path))
+    for i in range(a._stack.count()):
+        labels = a._stack.widget(i).findChildren(QLabel)
+        assert any(not lab.pixmap().isNull() for lab in labels), f"étape {i} sans illustration"
+
+
 # ── Test de connexion (worker en arrière-plan) ──────────────────────────────────
 
 @respx.mock
@@ -61,6 +85,7 @@ def test_verifier_teste_puis_succes(qapp, qtbot, tmp_path):
     assert a._succes is True
     assert a._btn_suiv.text() == "Terminer"
     assert config.get("mistral_cle_api") == "cle-valide"     # persistée sur succès
+    assert a._illustration_fin.isVisibleTo(a) is True        # maquette révélée au succès
 
 
 @respx.mock
@@ -75,3 +100,4 @@ def test_echec_permet_de_reessayer(qapp, qtbot, tmp_path):
     assert a._succes is False
     assert a._btn_suiv.text() == "Réessayer"
     assert config.get("mistral_cle_api") == ""                # pas persistée sur échec
+    assert a._illustration_fin.isVisibleTo(a) is False        # jamais de succès affiché

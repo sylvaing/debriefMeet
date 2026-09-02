@@ -1,0 +1,23 @@
+<svg width="360" height="196" viewBox="0 0 360 196" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Arial, sans-serif">
+  <title>Étape 2 — Générer une clé API</title>
+  <rect x="6" y="6" width="348" height="184" rx="12" fill="#ffffff" stroke="#D2D6DC" stroke-width="1.5"/>
+  <line x1="6" y1="40" x2="354" y2="40" stroke="#E9ECF1"/>
+  <circle cx="24" cy="23" r="4" fill="#FF5F57"/><circle cx="40" cy="23" r="4" fill="#FEBC2E"/><circle cx="56" cy="23" r="4" fill="#28C840"/>
+  <rect x="78" y="14" width="262" height="18" rx="9" fill="#F1F3F6"/>
+  <text x="90" y="26" font-size="11" fill="#7B8794">console.mistral.ai/api-keys</text>
+  <text x="24" y="62" font-size="12" fill="#1F2933" font-weight="500">API Keys</text>
+  <rect x="220" y="46" width="120" height="30" rx="9" fill="none" stroke="#0A84FF" stroke-opacity="0.30" stroke-width="3"/>
+  <rect x="224" y="50" width="112" height="22" rx="7" fill="#0A84FF"/>
+  <text x="280" y="65" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="500">Create new key</text>
+  <rect x="24" y="94" width="312" height="34" rx="8" fill="#F7F8FA" stroke="#E5E7EB"/>
+  <text x="36" y="109" font-size="9.5" fill="#9AA5B1">debriefMeet</text>
+  <text x="36" y="122" font-size="11.5" fill="#5A6573" font-family="Menlo, monospace">xxxxxxxxxxxxxxxxxxxxxxxx</text>
+  <rect x="300" y="100" width="26" height="22" rx="6" fill="none" stroke="#0A84FF" stroke-opacity="0.35" stroke-width="2.5"/>
+  <rect x="306" y="105" width="10" height="12" rx="2" fill="none" stroke="#0A84FF" stroke-width="1.6"/>
+  <rect x="310" y="108" width="10" height="12" rx="2" fill="#ffffff" stroke="#0A84FF" stroke-width="1.6"/>
+  <rect x="24" y="140" width="312" height="34" rx="8" fill="#FFF6E5" stroke="#F4D58E"/>
+  <circle cx="42" cy="157" r="8" fill="none" stroke="#B7791F" stroke-width="1.6"/>
+  <rect x="41.1" y="152" width="1.8" height="6" rx="0.9" fill="#B7791F"/>
+  <circle cx="42" cy="161.2" r="1.1" fill="#B7791F"/>
+  <text x="58" y="161" font-size="10.5" fill="#8A6D1F">Copiez la clé maintenant — elle ne s'affiche qu'une fois</text>
+</svg>
