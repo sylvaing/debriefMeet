@@ -40,6 +40,7 @@ from debrief_meet.core.fichiers import (
     date_heure_reunion,
     duree_reunion,
     pistes_audio_existantes,
+    transcription_en_attente,
 )
 from debrief_meet.core.markdown_html import convertir
 from debrief_meet.core.modes import MachineEtats, Mode
@@ -63,7 +64,10 @@ from debrief_meet.ui.capture_model import (
     CaptureModel,
 )
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
-from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
+from debrief_meet.ui.generateur_cr_mistral import (
+    TACHE_TRANSCRIPTION,
+    GestionnaireCRMistral,
+)
 from debrief_meet.ui.icon_delegate import IconeColonneDelegate
 from debrief_meet.ui.status_pill import StatusPillDelegate
 from debrief_meet.ui.survol_ligne import TableAvecSurvolLigne
@@ -85,6 +89,14 @@ _ICONE_BLUEMIND_ASSOCIER = "calendar-plus"
 _ICONE_BLUEMIND_ASSOCIE = "calendar-check"
 _ICONE_NOMMER_LOCUTEURS = "chat-text"
 _ICONE_CR_MISTRAL = "notebook"
+
+# Raccourci de la transcription distante, portable : Qt traduit le `Ctrl` portable en ⌘
+# sur macOS, donc une seule séquence donne ⌘T sur Mac et Ctrl+T sur Windows/Linux —
+# aucun code par plateforme. `NativeText` sert l'affichage dans les infobulles (⌘T vs
+# Ctrl+T), comme le fait déjà `ui/dictee_view.py` pour les raccourcis globaux.
+_RACCOURCI_TRANSCRIRE = "Ctrl+T"
+_RACCOURCI_TRANSCRIRE_LISIBLE = QKeySequence(_RACCOURCI_TRANSCRIRE).toString(
+    QKeySequence.SequenceFormat.NativeText)
 
 # Nombre MAXIMAL de boutons dédiés que `_boutons_reunion` peut produire (Générer le
 # CR ▾ + Copier le CR ▾ + Copier le fichier) et de flèches parmi eux. La colonne
@@ -209,6 +221,13 @@ class ReunionView(QWidget):
         raccourci.setContext(Qt.ShortcutContext.WidgetShortcut)
         raccourci.activated.connect(lambda: self._tout_supprimer(None))
 
+        # `WidgetShortcut` comme ci-dessus : le raccourci n'existe que quand la table a
+        # le focus, pas depuis les Préférences ni le Journal (l'app n'a qu'une fenêtre,
+        # ces vues en sont des pages — un contexte applicatif les capterait toutes).
+        raccourci_transcrire = QShortcut(QKeySequence(_RACCOURCI_TRANSCRIRE), table)
+        raccourci_transcrire.setContext(Qt.ShortcutContext.WidgetShortcut)
+        raccourci_transcrire.activated.connect(self._transcrire_mistral_selection)
+
         return table
 
     def _construire_ui(self, machine: MachineEtats) -> None:
@@ -262,6 +281,12 @@ class ReunionView(QWidget):
         if self._gestionnaire_cr_mistral is not None:
             chemin = self._gestionnaire_cr_mistral.job_en_cours()
             if chemin is not None:
+                # Le gestionnaire Mistral couvre deux tâches : une transcription
+                # distante emprunte l'icône et l'infobulle « transcription » déjà
+                # définies pour le moteur local — c'est la même opération vue de
+                # l'utilisateur, seul le calcul se fait ailleurs.
+                if self._gestionnaire_cr_mistral.tache_en_cours() == TACHE_TRANSCRIPTION:
+                    return Path(chemin), "transcription"
                 return Path(chemin), JOB_CR_MISTRAL
         if self._gestionnaire is not None:
             chemin = self._gestionnaire.job_en_cours()
@@ -338,6 +363,15 @@ class ReunionView(QWidget):
                 _ICONE_NOMMER_LOCUTEURS, "Nommer les locuteurs", True,
                 lambda c=chemin: self._nommer_locuteurs(c)))
 
+        # Transcription distante AVANT le CR : c'est l'ordre du pipeline, et l'ordre
+        # dans lequel on s'en sert (récupérer le texte, puis éventuellement le rédiger).
+        etat_transcription = self._etat_transcription_mistral(ligne, un_job_tourne)
+        if etat_transcription is not None:
+            icone = _ICONE_EN_COURS if etat_transcription.en_cours else _ICONE_TRANSCRIRE
+            actions.append(ActionSpec(icone, etat_transcription.tooltip,
+                                      etat_transcription.actif,
+                                      lambda c=chemin: self._transcrire_mistral(c)))
+
         if etat_cr is not None:
             icone = _ICONE_EN_COURS if etat_cr.en_cours else _ICONE_CR_MISTRAL
             actions.append(ActionSpec(icone, etat_cr.tooltip, etat_cr.actif,
@@ -385,6 +419,28 @@ class ReunionView(QWidget):
         if un_autre_job_tourne:
             return _EtatCRMistral(False, "Une tâche est déjà en cours")
         return _EtatCRMistral(True, "Générer le CR (Mistral)")
+
+    def _etat_transcription_mistral(self, ligne, un_job_tourne: bool) -> _EtatCRMistral | None:
+        """État de l'action « Transcrire via Mistral » (menu ⋯ + raccourci).
+
+        Même philosophie que `_etat_cr_mistral` : None seulement si l'interco n'existe
+        pas, sinon toujours un état — grisé porte la raison. L'audio retenu est la
+        condition dure : sans piste, il n'y a rien à envoyer (la transcription locale
+        déjà présente, elle, n'empêche pas de retranscrire — c'est le geste même)."""
+        if self._gestionnaire_cr_mistral is None:
+            return None
+        job_mistral = self._gestionnaire_cr_mistral.job_en_cours()
+        if ligne.chemin == job_mistral:
+            if self._gestionnaire_cr_mistral.tache_en_cours() == TACHE_TRANSCRIPTION:
+                return _EtatCRMistral(False, "Transcription en cours…", en_cours=True)
+            return _EtatCRMistral(False, "Génération du CR en cours…", en_cours=True)
+        if not self._gestionnaire_cr_mistral.disponible():
+            return _EtatCRMistral(False, "Mistral non configuré — Préférences › IA en ligne")
+        if not ligne.audio:
+            return _EtatCRMistral(False, "Aucun audio à transcrire")
+        if un_job_tourne or job_mistral is not None:
+            return _EtatCRMistral(False, "Une tâche est déjà en cours")
+        return _EtatCRMistral(True, f"Transcrire via Mistral ({_RACCOURCI_TRANSCRIRE_LISIBLE})")
 
     def _boutons_reunion(self, ligne, etat_cr) -> list[BoutonSpec]:
         chemin = ligne.chemin
@@ -765,12 +821,110 @@ class ReunionView(QWidget):
         if not self._gestionnaire_cr_mistral.lancer(chemin, prompt=prompt):
             dialogues.avertir(self, titre="CR Mistral", description="Une tâche est déjà en cours.")
 
+    # ── Transcription distante seule (Voxtral, sans CR) ─────────────────────────
+
+    def _transcrire_mistral_selection(self) -> None:
+        """Cible du raccourci. Exige **une seule** réunion sélectionnée.
+
+        Contrairement à « Supprimer », qui agit en masse, la transcription distante
+        refuse une sélection multiple : un seul job Mistral tourne à la fois, il n'y a
+        pas de file, et deviner laquelle des lignes part en traitement serait pire que
+        de ne rien faire."""
+        cibles = self._chemins_selectionnes()
+        if not cibles:
+            dialogues.avertir(
+                self, titre="Transcription Mistral",
+                description="Sélectionnez la réunion à transcrire.", icone="file-text")
+            return
+        if len(cibles) > 1:
+            dialogues.avertir(
+                self, titre="Transcription Mistral",
+                description=f"{len(cibles)} réunions sont sélectionnées. "
+                "Cette action ne traite qu'une réunion à la fois — "
+                "n'en gardez qu'une sélectionnée.", icone="file-text")
+            return
+        self._transcrire_mistral(cibles[0])
+
+    def _transcrire_mistral(self, chemin: Path) -> None:
+        """Transcription Voxtral de la réunion, sans rédaction de CR.
+
+        L'association BlueMind n'est **pas** proposée ici (contrairement au flux CR,
+        docs/42 §4.1) : le raccourci doit rester un geste court, et une association
+        déjà faite continue d'alimenter le `context_bias` du pipeline."""
+        if self._gestionnaire_cr_mistral is None or not self._gestionnaire_cr_mistral.disponible():
+            return
+        if not pistes_audio_existantes(chemin):
+            dialogues.avertir(
+                self, titre="Transcription Mistral",
+                description=f"Aucun audio retenu pour « {chemin.name} ».\n"
+                "Activez la rétention audio dans les Préférences avant la réunion.",
+                icone="waveform")
+            return
+        if self._proposition_en_cours:
+            # Même garde-fou que le flux CR : les dialogues laissent tourner l'event
+            # loop, donc un second raccourci rentrerait une 2ᵉ fois dans le flux.
+            return
+        self._proposition_en_cours = True
+        try:
+            if not transcription_en_attente(chemin):
+                description = ("Cette réunion a déjà une transcription. "
+                               "La transcription Voxtral la remplacera définitivement.")
+                if chemin_locuteurs(chemin).exists():
+                    # Dit ici parce que le pipeline le fait vraiment : garder un
+                    # débrief locuteurs périmé ferait rédiger le prochain CR sur le
+                    # texte remplacé, sans que rien ne le signale.
+                    description += (" Le débrief des locuteurs sera supprimé : "
+                                    "il décrit le texte remplacé.")
+                if not dialogues.confirmer(
+                        self, titre="Remplacer la transcription existante ?",
+                        description=description, label_action="Remplacer",
+                        icone="file-text", intention=dialogues.Intention.ACCENT):
+                    return
+            if not self._config.get("mistral_confidentialite_acceptee"):
+                # Même consentement unique que le CR (docs/42 §2) : ce qui part est le
+                # même audio, vers les mêmes serveurs.
+                if not dialogues.confirmer(
+                        self, titre="Transcrire via Mistral ?",
+                        description="L'audio retenu de cette réunion va être envoyé aux "
+                        "serveurs Mistral (UE) pour transcription. Continuer ?",
+                        label_action="Envoyer", icone="file-text",
+                        intention=dialogues.Intention.ACCENT):
+                    return
+                self._config.set("mistral_confidentialite_acceptee", True)
+                self._config.sauvegarder()
+        finally:
+            self._proposition_en_cours = False
+        if not self._gestionnaire_cr_mistral.lancer_transcription(chemin):
+            dialogues.avertir(self, titre="Transcription Mistral",
+                              description="Une tâche est déjà en cours.")
+
     def _cabler_gestionnaire_cr_mistral(self) -> None:
         if self._gestionnaire_cr_mistral is None:
             return
         self._gestionnaire_cr_mistral.demarre.connect(self._sur_cr_mistral_change)
         self._gestionnaire_cr_mistral.termine.connect(self._sur_cr_mistral_termine)
         self._gestionnaire_cr_mistral.echoue.connect(self._sur_cr_mistral_echoue)
+        self._gestionnaire_cr_mistral.transcription_terminee.connect(
+            self._sur_transcription_mistral_termine)
+        self._gestionnaire_cr_mistral.transcription_echouee.connect(
+            self._sur_transcription_mistral_echoue)
+
+    def _sur_transcription_mistral_termine(self, _md: object, sortie: Path) -> None:
+        self.recharger()
+        if self.isVisible():
+            if dialogues.confirmer(
+                    self, titre="Transcription terminée",
+                    description="La transcription de cette réunion a été récupérée "
+                                "depuis Mistral.",
+                    label_action="Ouvrir", icone="file-text",
+                    intention=dialogues.Intention.ACCENT):
+                self._ouvrir(sortie)
+
+    def _sur_transcription_mistral_echoue(self, _md: object, message: str) -> None:
+        self.recharger()
+        if self.isVisible():
+            dialogues.avertir(self, titre="Transcription Mistral — échec",
+                              description=f"La transcription a échoué :\n{message}")
 
     def _sur_cr_mistral_change(self, *_args) -> None:
         self.recharger()

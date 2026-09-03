@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QObject, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QStyleOptionViewItem
 from scipy.io import wavfile
 
@@ -18,6 +19,7 @@ from debrief_meet.ui import reunion_view as rv_module
 from debrief_meet.ui.actions_delegate import largeur_colonne
 from debrief_meet.ui.capture_model import COL_ACTIONS_REUNION, COL_CALENDRIER_REUNION
 from debrief_meet.ui.icones import icone_phosphor, icone_svg_teintee
+from debrief_meet.ui.generateur_cr_mistral import TACHE_CR, TACHE_TRANSCRIPTION
 from debrief_meet.ui.reunion_view import ReunionView
 from debrief_meet.ui.status_pill import HistoryState
 from debrief_meet.ui.theme import C
@@ -73,18 +75,26 @@ class FauxGestionnaire(QObject):
 
 
 class FauxGestionnaireCRMistral(QObject):
-    """Miroir de FauxGestionnaire pour l'interco Mistral (docs/42)."""
+    """Miroir de FauxGestionnaire pour l'interco Mistral (docs/42).
+
+    Porte les DEUX paires de signaux de fin du vrai gestionnaire : CR et
+    transcription distante. Un double qui n'expose qu'une paire fait échouer le
+    câblage de la vue, pas le test qui l'aurait mérité."""
 
     demarre = Signal(object)
     termine = Signal(object, object)
     echoue = Signal(object, str)
+    transcription_terminee = Signal(object, object)
+    transcription_echouee = Signal(object, str)
 
-    def __init__(self, dispo=True, job=None):
+    def __init__(self, dispo=True, job=None, tache=TACHE_CR):
         super().__init__()
         self._dispo = dispo
         self._job = job
+        self._tache = tache if job is not None else None
         self.lances: list = []
         self.prompts: list = []
+        self.transcriptions: list = []
 
     def disponible(self):
         return self._dispo
@@ -92,13 +102,21 @@ class FauxGestionnaireCRMistral(QObject):
     def job_en_cours(self):
         return self._job
 
-    def lancer(self, chemin_md, prompt=None):
+    def tache_en_cours(self):
+        return self._tache
+
+    def lancer(self, chemin_md, prompt=None, tache=TACHE_CR):
         self.lances.append(chemin_md)
         self.prompts.append(prompt)
         if self._job is not None:
             return False
         self._job = chemin_md
+        self._tache = tache
         return True
+
+    def lancer_transcription(self, chemin_md):
+        self.transcriptions.append(chemin_md)
+        return self.lancer(chemin_md, tache=TACHE_TRANSCRIPTION)
 
 
 def _config(tmp_path):
@@ -1480,3 +1498,286 @@ def test_distant_conserve_les_actions_communes(qapp, machine, tmp_path, mode_dis
     icones = _icones(_actions(vue))
     for attendue in ("copy", "arrow-square-out", "folder", "microphone-slash", "trash"):
         assert attendue in icones, f"action commune perdue : {attendue}"
+
+
+# ── Transcription distante seule (Mistral) — raccourci ⌘T / Ctrl+T ─────────────
+
+def _raccourci_transcrire(vue: ReunionView):
+    """Le QShortcut Ctrl+T porté par la table, ou None."""
+    cible = QKeySequence(rv_module._RACCOURCI_TRANSCRIRE)
+    for sc in vue._table.findChildren(QShortcut):
+        if sc.key() == cible:
+            return sc
+    return None
+
+
+def _vue_transcription(tmp_path, machine, cfg=None, gestionnaire_cr=None):
+    cfg = cfg or _config(tmp_path)
+    cfg.set("mistral_confidentialite_acceptee", True)
+    g = gestionnaire_cr if gestionnaire_cr is not None else FauxGestionnaireCRMistral()
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(), gestionnaire_cr_mistral=g)
+    return vue, g, cfg
+
+
+def _selectionner(vue: ReunionView, *rows: int) -> None:
+    """Sélectionne des lignes en CUMULANT — `selectRow` remplacerait la sélection à
+    chaque appel et le test « plusieurs réunions » n'en verrait jamais qu'une."""
+    vue._table.clearSelection()
+    modele = vue._table.selectionModel()
+    for row in rows:
+        modele.select(
+            vue._proxy.index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+
+
+def test_raccourci_transcription_existe_sur_la_table_et_reste_local(qapp, machine, tmp_path):
+    """`WidgetShortcut` : sinon le raccourci capterait aussi les Préférences et le
+    Journal, qui sont des PAGES de la même et unique fenêtre."""
+    _reunion_en_attente(tmp_path)
+    vue, _, _ = _vue_transcription(tmp_path, machine)
+    sc = _raccourci_transcrire(vue)
+    assert sc is not None, "aucun QShortcut Ctrl+T sur la table"
+    assert sc.context() == Qt.ShortcutContext.WidgetShortcut
+
+
+def test_raccourci_transcription_lance_reellement_le_job(qapp, machine, tmp_path):
+    """Teste l'EFFET de l'activation, pas la présence du raccourci : un QShortcut
+    dont le `activated` n'est branché à rien resterait vert au test ci-dessus."""
+    md = _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    _selectionner(vue, 0)
+
+    _raccourci_transcrire(vue).activated.emit()
+
+    assert g.transcriptions == [md]
+
+
+def test_raccourci_sans_selection_avertit_et_ne_lance_rien(qapp, machine, tmp_path, monkeypatch):
+    _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    vue._table.clearSelection()
+    avertis = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir",
+                        lambda *_a, **k: avertis.append(k.get("description", "")))
+
+    _raccourci_transcrire(vue).activated.emit()
+
+    assert g.transcriptions == []
+    assert any("sélectionnez" in d.lower() for d in avertis)
+
+
+def test_raccourci_refuse_explicitement_plusieurs_reunions(qapp, machine, tmp_path, monkeypatch):
+    """Refus explicite (choix produit) : un seul job Mistral tourne à la fois et il
+    n'y a pas de file — deviner laquelle des lignes part serait pire que ne rien faire."""
+    _reunion_en_attente(tmp_path, nom="2026-03-03_09-00-00")
+    _reunion_en_attente(tmp_path, nom="2026-03-04_09-00-00")
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    assert vue._modele.rowCount() >= 2
+    _selectionner(vue, 0, 1)
+    assert len(vue._chemins_selectionnes()) == 2
+    avertis = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir",
+                        lambda *_a, **k: avertis.append(k.get("description", "")))
+
+    _raccourci_transcrire(vue).activated.emit()
+
+    assert g.transcriptions == []
+    assert any("une réunion à la fois" in d.lower() for d in avertis)
+
+
+def test_transcription_distante_sans_audio_avertit(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_en_attente(tmp_path, avec_audio=False)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    avertis = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir",
+                        lambda *_a, **k: avertis.append(k.get("description", "")))
+
+    vue._transcrire_mistral(md)
+
+    assert g.transcriptions == []
+    assert any("aucun audio" in d.lower() for d in avertis)
+
+
+def test_transcription_distante_en_attente_ne_demande_aucune_confirmation(
+        qapp, machine, tmp_path, monkeypatch):
+    """Rien à écraser : le placeholder « audio seul » n'est pas une transcription."""
+    md = _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *_a, **k: pytest.fail("confirmation inattendue"))
+
+    vue._transcrire_mistral(md)
+
+    assert g.transcriptions == [md]
+
+
+def test_transcription_distante_remplacement_demande_confirmation(
+        qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)          # a déjà un transcript
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    titres = []
+
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *_a, **k: titres.append(k.get("titre", "")) or True)
+
+    vue._transcrire_mistral(md)
+
+    assert any("remplacer" in t.lower() for t in titres)
+    assert g.transcriptions == [md]
+
+
+def test_transcription_distante_remplacement_refuse_ne_lance_rien(
+        qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *_a, **k: False)
+
+    vue._transcrire_mistral(md)
+
+    assert g.transcriptions == []
+
+
+def test_confirmation_annonce_la_suppression_du_debrief_locuteurs(
+        qapp, machine, tmp_path, monkeypatch):
+    """Le pipeline supprime vraiment `locuteurs.md` (il décrit le texte remplacé) —
+    la confirmation doit le dire, sinon la suppression est une surprise."""
+    md = _reunion_avec_audio(tmp_path)
+    chemin_locuteurs(md).write_text("**Alice :** ancien", encoding="utf-8")
+    vue, _, _ = _vue_transcription(tmp_path, machine)
+    descriptions = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *_a, **k: descriptions.append(k.get("description", "")) or True)
+
+    vue._transcrire_mistral(md)
+
+    assert any("locuteurs" in d.lower() for d in descriptions)
+
+
+def test_confirmation_ne_parle_pas_des_locuteurs_sans_debrief(
+        qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_avec_audio(tmp_path)
+    vue, _, _ = _vue_transcription(tmp_path, machine)
+    descriptions = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *_a, **k: descriptions.append(k.get("description", "")) or True)
+
+    vue._transcrire_mistral(md)
+
+    assert not any("locuteurs" in d.lower() for d in descriptions)
+
+
+def test_consentement_confidentialite_demande_puis_memorise(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_en_attente(tmp_path)
+    cfg = _config(tmp_path)                     # consentement NON accordé
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=(g := FauxGestionnaireCRMistral()))
+    titres = []
+    monkeypatch.setattr(rv_module.dialogues, "confirmer",
+                        lambda *_a, **k: titres.append(k.get("titre", "")) or True)
+
+    vue._transcrire_mistral(md)
+
+    assert any("mistral" in t.lower() for t in titres)
+    assert cfg.get("mistral_confidentialite_acceptee") is True
+    assert g.transcriptions == [md]
+
+
+def test_consentement_refuse_ne_lance_rien(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_en_attente(tmp_path)
+    cfg = _config(tmp_path)
+    vue = ReunionView(cfg, machine, gestionnaire=FauxGestionnaire(),
+                      gestionnaire_cr_mistral=(g := FauxGestionnaireCRMistral()))
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *_a, **k: False)
+
+    vue._transcrire_mistral(md)
+
+    assert g.transcriptions == []
+    assert cfg.get("mistral_confidentialite_acceptee") in (None, False)
+
+
+def test_transcription_distante_dans_le_menu_avec_le_raccourci_en_infobulle(
+        qapp, machine, tmp_path):
+    _reunion_en_attente(tmp_path)
+    vue, _, _ = _vue_transcription(tmp_path, machine)
+    libelles = [a.tooltip for a in _actions(vue)]
+    assert any("Transcrire via Mistral" in t for t in libelles)
+    # L'infobulle porte le raccourci : c'est ce qui le rend découvrable.
+    assert any(rv_module._RACCOURCI_TRANSCRIRE_LISIBLE in t for t in libelles)
+
+
+def test_transcription_distante_grisee_sans_cle_api(qapp, machine, tmp_path):
+    """Grisée avec sa raison, pas masquée (convention du menu ⋯ exhaustif)."""
+    _reunion_en_attente(tmp_path)
+    vue, _, _ = _vue_transcription(
+        tmp_path, machine, gestionnaire_cr=FauxGestionnaireCRMistral(dispo=False))
+    item = next(a for a in _actions(vue) if "Mistral non configuré" in a.tooltip)
+    assert item.actif is False
+
+
+def test_transcription_distante_grisee_sans_audio(qapp, machine, tmp_path):
+    _reunion_en_attente(tmp_path, avec_audio=False)
+    vue, _, _ = _vue_transcription(tmp_path, machine)
+    item = next(a for a in _actions(vue) if a.tooltip == "Aucun audio à transcrire")
+    assert item.actif is False
+
+
+def test_icone_de_ligne_pendant_une_transcription_distante(qapp, machine, tmp_path):
+    """La ligne doit montrer l'opération QUI tourne : une transcription distante
+    emprunte `file-text`, pas le `notebook` du CR."""
+    md = _reunion_en_attente(tmp_path)
+    g = FauxGestionnaireCRMistral(job=md, tache=TACHE_TRANSCRIPTION)
+    vue, _, _ = _vue_transcription(tmp_path, machine, gestionnaire_cr=g)
+    vue.recharger()
+    assert vue._job_en_cours() == (md, "transcription")
+
+
+def test_icone_de_ligne_pendant_un_cr_reste_celle_du_cr(qapp, machine, tmp_path):
+    md = _reunion_en_attente(tmp_path)
+    g = FauxGestionnaireCRMistral(job=md, tache=TACHE_CR)
+    vue, _, _ = _vue_transcription(tmp_path, machine, gestionnaire_cr=g)
+    vue.recharger()
+    assert vue._job_en_cours() == (md, rv_module.JOB_CR_MISTRAL)
+
+
+def test_transcription_terminee_propose_ouvrir_la_transcription(
+        qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    vue.show()
+    monkeypatch.setattr(rv_module.dialogues, "confirmer", lambda *_a, **k: True)
+    ouverts = []
+    monkeypatch.setattr(vue, "_ouvrir", ouverts.append)
+
+    g.transcription_terminee.emit(md, md)
+
+    assert ouverts == [md]
+
+
+def test_transcription_echouee_affiche_le_message(qapp, machine, tmp_path, monkeypatch):
+    md = _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    vue.show()
+    descriptions = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir",
+                        lambda *_a, **k: descriptions.append(k.get("description", "")))
+
+    g.transcription_echouee.emit(md, "503 persistant")
+
+    assert any("503 persistant" in d for d in descriptions)
+
+
+def test_raccourci_ignore_la_ligne_en_cours_denregistrement(qapp, machine, tmp_path, monkeypatch):
+    """La ligne « en cours » a `Path()` pour chemin sentinelle (docs/43) : la
+    sélectionner puis taper le raccourci ne doit pas lancer de job sur un chemin vide."""
+    _reunion_en_attente(tmp_path)
+    vue, g, _ = _vue_transcription(tmp_path, machine)
+    vue.definir_etat_enregistrement(Mode.REUNION, 5)
+    _selectionner(vue, 0)                       # ligne 0 = l'enregistrement live
+    avertis = []
+    monkeypatch.setattr(rv_module.dialogues, "avertir",
+                        lambda *_a, **k: avertis.append(k.get("description", "")))
+
+    _raccourci_transcrire(vue).activated.emit()
+
+    assert g.transcriptions == []
+    assert any("sélectionnez" in d.lower() for d in avertis)
