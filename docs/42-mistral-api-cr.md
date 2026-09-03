@@ -287,6 +287,77 @@ Deux points qui se cassent facilement en modifiant ce flux :
   un dossier disparu. Un drapeau `_proposition_en_cours` bloque la réentrance, l'attente de
   sync et le dialogue laissant tourner l'event loop.
 
+### 4.2 Transcription distante SEULE, sans CR (⌘T / Ctrl+T, 2026-09-03)
+
+Deuxième point d'entrée du pipeline : `pipeline.transcrire_reunion()` exécute la
+**même** étape Voxtral que le repli du CR (mêmes limites de durée, mêmes replis
+réseau, même `context_bias`), puis **s'arrête après l'écriture du transcript**. Motif :
+récupérer le texte d'une réunion sans dépenser un appel de rédaction, et sans devoir
+générer un CR qu'on ne veut pas.
+
+Jusqu'ici la transcription distante n'existait que **dans** le flux CR. L'action
+`_transcrire` de l'Historique, elle, ne pouvait pas servir : elle est gatée sur
+`mode_transcription.avec_transcription_locale()`, c'est-à-dire sur Whisper embarqué.
+
+**Un seul gestionnaire pour les deux tâches — c'est le point d'architecture.**
+`GestionnaireCRMistral` gagne `lancer_transcription()` et un discriminant `tache`
+(`TACHE_CR` / `TACHE_TRANSCRIPTION`). Un second gestionnaire aurait été plus propre en
+apparence, mais les deux tâches **réécrivent toutes les deux `transcription.md`** : il
+les aurait laissées tourner en parallèle sur la même réunion, avec deux uploads et deux
+écritures concurrentes. Partager `_job_en_cours` rend l'exclusion **structurelle**,
+plutôt qu'une vérification à ne pas oublier à chaque point d'appel — la famille de bug
+que ce dépôt collectionne (cf. `NB_BOUTONS_REUNION`, docs/43).
+
+**Paire de signaux dédiée** (`transcription_terminee` / `transcription_echouee`) plutôt
+qu'un 3ᵉ argument sur `termine` : les deux tâches n'annoncent pas le même résultat
+(« CR généré » vs « Transcription terminée ») et n'ouvrent pas le même fichier, et les
+connexions existantes restent intactes.
+
+**`locuteurs.md` est supprimé** quand la transcription est remplacée. Ce n'est pas un
+nettoyage cosmétique : `_lire_transcript_local` donne la **priorité** au débrief
+locuteurs sur `transcription.md`, donc le garder ferait rédiger le prochain CR sur le
+texte qu'on vient de remplacer, **sans que rien ne le signale**. L'UI l'annonce dans sa
+confirmation de remplacement.
+
+**UI et raccourci** (`ui/reunion_view.py`) :
+
+- Item « Transcrire via Mistral (⌘T) » dans le menu ⋯, placé **avant** le CR (ordre du
+  pipeline et ordre d'usage). Grisé avec sa raison, jamais masqué — convention du menu
+  exhaustif : « Mistral non configuré », « Aucun audio à transcrire », « Une tâche est
+  déjà en cours ».
+- **Un seul `QKeySequence("Ctrl+T")` couvre les deux OS** : Qt traduit le `Ctrl`
+  portable en ⌘ sur macOS, donc ⌘T sur Mac et Ctrl+T sur Windows/Linux, sans une ligne
+  de code par plateforme. `NativeText` sert l'affichage de l'infobulle, comme le fait
+  déjà `ui/dictee_view.py` pour les raccourcis globaux.
+- Contexte **`WidgetShortcut`**, comme le raccourci Suppr voisin. L'app n'a qu'**une**
+  fenêtre dont Préférences et Journal sont des *pages* : un contexte applicatif
+  capterait le raccourci depuis ces pages aussi.
+- **Sélection multiple refusée explicitement.** Un seul job Mistral tourne à la fois et
+  il n'y a **pas de file** : deviner laquelle des lignes part en traitement serait pire
+  que ne rien faire. 0 ligne → invite à sélectionner ; n > 1 → refus motivé. La ligne
+  « en cours » d'enregistrement compte pour 0 (son chemin est la sentinelle `Path()`,
+  docs/43) — `chemin_a_la_ligne` rend `None` pour elle, donc la sélection ressort vide.
+- **Remplacer** une transcription existante demande confirmation ; une réunion « en
+  attente » n'en demande aucune (le placeholder audio-seul n'est pas une transcription).
+- **Consentement de confidentialité partagé** avec le CR (§2) : c'est le même audio vers
+  les mêmes serveurs, donc la même clé `mistral_confidentialite_acceptee`.
+- **L'association BlueMind n'est PAS proposée** ici, contrairement à §4.1 : le raccourci
+  doit rester un geste court. Une association déjà faite continue d'alimenter le
+  `context_bias` (§7.5). C'est un arbitrage assumé, à revoir si les transcriptions
+  lancées au raccourci s'avèrent moins bonnes faute de biais.
+- L'icône de la ligne montre `file-text` / « Transcription en cours… » et non le
+  `notebook` du CR : du point de vue de l'utilisateur c'est la même opération, seul le
+  calcul se fait ailleurs.
+
+⚠️ **Défaut évité de justesse, à retenir.** `ArbitreEtatVisuel.suivre_gestionnaire` ne
+câblait que `termine`/`echoue`. Avec la nouvelle paire, une transcription distante
+aurait allumé l'icône de tray en orange et ne l'aurait **jamais éteinte** (clé jamais
+retirée de `_jobs`), jusqu'à la fin de la session et **sans aucune erreur**. Les paires
+de fin sont désormais déclarées dans `arbitre_etat_visuel.PAIRES_FIN` et toutes câblées
+en boucle ; un test refuse tout signal de fin d'un vrai gestionnaire qui n'y figure pas.
+**Ajouter une tâche à un gestionnaire, c'est ajouter une paire — et l'oublier ne casse
+rien de visible.**
+
 ## 5. Détails API Mistral (vérifiés 2026-07-20)
 
 > ⚠️ Les **IDs de modèles** évoluent. Sonnet doit **reconfirmer** les IDs exacts sur
@@ -633,6 +704,55 @@ et le message nomme cette section.
 > À noter : c'est ce bug qui a **empêché** l'envoi des 98 min de quasi-silence décrit
 > en §10.2 — il a rendu service par accident. Les deux correctifs vont donc ensemble.
 
+### 10.4 Le repli existait mais ne pouvait pas s'exécuter — muxer `segment` absent du ffmpeg embarqué macOS (2026-09-02, corrigé)
+
+Réunion de **1 h 52** (`moi.opus`, 18,8 Mo). Envoi entier → **503**, une reprise, 503 à
+nouveau → la cascade fait exactement ce que §10.1 a câblé la semaine précédente :
+`Erreur serveur persistante pour moi.opus — repli découpage`. Et le repli meurt
+aussitôt :
+
+```
+CR Mistral échoué : Command '[…/vendor/ffmpeg, -y, -loglevel, error, -i, …/moi.opus,
+  -f, segment, -segment_time, 840, -reset_timestamps, 1, -c, copy, …/seg_%03d.opus]'
+  returned non-zero exit status 8.
+```
+
+**Cause : le muxer `segment` n'était pas compilé** dans le ffmpeg embarqué. Le build est
+`--disable-everything` avec activation sélective (docs/16 §5.5), et `segment` n'a jamais
+figuré dans `--enable-muxer`. Reproduit sur le binaire livré :
+
+```
+Unrecognized option 'segment_time'.     → exit 8
+```
+
+⚠️ **Le message ne ressemble en rien à « composant absent ».** Sans le muxer, ffmpeg ne
+connaît pas ses **options privées**, donc il rejette `-segment_time` comme une option
+inconnue — un exit 8 qu'on lirait volontiers comme une erreur d'invocation. C'est ce qui
+rend ce défaut coûteux à diagnostiquer sans le rejouer sur le binaire réel.
+
+**Pourquoi ça n'était jamais sorti.** Le découpage est un repli (§10), et sur macOS il
+n'avait **jamais** tiré : la branche 5xx qui le déclenche ici venait d'être câblée
+(§10.1, 2026-08-31). Les occurrences antérieures du repli étaient sur Windows, dont le
+ffmpeg est un build **BtbN complet** — le muxer y est présent. Linux dépend du ffmpeg
+**système**, complet lui aussi. **macOS était le seul touché**, et c'est le seul dont le
+ffmpeg est compilé sur mesure.
+
+**Correctif** (`packaging/build_ffmpeg.sh`) : `segment` ajouté à `--enable-muxer` ;
+`valider_binaire` l'exige (avec `return 1` → reconstruction, comme pour les filtres,
+ce qui rattrape un binaire d'avant cette date) ; et le build rejoue la **commande exacte
+du repli**, parce que `-f segment` délègue à un muxer enfant déduit de l'extension
+(`opus`) qui doit être présent aussi. Côté tests, `tests/test_build.py` interroge
+désormais le **binaire réellement livré** sur les muxers et filtres utilisés par le
+code, et exécute `decouper_piste` dessus — les deux régressions passées
+(`aselect`/`asetpts` puis `segment`) étaient invisibles à `make test`.
+
+Vérifié sur le fichier réel : 9 segments, le premier à **840,0 s** décodées.
+
+⚠️ **Deux régressions de la même famille en trois semaines.** La liste `--enable-*` du
+build minimal se périme à chaque nouvelle invocation de ffmpeg dans le code, et le
+symptôme n'apparaît que dans l'app livrée. C'est maintenant couvert par des tests, mais
+la règle de docs/16 §5.5 reste la première chose à rouvrir.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle
@@ -668,6 +788,31 @@ monétaire) :
 **Non-régression** : `make test` reste vert (le nombre attendu passe de la baseline
 actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 
+**Ajouts du 2026-09-03 (transcription distante seule, §4.2)** — +38 tests, **1677 passed** :
+- `pipeline.transcrire_reunion` : `.md` réécrit avec la mention Voxtral et **aucun** appel
+  de rédaction (`route_cr.call_count == 0`) ; `locuteurs.md` périmé supprimé ; limite de
+  durée honorée ; renommage du dossier **pendant** l'upload (déclenché depuis le
+  `side_effect` respx — posé avant l'appel, il testerait un cas plus facile, cf.
+  docs/43 §16.6).
+- Gestionnaire : `lancer_transcription` appelle le bon point d'entrée et **jamais** le CR ;
+  chaque tâche émet **sa** paire de signaux ; `tache_en_cours()` revient à None **avec** le
+  job ; exclusion mutuelle vérifiée **dans les deux sens** (CR refusé pendant une
+  transcription et l'inverse).
+- Arbitre : la seconde paire éteint bien le job, et un test parcourt les **vraies** classes
+  de gestionnaires pour exiger que chacun de leurs signaux de fin figure dans `PAIRES_FIN`.
+- Vue : le raccourci existe, est en `WidgetShortcut`, et **lance réellement** le job ;
+  refus à 0 et à n > 1 ; ligne « en cours » ignorée ; confirmations de remplacement et de
+  confidentialité ; item de menu grisé avec sa raison ; icône de ligne `file-text` vs
+  `notebook`.
+- `tests/test_build.py` : muxers/filtres exigés du binaire **livré** + `decouper_piste`
+  exécuté dessus (§10.4).
+
+⚠️ **Deux régressions ont été simulées pour vérifier que les tests les attrapent** —
+amputer `PAIRES_FIN` fait échouer les 3 tests d'arbitre ; retirer `activated.connect` fait
+échouer les 3 tests d'**effet** du raccourci tandis que les 2 tests de simple présence
+restent verts. C'est précisément pourquoi les tests d'effet existent (cf. les items de menu
+morts restés verts, CLAUDE.md 2026-08-24).
+
 ## 13. Pièges connus / à surveiller
 
 - **Ne pas** router Mistral via `MoteurTranscription`/`factory.py` (§1.1).
@@ -690,6 +835,18 @@ actuelle à baseline + nouveaux tests). Aucun test existant modifié.
 - **IDs de modèles** à reconfirmer sur les docs Mistral au moment du code (§5).
 - **Envoi accidentel géant** : garde-fou `mistral_duree_max_min` + confirmation avant envoi.
   (Aucune notion de coût affichée — §11.)
+- **`locuteurs.md` prime sur `transcription.md`** dans `_lire_transcript_local`. Tout code
+  qui **remplace** le transcript doit donc supprimer le débrief locuteurs, sinon le CR
+  suivant est rédigé sur l'ancien texte, silencieusement (§4.2).
+- **Une nouvelle tâche dans un gestionnaire = une nouvelle paire de signaux de fin**, à
+  déclarer dans `arbitre_etat_visuel.PAIRES_FIN`. L'oublier n'échoue nulle part : le job
+  s'allume et l'icône de tray reste orange jusqu'à la fin de la session (§4.2).
+- **Toute nouvelle invocation de ffmpeg** oblige à rouvrir `--enable-*` dans
+  `packaging/build_ffmpeg.sh` (docs/16 §5.5). Deux fois déjà, un composant manquant n'a
+  cassé que l'**app livrée**, jamais le dev : `aselect`/`asetpts` (§10.2) puis le muxer
+  `segment` (§10.4).
+- **Les deux tâches Mistral partagent un gestionnaire** exprès (§4.2) : ne pas « clarifier »
+  en le scindant, elles se disputent `transcription.md`.
 
 ## 14. Extensions futures (hors périmètre v1)
 

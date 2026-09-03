@@ -227,7 +227,7 @@ pas brew).
    (protocols `file,pipe` ; demuxers `pcm_f32le,pcm_s16le,ogg,wav` — noms internes
    du build system, différents des noms courts affichés par `ffmpeg -demuxers`
    (`f32le`/`s16le`) : utiliser `./configure --list-demuxers`/`--list-muxers`
-   comme référence, pas la sortie runtime ; muxers `opus,ogg,wav,pcm_s16le` ;
+   comme référence, pas la sortie runtime ; muxers `opus,ogg,wav,pcm_s16le,segment` ;
    decoders `pcm_f32le,pcm_s16le,opus,libopus` ; encoders `pcm_s16le,libopus` ;
    filters `aresample,aformat,anull,aselect,asetpts`) — **itérer avec les tests réels
    ci-dessous comme oracle** plutôt que de sur-raffiner la liste a priori.
@@ -238,6 +238,15 @@ pas brew).
    ffmpeg dans le code oblige à revenir ici** : ce build ne connaît que les usages qui
    existaient le jour où il a été écrit, et un composant manquant ne se voit qu'en
    production.
+   ⚠️ **Deuxième occurrence, exactement la même**, le 2026-09-02 : le muxer `segment`
+   manquait, donc le **repli découpage** de Voxtral (docs/42 §10.4) échouait dans l'app
+   livrée depuis toujours. Il n'avait jamais tiré sur macOS avant que le repli sur 5xx
+   ne soit câblé (docs/42 §10.1, 2026-08-31) ; à son premier déclenchement réel, le CR
+   d'une réunion de 1 h 52 a été perdu. Sans ce muxer, ffmpeg ne reconnaît même pas
+   l'option `-segment_time` et sort en **8** (« Unrecognized option »), ce qui ne
+   ressemble en rien à « composant absent ». Deux occurrences en trois semaines : la
+   règle ci-dessus n'est pas théorique, et la liste `--enable-*` est le premier endroit
+   à rouvrir dès qu'une invocation de ffmpeg est ajoutée au code.
    Validation obligatoire du binaire produit :
    - `otool -L ffmpeg` → uniquement `/usr/lib` + frameworks système (pas de
      `/opt/homebrew`) ;
@@ -246,6 +255,8 @@ pas brew).
      non `err` dans `valider_binaire` : sur le chemin idempotent, un binaire déjà là mais
      dépourvu de ces filtres doit être **reconstruit**, pas réutilisé — c'est ce qui
      rattrape automatiquement un `packaging/vendor/ffmpeg` d'avant le 2026-08-18 ;
+   - `./ffmpeg -hide_banner -muxers` → `segment` présent, même mécanique de `return 1`
+     (rattrape un binaire d'avant le 2026-09-02) ;
    - `./ffmpeg -version` → configuration **sans** `--enable-gpl` ;
    - test réel bout-en-bout : encode WAV→`.opus` avec la commande exacte de
      `core/fichiers.py`, puis décode avec celle de `core/audio.py`, et relire
@@ -253,6 +264,9 @@ pas brew).
    - test réel de compaction : les **deux passes** de `compacter_piste`
      (`aselect`+`asetpts` → WAV, puis WAV → Opus) avec la syntaxe exacte de l'app. La
      seule présence des filtres ne dit pas que la chaîne complète fonctionne.
+   - test réel de découpage : la commande exacte de `decouper_piste`. Là encore la
+     présence du muxer ne suffit pas — `-f segment` délègue à un **muxer enfant** déduit
+     de l'extension de sortie (ici `opus`), qui doit être présent lui aussi.
 2. **Script de build** : `packaging/build_ffmpeg.sh` — télécharge les sources
    (ffmpeg + libopus, **versions et checksums SHA-256 épinglés**), compile
    libopus statique puis ffmpeg, dépose le binaire en `packaging/vendor/ffmpeg`

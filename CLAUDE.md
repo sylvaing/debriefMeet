@@ -376,6 +376,59 @@ fusionnées en un aplat faute de jours) : **rendre les écrans offscreen et les 
 (`QT_QPA_PLATFORM=offscreen`, `carte.grab().save(...)`), pas relire le code. Les deux
 sont invisibles à la lecture.
 
+Après le muxer `segment` du ffmpeg embarqué (docs/42 §10.4, docs/16 §5.5, 2026-09-02) :
+**1639 passed, 0 échec** en environnement complet — helper Swift compilé et `packaging/vendor/ffmpeg` construit, donc sans les 2 échecs d'environnement habituels (1636 avant, +3 tests). Déclencheur terrain : une réunion
+de **1 h 52** dont le CR a été perdu — envoi entier → **503** → repli découpage (câblé la
+semaine précédente, §10.1) → `exit 8`. Le build minimal `--disable-everything` n'activait
+pas le muxer **`segment`**, donc ffmpeg ne reconnaissait pas `-segment_time` : le repli
+était **cassé depuis toujours dans l'app livrée** et n'avait jamais tiré sur macOS.
+**macOS seul touché** — Windows embarque un build BtbN complet, Linux dépend du ffmpeg
+système. Corrigé dans `build_ffmpeg.sh` (muxer ajouté, exigé par `valider_binaire` avec
+`return 1` → reconstruction, commande exacte du repli rejouée par le build) ; vérifié sur
+le fichier réel (9 segments, le 1ᵉʳ à 840,0 s décodées). ⚠️ Nouveauté côté tests :
+`tests/test_build.py` interroge désormais le **binaire réellement livré** sur les muxers et
+filtres qu'utilise le code, et exécute `decouper_piste` dessus — les **deux** régressions de
+cette famille (`aselect`/`asetpts` le 2026-08-18, `segment` ici) étaient invisibles à
+`make test`. ⚠️ Le DMG produit ce soir-là s'appelle `…+20260902.ba0e150` alors qu'il porte
+déjà le correctif, non committé à ce moment-là.
+
+Après la transcription distante seule au raccourci ⌘T / Ctrl+T (docs/42 §4.2, 2026-09-03) :
+**1677 passed, 0 échec** en environnement complet (1639 avant, +38 tests), en 2 commits verts
+**indépendamment** (1657 sur le premier, vérifié en mettant la couche vue de côté).
+Nouveau point d'entrée `pipeline.transcrire_reunion()` — même étape Voxtral que le repli du
+CR, la chaîne s'arrête après l'écriture du transcript (récupérer le texte sans dépenser un
+appel de rédaction). Trois décisions structurantes :
+
+1. **Un seul gestionnaire pour les deux tâches.** `GestionnaireCRMistral` gagne
+   `lancer_transcription()` et un discriminant `tache` : les deux tâches réécrivant
+   `transcription.md`, un second gestionnaire les aurait laissées tourner en parallèle sur
+   la même réunion (deux uploads, deux écritures). Partager `_job_en_cours` rend l'exclusion
+   **structurelle** au lieu d'une vérification à ne pas oublier au point d'appel. Paire de
+   signaux dédiée (`transcription_terminee`/`transcription_echouee`) plutôt qu'un 3ᵉ
+   argument sur `termine` — résultats et fichiers à ouvrir différents, connexions existantes
+   intactes.
+2. **`locuteurs.md` est supprimé** quand la transcription est remplacée : `_lire_transcript_local`
+   lui donne la **priorité**, donc le garder ferait rédiger le prochain CR sur le texte
+   remplacé, silencieusement. La confirmation de remplacement l'annonce.
+3. **Un seul `QKeySequence("Ctrl+T")` couvre les deux OS** (Qt traduit `Ctrl` → ⌘ sur macOS),
+   en contexte **`WidgetShortcut`** comme le Suppr voisin : l'app n'a qu'une fenêtre dont
+   Préférences et Journal sont des *pages*, un contexte applicatif capterait tout. Sélection
+   multiple **refusée explicitement** (un seul job Mistral, pas de file) ; la ligne « en
+   cours » compte pour 0 (sentinelle `Path()`, docs/43). L'association BlueMind n'est **pas**
+   proposée ici, contrairement au flux CR — arbitrage assumé pour garder un geste court.
+
+⚠️ **Défaut évité de justesse** : `ArbitreEtatVisuel.suivre_gestionnaire` ne câblait que
+`termine`/`echoue` — la nouvelle paire aurait allumé l'icône de tray en orange **sans jamais
+l'éteindre**, jusqu'à la fin de la session et sans aucune erreur. Les paires sont désormais
+déclarées dans `PAIRES_FIN` et toutes câblées, et un test parcourt les **vraies** classes de
+gestionnaires pour refuser tout signal de fin non déclaré. ⚠️ Les deux garde-fous ont été
+vérifiés par **régression simulée** : amputer `PAIRES_FIN` fait échouer les 3 tests
+d'arbitre, et retirer `activated.connect` fait échouer les 3 tests d'**effet** du raccourci
+tandis que les 2 tests de simple présence restent verts — c'est pourquoi les tests d'effet
+existent (cf. les items de menu morts du 2026-08-24). Menu ⋯ rendu offscreen et regardé.
+**Reste : aucune validation en réel** — le raccourci n'a jamais été tapé dans l'app et la
+transcription distante n'a jamais tourné contre la vraie API (tout est mocké `respx`).
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -427,7 +480,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - Bundle id : `com.sylvaingarcia.debriefmeet` (aligné partout, y compris `demarrage_auto.py`, depuis 2026-07-02).
 - **Pas d'auto-update en v1** — MAJ = re-téléchargement manuel du `.dmg`.
 - La config (`platformdirs`) et les transcriptions (`~/Documents/debriefMeet`) vivent hors du bundle → survivent au remplacement.
-- **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Pièges configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x ; et **la liste des filtres se périme** — `aselect,asetpts` manquaient (ajoutés le 2026-08-18), donc la compaction des silences Mistral échouait **dans l'app livrée uniquement**, jamais en dev où répond le ffmpeg Homebrew complet. Toute nouvelle invocation de ffmpeg dans le code oblige à revisiter `--enable-*` ; `valider_binaire` exige désormais ces filtres (binaire trop ancien → reconstruit) et le build rejoue les 2 passes de `compacter_piste`.
+- **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Pièges configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x ; et **la liste des filtres se périme** — `aselect,asetpts` manquaient (ajoutés le 2026-08-18), donc la compaction des silences Mistral échouait **dans l'app livrée uniquement**, jamais en dev où répond le ffmpeg Homebrew complet. Toute nouvelle invocation de ffmpeg dans le code oblige à revisiter `--enable-*` ; `valider_binaire` exige désormais ces filtres (binaire trop ancien → reconstruit) et le build rejoue les 2 passes de `compacter_piste`. **Même piège une 2ᵉ fois le 2026-09-02** : le **muxer `segment`** manquait → le repli découpage Mistral était cassé dans l'app livrée depuis toujours (jamais déclenché sur macOS avant le repli 5xx de docs/42 §10.1) ; sans lui ffmpeg ne reconnaît même pas `-segment_time` et sort en **8** (« Unrecognized option »), ce qui ne ressemble pas à « composant absent ». macOS seul touché (Windows = build BtbN complet, Linux = ffmpeg système). Muxer ajouté + exigé par `valider_binaire` + commande exacte du repli rejouée dans le build ; et `tests/test_build.py` interroge maintenant le **binaire livré** sur les muxers/filtres utilisés par le code — les 2 régressions étaient invisibles à `make test`.
 - **`sys.executable` en app figée n'est pas un interpréteur Python générique** : `multiprocessing` (déclenché en interne par mlx/torch, ex. `resource_tracker`) le relance parfois en `-c "<code>"` pur → `__main__._relais_interprete_figee()` émule `python -c` avant tout autre routage (sinon bruit `unrecognized arguments`, sans casser la transcription).
 - Premier `codesign` réel après création du certificat : peut afficher une popup trousseau **invisible aux API de scripting/accessibilité** (fenêtre sécurisée) — nécessite un clic humain une fois (« Toujours autoriser »), aucun moyen de la détecter ou franchir en automatique.
 
@@ -524,7 +577,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
-| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR** | `docs/42` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS, repli découpage cassé** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15 ; §6.4 et §16 = renommage pendant un job de fond, correctif du 2026-08-28)** | `docs/43` |
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |
