@@ -316,6 +316,87 @@ class TestFfmpegVendor:
         ).stdout
         assert "libopus" in encoders
 
+    # `--disable-everything` n'active QUE ce qui est listé dans `build_ffmpeg.sh` :
+    # toute nouvelle invocation de ffmpeg dans le code peut donc marcher en dev
+    # (ffmpeg Homebrew complet) et échouer DANS L'APP LIVRÉE. Deux occurrences
+    # réelles : `aselect`/`asetpts` absents (compaction des silences cassée depuis
+    # toujours, docs/48) et le muxer `segment` absent (repli découpage Mistral, CR
+    # d'une réunion de 1 h 52 perdu le 2026-09-02). Les deux étaient invisibles à la
+    # lecture du code comme à `make test` — d'où ces deux tests, qui interrogent le
+    # binaire réellement livré.
+    MUXERS_REQUIS = {
+        "opus": "rétention audio (core/fichiers.py)",
+        "wav": "repli WAV Mistral + passe 1 de la compaction",
+        "segment": "repli découpage Mistral (core/mistral/decoupage.py)",
+    }
+    FILTRES_REQUIS = {
+        "aselect": "compaction des silences (core/mistral/silences.py)",
+        "asetpts": "compaction des silences (core/mistral/silences.py)",
+        "aresample": "rééchantillonnage 16 kHz",
+    }
+
+    def _noms(self, option: str) -> set[str]:
+        sortie = subprocess.run(
+            [str(self.BINAIRE), "-hide_banner", option],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        return {
+            parties[1]
+            for ligne in sortie.splitlines()
+            if len(parties := ligne.split()) >= 2
+        }
+
+    def test_binaire_a_les_muxers_utilises_par_le_code(self):
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        dispo = self._noms("-muxers")
+        for muxer, usage in self.MUXERS_REQUIS.items():
+            assert muxer in dispo, (
+                f"muxer {muxer} absent du binaire embarqué — {usage} échouera "
+                f"dans l'app livrée (ajouter à --enable-muxer dans build_ffmpeg.sh)"
+            )
+
+    def test_binaire_a_les_filtres_utilises_par_le_code(self):
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        dispo = self._noms("-filters")
+        for filtre, usage in self.FILTRES_REQUIS.items():
+            assert filtre in dispo, (
+                f"filtre {filtre} absent du binaire embarqué — {usage} échouera "
+                f"dans l'app livrée (ajouter à --enable-filter dans build_ffmpeg.sh)"
+            )
+
+    def test_decoupage_reel_avec_le_binaire_embarque(self, tmp_path, monkeypatch):
+        """`decouper_piste` sur le binaire EMBARQUÉ, pas celui du PATH.
+
+        Le test de disponibilité du muxer ne suffit pas : `-f segment` délègue à un
+        muxer enfant déduit de l'extension (ici `opus`), qui doit être présent lui
+        aussi. C'est la commande exacte du repli qui sortait en 8 le 2026-09-02.
+        """
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        import math
+        import struct
+
+        from debrief_meet.core.mistral import decoupage
+
+        monkeypatch.setattr(decoupage, "chemin_ffmpeg", lambda: str(self.BINAIRE))
+        pcm = tmp_path / "src.f32"
+        pcm.write_bytes(b"".join(
+            struct.pack("<f", 0.2 * math.sin(2 * math.pi * 440 * i / 16000))
+            for i in range(16000 * 5)
+        ))
+        source = tmp_path / "src.opus"
+        subprocess.run(
+            [str(self.BINAIRE), "-y", "-loglevel", "error",
+             "-f", "f32le", "-ar", "16000", "-ac", "1", "-i", str(pcm),
+             "-c:a", "libopus", "-b:a", "24k", str(source)],
+            check=True, capture_output=True,
+        )
+        segments = decoupage.decouper_piste(source, tmp_path / "out", limite_s=2)
+        assert len(segments) >= 2, f"découpage sans effet : {segments}"
+        assert all(s.stat().st_size > 0 for s in segments)
+
 
 @pytest.mark.skipif(not IS_MACOS, reason="build_app.sh macOS uniquement")
 class TestBuildAppVersion:

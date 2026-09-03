@@ -61,6 +61,16 @@ valider_binaire() {
             return 1
         fi
     done
+    # Muxer `segment` : repli découpage quand une piste entière est refusée
+    # (core/mistral/decoupage.py). Absent du build d'origine → le repli échouait DANS
+    # L'APP LIVRÉE et jamais en dev : sans ce muxer, ffmpeg ne reconnaît même pas
+    # `-segment_time` et sort en 8 (« Unrecognized option »). Constaté le 2026-09-02
+    # sur une réunion de 1 h 52 : 503 Mistral → repli découpage → CR perdu.
+    # `return 1` pour la même raison que les filtres : reconstruire, pas échouer.
+    if ! "$bin" -hide_banner -muxers 2>/dev/null | awk '{print $2}' | grep -qx "segment"; then
+        echo "✗ muxer segment absent du binaire (repli découpage Mistral cassé)" >&2
+        return 1
+    fi
     "$bin" -version 2>/dev/null | grep -q -- "--enable-gpl" \
         && err "le binaire est compilé --enable-gpl (inattendu, licence non conforme)."
     return 0
@@ -141,7 +151,7 @@ info "compilation de ffmpeg ${FFMPEG_VERSION} (LGPL minimal, libopus statique)�
         --disable-autodetect \
         --enable-protocol=file,pipe \
         --enable-demuxer=pcm_f32le,pcm_s16le,ogg,wav \
-        --enable-muxer=opus,ogg,wav,pcm_s16le \
+        --enable-muxer=opus,ogg,wav,pcm_s16le,segment \
         --enable-decoder=pcm_f32le,pcm_s16le,opus,libopus \
         --enable-encoder=pcm_s16le,libopus \
         --enable-filter=aresample,aformat,anull,aselect,asetpts \
@@ -191,6 +201,15 @@ info "test réel compaction des silences (2 passes, commandes exactes de l'app)�
 [[ -s "$TMPT/compacte.wav" && -s "$TMPT/compacte.opus" ]] \
     || err "compaction des silences en échec (aselect/asetpts)."
 info "compaction des silences OK."
+
+# Découpage en segments (core/mistral/decoupage.py::decouper_piste) — commande exacte du
+# repli. La vérification du muxer seule ne dit pas que la chaîne complète fonctionne :
+# `-f segment` délègue à un muxer enfant (ici `opus`) qui doit être présent lui aussi.
+info "test réel découpage en segments (commande exacte du repli Mistral)…"
+"$OUT" -y -loglevel error -i "$TMPT/test.opus" \
+    -f segment -segment_time 1 -reset_timestamps 1 -c copy "$TMPT/seg_%03d.opus"
+[[ -s "$TMPT/seg_000.opus" ]] || err "découpage en segments en échec (muxer segment)."
+info "découpage en segments OK."
 
 # ── 5. Licence (LGPL 2.1 + mention libopus BSD) ─────────────────────────────────
 cat > "$LICENSE_OUT" <<EOF
