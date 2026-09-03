@@ -6,8 +6,13 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
+
 from debrief_meet.core.mistral import pipeline
-from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
+from debrief_meet.ui.generateur_cr_mistral import (
+    TACHE_TRANSCRIPTION,
+    GestionnaireCRMistral,
+)
 
 
 def test_disponible_faux_sans_cle(config_tmp):
@@ -131,3 +136,137 @@ def test_termine_emet_le_chemin_renomme_pendant_le_job(config_tmp, tmp_path, qap
     qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
 
     assert termines == [(apres["md"], apres["md"].with_name("CR.md"))]
+
+
+# ── Transcription distante seule (sans CR) ─────────────────────────────────────
+
+def test_lancer_transcription_appelle_le_pipeline_de_transcription(
+        config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    appels = []
+    monkeypatch.setattr(pipeline, "transcrire_reunion",
+                        lambda chemin, config: appels.append(chemin) or chemin)
+    # Le CR ne doit PAS être appelé : c'est toute la différence entre les deux tâches.
+    monkeypatch.setattr(pipeline, "generer_cr_reunion",
+                        lambda *a, **k: pytest.fail("le CR ne doit pas être rédigé"))
+
+    g = GestionnaireCRMistral(config_tmp)
+    termines = []
+    g.transcription_terminee.connect(lambda md_, sortie: termines.append((md_, sortie)))
+
+    assert g.lancer_transcription(md) is True
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+    assert appels == [md]
+    assert termines == [(md, md)]
+
+
+def test_transcription_emet_sa_propre_paire_pas_celle_du_cr(
+        config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    """Les deux tâches ne s'annoncent pas de la même façon : l'Historique ouvre
+    `transcription.md` dans un cas et `CR.md` dans l'autre."""
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    monkeypatch.setattr(pipeline, "transcrire_reunion", lambda chemin, config: chemin)
+
+    g = GestionnaireCRMistral(config_tmp)
+    cr, transcription = [], []
+    g.termine.connect(lambda *a: cr.append(a))
+    g.transcription_terminee.connect(lambda *a: transcription.append(a))
+
+    g.lancer_transcription(md)
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+    assert len(transcription) == 1
+    assert cr == []
+
+
+def test_transcription_echouee_emet_sa_propre_paire(
+        config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+
+    def _echoue(chemin, config):
+        raise RuntimeError("503 persistant")
+
+    monkeypatch.setattr(pipeline, "transcrire_reunion", _echoue)
+
+    g = GestionnaireCRMistral(config_tmp)
+    echecs_cr, echecs_transcription = [], []
+    g.echoue.connect(lambda *a: echecs_cr.append(a))
+    g.transcription_echouee.connect(lambda md_, msg: echecs_transcription.append((md_, msg)))
+
+    g.lancer_transcription(md)
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+    assert echecs_transcription == [(md, "503 persistant")]
+    assert echecs_cr == []
+
+
+def test_tache_en_cours_distingue_les_deux_operations(
+        config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    demarrees = threading.Event()
+
+    def _lent(chemin, config):
+        demarrees.wait(5)
+        return chemin
+
+    monkeypatch.setattr(pipeline, "transcrire_reunion", _lent)
+
+    g = GestionnaireCRMistral(config_tmp)
+    assert g.tache_en_cours() is None
+    g.lancer_transcription(md)
+    assert g.tache_en_cours() == TACHE_TRANSCRIPTION
+    demarrees.set()
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+    # Remise à None avec le job : une tâche qui survivrait au job collerait son icône
+    # à une ligne inactive.
+    assert g.tache_en_cours() is None
+
+
+def test_transcription_refusee_pendant_un_job_de_cr(
+        config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    """Exclusion mutuelle : les deux tâches réécrivent `transcription.md`."""
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    liberer = threading.Event()
+
+    def _cr_lent(chemin, config, prompt=None):
+        liberer.wait(5)
+        return chemin
+
+    monkeypatch.setattr(pipeline, "generer_cr_reunion", _cr_lent)
+    monkeypatch.setattr(pipeline, "transcrire_reunion",
+                        lambda *a, **k: pytest.fail("transcription lancée pendant un CR"))
+
+    g = GestionnaireCRMistral(config_tmp)
+    assert g.lancer(md) is True
+    assert g.lancer_transcription(md) is False
+    liberer.set()
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+
+def test_cr_refuse_pendant_une_transcription(config_tmp, tmp_path, qapp, qtbot, monkeypatch):
+    config_tmp.set("mistral_cle_api", "x")
+    md = tmp_path / "reunion.md"
+    liberer = threading.Event()
+
+    def _transcription_lente(chemin, config):
+        liberer.wait(5)
+        return chemin
+
+    monkeypatch.setattr(pipeline, "transcrire_reunion", _transcription_lente)
+    monkeypatch.setattr(pipeline, "generer_cr_reunion",
+                        lambda *a, **k: pytest.fail("CR lancé pendant une transcription"))
+
+    g = GestionnaireCRMistral(config_tmp)
+    assert g.lancer_transcription(md) is True
+    assert g.lancer(md) is False
+    liberer.set()
+    qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+
+def test_lancer_transcription_refuse_si_indisponible(config_tmp, tmp_path, qapp):
+    g = GestionnaireCRMistral(config_tmp)
+    assert g.lancer_transcription(tmp_path / "reunion.md") is False
+    assert g.job_en_cours() is None

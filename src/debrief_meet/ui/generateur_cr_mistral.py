@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Les deux tâches que ce gestionnaire sait lancer. Elles partagent le même
+# `_job_en_cours`, et c'est le but : une transcription Voxtral et un CR réécrivent
+# tous deux `transcription.md`, les laisser tourner en parallèle sur la même réunion
+# ferait courir deux uploads et deux écritures concurrentes. Un seul gestionnaire =
+# exclusion mutuelle structurelle, rien à re-vérifier au point d'appel.
+TACHE_CR = "cr"
+TACHE_TRANSCRIPTION = "transcription"
+
 
 def _resolu(md: Path | None) -> Path | None:
     """`resoudre_chemin_reunion` tolérant au None (aucun job en cours) : le dossier a pu
@@ -29,23 +37,31 @@ def _resolu(md: Path | None) -> Path | None:
 
 
 class _WorkerCRMistral(QObject):
-    """Exécute `pipeline.generer_cr_reunion` dans un QThread. Ne lève jamais."""
+    """Exécute le pipeline Mistral dans un QThread. Ne lève jamais.
 
-    terminee = Signal(object)   # Path du <stem>_CR.md
+    `tache` choisit le point d'entrée : `TACHE_CR` (rédaction, transcription Voxtral
+    incluse si besoin) ou `TACHE_TRANSCRIPTION` (Voxtral seul, sans CR)."""
+
+    terminee = Signal(object)   # Path produit (CR.md, ou transcription.md réécrit)
     erreur = Signal(str)
 
-    def __init__(self, chemin_md: Path, config: "Config", prompt: str | None = None) -> None:
+    def __init__(self, chemin_md: Path, config: "Config", prompt: str | None = None,
+                 tache: str = TACHE_CR) -> None:
         super().__init__()
         self._md = chemin_md
         self._config = config
         self._prompt = prompt
+        self._tache = tache
 
     @Slot()
     def executer(self) -> None:
         try:
             from debrief_meet.core.mistral import pipeline
 
-            sortie = pipeline.generer_cr_reunion(self._md, self._config, prompt=self._prompt)
+            if self._tache == TACHE_TRANSCRIPTION:
+                sortie = pipeline.transcrire_reunion(self._md, self._config)
+            else:
+                sortie = pipeline.generer_cr_reunion(self._md, self._config, prompt=self._prompt)
             self.terminee.emit(sortie)
         except Exception as exc:  # noqa: BLE001 — remonté à l'UI, jamais de crash
             self.erreur.emit(str(exc))
@@ -58,8 +74,14 @@ class GestionnaireCRMistral(QObject):
     `.md` source de la réunion. La fenêtre Historique s'y connecte pour son affichage."""
 
     demarre = Signal(object)            # chemin_md (Path)
-    termine = Signal(object, object)    # chemin_md, sortie (Path)
-    echoue = Signal(object, str)        # chemin_md, message
+    termine = Signal(object, object)    # chemin_md, sortie (Path) — tâche CR
+    echoue = Signal(object, str)        # chemin_md, message — tâche CR
+    # Paire dédiée à la transcription seule, plutôt qu'un 3ᵉ argument sur `termine` :
+    # les deux tâches n'ont ni le même résultat à annoncer (« CR généré » vs
+    # « Transcription terminée ») ni le même fichier à ouvrir, et les connexions
+    # existantes restent intactes.
+    transcription_terminee = Signal(object, object)   # chemin_md, transcription.md
+    transcription_echouee = Signal(object, str)       # chemin_md, message
 
     def __init__(self, config: "Config", parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -67,6 +89,7 @@ class GestionnaireCRMistral(QObject):
         self._thread: QThread | None = None
         self._worker: _WorkerCRMistral | None = None
         self._job_en_cours: Path | None = None
+        self._tache: str | None = None
 
     # ── État (lu par la fenêtre) ───────────────────────────────────────────────
 
@@ -79,19 +102,30 @@ class GestionnaireCRMistral(QObject):
         """`.md` en cours de génération, ou None si aucun job."""
         return self._job_en_cours
 
+    def tache_en_cours(self) -> str | None:
+        """`TACHE_CR` / `TACHE_TRANSCRIPTION` du job courant, None si aucun job.
+
+        Lu par l'Historique pour l'icône de la ligne : le même gestionnaire couvre
+        deux opérations, qui ne se peignent pas pareil."""
+        return self._tache
+
     # ── Lancement ──────────────────────────────────────────────────────────────
 
-    def lancer(self, chemin_md: Path, prompt: str | None = None) -> bool:
+    def lancer(self, chemin_md: Path, prompt: str | None = None,
+               tache: str = TACHE_CR) -> bool:
         """Démarre une génération de CR. False si indisponible ou job déjà en cours.
 
         `prompt` : contenu de prompt **ponctuel** (choisi via la flèche du bouton
         « Générer le CR ») — n'affecte que ce job, le prompt actif de la config
-        reste inchangé. None → prompt actif (comportement par défaut)."""
+        reste inchangé. None → prompt actif (comportement par défaut).
+
+        `tache` : `TACHE_CR` (défaut) ou `TACHE_TRANSCRIPTION` (Voxtral seul, `prompt`
+        alors ignoré) — cf. `lancer_transcription`."""
         if not self.disponible() or self._job_en_cours is not None:
             return False
 
         thread = QThread(self)
-        worker = _WorkerCRMistral(chemin_md, self._config, prompt)
+        worker = _WorkerCRMistral(chemin_md, self._config, prompt, tache)
         worker.moveToThread(thread)
         thread.started.connect(worker.executer)
         worker.terminee.connect(self._sur_terminee)
@@ -106,21 +140,44 @@ class GestionnaireCRMistral(QObject):
         self._thread = thread
         self._worker = worker
         self._job_en_cours = chemin_md
+        self._tache = tache
         thread.start()
         self.demarre.emit(chemin_md)
         return True
 
+    def lancer_transcription(self, chemin_md: Path) -> bool:
+        """Démarre une transcription distante SEULE (aucun CR). Mêmes refus que
+        `lancer` : False si Mistral n'est pas configuré ou si un job tourne déjà —
+        CR compris, les deux tâches se disputant `transcription.md`."""
+        return self.lancer(chemin_md, tache=TACHE_TRANSCRIPTION)
+
+    # `_job_en_cours`/`_tache` sont remis à None AVANT l'émission (la vue interroge le
+    # gestionnaire depuis le handler : elle doit y voir « plus de job »), donc la tâche
+    # est capturée dans une locale pour choisir la paire de signaux.
+
     @Slot(object)
     def _sur_terminee(self, sortie: object) -> None:
         md = _resolu(self._job_en_cours)
+        tache = self._tache
         self._job_en_cours = None
+        self._tache = None
+        if tache == TACHE_TRANSCRIPTION:
+            logger.info("Transcription Mistral terminée : %s", sortie)
+            self.transcription_terminee.emit(md, Path(str(sortie)))
+            return
         logger.info("CR Mistral terminé : %s", sortie)
         self.termine.emit(md, Path(str(sortie)))
 
     @Slot(str)
     def _sur_erreur(self, message: str) -> None:
         md = _resolu(self._job_en_cours)
+        tache = self._tache
         self._job_en_cours = None
+        self._tache = None
+        if tache == TACHE_TRANSCRIPTION:
+            logger.error("Transcription Mistral échouée (%s) : %s", md, message)
+            self.transcription_echouee.emit(md, message)
+            return
         logger.error("CR Mistral échoué (%s) : %s", md, message)
         self.echoue.emit(md, message)
 

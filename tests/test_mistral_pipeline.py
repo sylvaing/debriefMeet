@@ -8,7 +8,12 @@ import pytest
 import respx
 from scipy.io import wavfile
 
-from debrief_meet.core.fichiers import MARQUEUR_EN_ATTENTE, renommer_dossier_reunion
+from debrief_meet.core.fichiers import (
+    MARQUEUR_EN_ATTENTE,
+    chemin_cr_mistral,
+    chemin_locuteurs,
+    renommer_dossier_reunion,
+)
 from debrief_meet.core.mistral import pipeline
 from debrief_meet.core.mistral.client import ErreurMistral
 
@@ -566,3 +571,117 @@ def test_dossier_supprime_pendant_le_job_echoue_comme_avant(tmp_path, config_tmp
 
     with pytest.raises(FileNotFoundError):
         pipeline.generer_cr_reunion(md, config_tmp)
+
+
+# ── transcrire_reunion : transcription distante SEULE (sans CR) ─────────────────
+
+@respx.mock
+def test_transcrire_reunion_ecrit_le_md_et_ne_produit_aucun_cr(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    route_transcription = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "texte voxtral"}))
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+
+    sortie = pipeline.transcrire_reunion(md, config_tmp)
+
+    assert sortie == md
+    assert "texte voxtral" in md.read_text(encoding="utf-8")
+    assert route_transcription.call_count == 1
+    # Le point de la tâche : aucun appel de rédaction, aucun CR sur le disque.
+    assert route_cr.call_count == 0
+    assert not chemin_cr_mistral(md).exists()
+
+
+@respx.mock
+def test_transcrire_reunion_mentionne_voxtral_dans_le_md(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "texte voxtral"}))
+
+    pipeline.transcrire_reunion(md, config_tmp)
+
+    assert "Voxtral" in md.read_text(encoding="utf-8")
+
+
+@respx.mock
+def test_transcrire_reunion_supprime_le_debrief_locuteurs_perime(tmp_path, config_tmp):
+    """Garder `locuteurs.md` ferait rédiger le prochain CR sur le texte REMPLACÉ :
+    `_lire_transcript_local` lui donne la priorité sur `transcription.md`."""
+    md = _md_avec_transcript(tmp_path)
+    chemin_locuteurs(md).write_text("**Alice :** ancien texte", encoding="utf-8")
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "nouveau texte voxtral"}))
+
+    pipeline.transcrire_reunion(md, config_tmp)
+
+    assert not chemin_locuteurs(md).exists()
+    assert "nouveau texte voxtral" in md.read_text(encoding="utf-8")
+
+
+@respx.mock
+def test_transcrire_reunion_sans_locuteurs_ne_leve_pas(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "t"}))
+
+    assert pipeline.transcrire_reunion(md, config_tmp) == md
+
+
+def test_transcrire_reunion_leve_sans_cle_api(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    with pytest.raises(ErreurMistral):
+        pipeline.transcrire_reunion(md, config_tmp)
+
+
+def test_transcrire_reunion_leve_si_aucune_piste(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _configurer(config_tmp)
+    with pytest.raises(FileNotFoundError):
+        pipeline.transcrire_reunion(md, config_tmp)
+
+
+@respx.mock
+def test_transcrire_reunion_respecte_la_duree_max(tmp_path, config_tmp):
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi", duree_s=120)
+    _configurer(config_tmp, mistral_duree_max_min=1)
+    with pytest.raises(ErreurMistral, match="trop longue"):
+        pipeline.transcrire_reunion(md, config_tmp)
+
+
+@respx.mock
+def test_transcrire_reunion_ecrit_dans_le_dossier_renomme_pendant_le_job(tmp_path, config_tmp):
+    """docs/43 §16 : le renommage est déclenché DEPUIS le mock, donc pendant l'upload.
+
+    Posé avant l'appel, il testerait un cas plus facile que le code d'entrée gère déjà
+    (`resoudre_chemin_reunion` en tête de fonction) et resterait vert en cas de
+    régression sur la re-résolution d'APRÈS transcription."""
+    dossier = tmp_path / "2026-05-05_14-00-00"
+    dossier.mkdir()
+    md = dossier / "transcription.md"
+    md.write_text(f"# Réunion\n\n> {MARQUEUR_EN_ATTENTE}\n", encoding="utf-8")
+    _piste(dossier, "moi")
+    _configurer(config_tmp)
+    nouveau: dict = {}
+
+    def _renommer_puis_repondre(_request):
+        nouveau["md"] = renommer_dossier_reunion(md, "Point hebdo")
+        return httpx.Response(200, json={"text": "texte apres renommage"})
+
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(side_effect=_renommer_puis_repondre)
+
+    sortie = pipeline.transcrire_reunion(md, config_tmp)
+
+    assert nouveau["md"] != md                      # le renommage a bien eu lieu
+    assert sortie == nouveau["md"]
+    assert "texte apres renommage" in nouveau["md"].read_text(encoding="utf-8")
+    assert not md.exists()                          # rien écrit à l'ancien chemin

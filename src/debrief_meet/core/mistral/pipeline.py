@@ -10,6 +10,9 @@ Logique adaptative (décision 1, §1) :
 3. forçable vers Voxtral via `mistral_source_transcription="voxtral"` (§8).
 
 Dans tous les cas, la rédaction du CR (`cr.py`) est identique (source-agnostique).
+
+Second point d'entrée : `transcrire_reunion` — l'étape Voxtral seule, sans CR
+(action liée au raccourci de l'Historique).
 """
 from __future__ import annotations
 
@@ -216,6 +219,49 @@ def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
     chemin_md.write_text("\n".join(lignes).rstrip() + "\n", encoding="utf-8")
     if duree is not None:
         definir_duree(chemin_md, duree)
+
+
+def transcrire_reunion(chemin_md: Path, config: "Config") -> Path:
+    """Transcription distante **seule** — réécrit `transcription.md`, ne produit aucun CR.
+
+    Même étape Voxtral que le repli de `generer_cr_reunion` (mêmes limites de durée,
+    mêmes replis réseau, même biais de contexte), mais la chaîne s'arrête après
+    l'écriture du transcript : c'est l'action liée au raccourci de l'Historique, pour
+    récupérer le texte d'une réunion sans dépenser un appel de rédaction.
+
+    Retourne le `.md` réécrit. Lève `ErreurMistral` (ou une sous-classe) sur tout
+    échec — jamais de fichier partiel écrit.
+    """
+    # Le dossier a pu être renommé entre le geste et le démarrage effectif du worker,
+    # et il pourra l'être encore pendant l'upload (docs/43 §16).
+    chemin_md = resoudre_chemin_reunion(chemin_md)
+    cle_api = config.get("mistral_cle_api")
+    if not cle_api:
+        raise ErreurMistral("Aucune clé API Mistral configurée (Préférences › IA en ligne).")
+
+    infos = _infos_evenement(chemin_md)
+    # Biais identique au pipeline CR : invités BlueMind d'abord, puis les termes
+    # « à écrire » du lexique sous le même interrupteur (docs/46 §5.3).
+    context_bias = list(infos.noms_invites)
+    if config.get("lexique_actif"):
+        context_bias += lexique.termes_biais(config.get("lexique_corrections"))
+
+    with ClientMistral(config.get("mistral_base_url"), cle_api) as client:
+        res = _transcrire_via_voxtral(chemin_md, client, config, context_bias)
+
+    chemin_md = resoudre_chemin_reunion(chemin_md)   # l'upload a duré des minutes
+    _ecrire_transcript_local(chemin_md, res)
+    _reinserer_bloc_invites(chemin_md)               # la réécriture a effacé le cartouche
+    # `locuteurs.md` décrit la transcription qu'on vient de REMPLACER. Le garder serait
+    # pire que le supprimer : `_lire_transcript_local` lui donne la priorité, donc le
+    # prochain CR serait rédigé sur l'ancien texte sans que rien ne le signale. L'UI
+    # annonce cette suppression dans sa confirmation de remplacement.
+    perime = chemin_locuteurs(chemin_md)
+    if perime.exists():
+        perime.unlink()
+        logger.info("Débrief locuteurs supprimé (périmé par la transcription Voxtral) : %s", perime)
+    logger.info("Transcription Voxtral écrite : %s", chemin_md)
+    return chemin_md
 
 
 def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = None) -> Path:

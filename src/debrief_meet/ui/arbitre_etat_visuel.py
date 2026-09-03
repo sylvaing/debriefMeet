@@ -22,6 +22,15 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from debrief_meet.core.modes import EtatVisuel
 
+# Paires (fin_ok, fin_échec) qu'un gestionnaire peut exposer — une par tâche qu'il sait
+# exécuter. Ajouter une tâche à un gestionnaire OBLIGE à ajouter sa paire ici : sans
+# elle, le job s'allume et ne s'éteint jamais (cf. `suivre_gestionnaire`).
+PAIRES_FIN = (
+    ("termine", "echoue"),                                    # diarization, transcription
+                                                              # locale, CR Mistral
+    ("transcription_terminee", "transcription_echouee"),      # transcription distante
+)
+
 _DELAI_FLASH_MS = 3000
 
 
@@ -43,14 +52,26 @@ class ArbitreEtatVisuel(QObject):
         orchestrateur.etat_visuel_change.connect(self._sur_orchestrateur)
 
     def suivre_gestionnaire(self, gestionnaire, cle: str) -> None:
-        """`gestionnaire` expose demarre(md) / termine(md, sortie) / echoue(md, msg)
-        (GestionnaireDiarization comme GestionnaireCRMistral). `cle` distingue les
-        sources : deux jobs simultanés ne s'éteignent pas l'un l'autre."""
+        """`gestionnaire` expose demarre(md) puis une paire de fin par tâche qu'il sait
+        exécuter (GestionnaireDiarization comme GestionnaireCRMistral). `cle` distingue
+        les sources : deux jobs simultanés ne s'éteignent pas l'un l'autre.
+
+        **Toutes** les paires de `PAIRES_FIN` sont câblées, sur la même clé : un
+        gestionnaire n'exécute qu'un job à la fois, donc n'importe laquelle de ses fins
+        éteint le job en cours. Câbler `demarre` sans la paire de fin correspondante
+        laisserait la clé dans `_jobs` pour le reste de la session — icône bloquée sur
+        l'orange, sans aucune erreur. D'où la boucle plutôt que trois `connect` en dur,
+        et le test qui exige que chaque signal de fin du gestionnaire y figure."""
         gestionnaire.demarre.connect(lambda _md, c=cle: self._sur_job_demarre(c))
-        gestionnaire.termine.connect(
-            lambda _md, _sortie, c=cle: self._sur_job_fini(c, EtatVisuel.TERMINE))
-        gestionnaire.echoue.connect(
-            lambda _md, _msg, c=cle: self._sur_job_fini(c, EtatVisuel.ERREUR))
+        for nom_termine, nom_echoue in PAIRES_FIN:
+            termine = getattr(gestionnaire, nom_termine, None)
+            echoue = getattr(gestionnaire, nom_echoue, None)
+            if termine is None or echoue is None:
+                continue
+            termine.connect(
+                lambda _md, _sortie, c=cle: self._sur_job_fini(c, EtatVisuel.TERMINE))
+            echoue.connect(
+                lambda _md, _msg, c=cle: self._sur_job_fini(c, EtatVisuel.ERREUR))
 
     # ── Événements ───────────────────────────────────────────────────────────
 
