@@ -11,6 +11,7 @@ from debrief_meet.core.mistral.client import (
     ErreurAuthMistral,
     ErreurFormatMistral,
     ErreurMistral,
+    ErreurModeleIndisponibleMistral,
     ErreurQuotaMistral,
     ErreurReseauMistral,
     ErreurServeurMistral,
@@ -288,3 +289,117 @@ def test_429_retries_conserves_par_defaut_sur_transcription():
                                     "a.opus", b"x", "audio/ogg")
     assert r.json() == {"text": "ok"}
     assert route.call_count == 2
+
+
+# ── 429 à plafond nul : le modèle n'est pas servi (terrain 2026-09-08, §10.7) ────
+#
+# Chez une utilisatrice : « Quota dépassé (429) sur v1/chat/completions », 4 fois en
+# 1 h 35, chaque fois après 20 + 40 + 60 s d'attente. Mesuré ensuite sur l'API réelle :
+# `mistral-medium-latest` répond 429 avec `x-ratelimit-limit-req-minute: 0` — allocation
+# NULLE, pas épuisée. Aucune attente ne pouvait aboutir, et le message envoyait
+# l'utilisatrice réessayer plus tard.
+
+_PLAFOND_NUL = {"x-ratelimit-limit-req-minute": "0"}
+#: Corps réel renvoyé par Mistral dans ce cas.
+_CORPS_429 = '{"object":"error","message":"Rate limit exceeded","type":"rate_limited","code":"1300"}'
+
+
+@respx.mock
+def test_429_a_plafond_nul_leve_sans_aucune_attente(monkeypatch):
+    dormi: list[float] = []
+    monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", dormi.append)
+    route = respx.post(f"{URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(429, headers=_PLAFOND_NUL, text=_CORPS_429))
+
+    with pytest.raises(ErreurModeleIndisponibleMistral) as excinfo:
+        ClientMistral(URL, "k").post_json("/v1/chat/completions",
+                                          {"model": "mistral-medium-latest"})
+
+    assert dormi == [], "un plafond à 0 ne se résorbe pas : ne jamais attendre"
+    assert route.call_count == 1
+    message = str(excinfo.value)
+    assert "mistral-medium-latest" in message
+    assert "0 requête/minute" in message
+    assert "Préférences" in message
+
+
+@respx.mock
+def test_429_a_plafond_nul_n_est_pas_une_erreur_de_quota():
+    """`transcription.py` rattrape `ErreurQuotaMistral` pour découper la piste :
+    hériter d'elle ferait multiplier un refus définitif par le nombre de segments."""
+    respx.post(f"{URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(429, headers=_PLAFOND_NUL, text=_CORPS_429))
+
+    with pytest.raises(ErreurMistral) as excinfo:
+        ClientMistral(URL, "k").post_json("/v1/chat/completions", {"model": "m"})
+
+    assert not isinstance(excinfo.value, ErreurQuotaMistral)
+
+
+@respx.mock
+def test_429_a_plafond_nul_detecte_aussi_sur_une_reprise():
+    """Le premier 429 peut être un vrai rate-limit et la reprise révéler le plafond nul."""
+    respx.get(f"{URL}/v1/models").mock(side_effect=[
+        httpx.Response(429),
+        httpx.Response(429, headers=_PLAFOND_NUL, text=_CORPS_429),
+    ])
+
+    with pytest.raises(ErreurModeleIndisponibleMistral):
+        ClientMistral(URL, "k").get("/v1/models")
+
+
+@respx.mock
+def test_429_a_plafond_nul_sur_transcription_nomme_le_modele():
+    """Le modèle vit dans `data` (multipart), pas dans `json`."""
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(429, headers=_PLAFOND_NUL, text=_CORPS_429))
+
+    with pytest.raises(ErreurModeleIndisponibleMistral, match="voxtral-mini-latest"):
+        ClientMistral(URL, "k").poster_transcription(
+            "/v1/audio/transcriptions", {"model": "voxtral-mini-latest"},
+            "a.opus", b"x", "audio/ogg")
+
+
+@respx.mock
+def test_plafond_non_nul_reste_un_quota_ordinaire(monkeypatch):
+    """Un vrai rate-limit garde ses reprises : ne pas transformer tout 429 en verdict."""
+    dormi: list[float] = []
+    monkeypatch.setattr("debrief_meet.core.mistral.client._dormir", dormi.append)
+    respx.get(f"{URL}/v1/models").mock(
+        return_value=httpx.Response(429, headers={"x-ratelimit-limit-req-minute": "188"}))
+
+    with pytest.raises(ErreurQuotaMistral):
+        ClientMistral(URL, "k").get("/v1/models")
+    assert dormi, "un quota ordinaire doit continuer à patienter"
+
+
+@respx.mock
+def test_en_tete_absent_ou_illisible_reste_un_quota_ordinaire():
+    """Aucun en-tête (proxy, passerelle) : on ne peut rien conclure, donc on retente."""
+    respx.get(f"{URL}/v1/models").mock(
+        return_value=httpx.Response(429, headers={"x-ratelimit-limit-req-minute": "n/a"}))
+
+    with pytest.raises(ErreurQuotaMistral):
+        ClientMistral(URL, "k").get("/v1/models")
+
+
+@respx.mock
+def test_message_de_quota_porte_le_corps_de_la_reponse():
+    """Le corps porte la vraie cause — c'est déjà ce que font les branches 401/403 et
+    400/422. Sans lui, le diagnostic du 2026-09-08 a demandé de rejouer l'appel à la
+    main pour découvrir la limite à 0."""
+    respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(429, text=_CORPS_429))
+
+    with pytest.raises(ErreurQuotaMistral, match="Rate limit exceeded"):
+        ClientMistral(URL, "k").get("/v1/models")
+
+
+@respx.mock
+def test_message_de_quota_sans_retry_porte_aussi_le_corps():
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(429, text=_CORPS_429))
+
+    with pytest.raises(ErreurQuotaMistral, match="Rate limit exceeded"):
+        ClientMistral(URL, "k").poster_transcription(
+            "/v1/audio/transcriptions", {"model": "voxtral-mini-latest"},
+            "a.opus", b"x", "audio/ogg", retries_429=False)

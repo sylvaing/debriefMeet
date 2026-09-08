@@ -27,6 +27,15 @@ class ErreurQuotaMistral(ErreurMistral):
     """429 — quota/rate-limit dépassé malgré les reprises."""
 
 
+class ErreurModeleIndisponibleMistral(ErreurMistral):
+    """429 dont le plafond par minute vaut **0** — le modèle n'est pas servi.
+
+    Sœur de `ErreurQuotaMistral`, surtout **pas** une sous-classe : `transcription.py`
+    rattrape le quota pour basculer sur le découpage, or découper une piste dont le
+    modèle est refusé ne ferait que multiplier le même refus par le nombre de segments.
+    Celle-ci doit remonter telle quelle."""
+
+
 class ErreurFormatMistral(ErreurMistral):
     """400/415/422 — fichier ou paramètres refusés."""
 
@@ -63,6 +72,46 @@ _TENTATIVES_5XX = 2
 def _dormir(secondes: float) -> None:
     """Isolé pour être monkeypatché en test (évite de vraiment dormir)."""
     time.sleep(secondes)
+
+
+#: Plafond de requêtes par minute annoncé par Mistral. Il vaut **0** quand le modèle
+#: n'est pas servi par l'abonnement : l'allocation n'est pas épuisée, elle est nulle, et
+#: le statut reste un 429 ordinaire — seul cet en-tête distingue les deux cas. Mesuré le
+#: 2026-09-08 (docs/42 §10.7) : `mistral-medium` et `mistral-small` à 0, les `ministral-*`
+#: à 30/188/750. Terrain : 4 tentatives en 1 h 35 chez une utilisatrice, dont 3 attentes
+#: de 20/40/60 s à chaque fois, pour un refus qui ne pouvait pas cesser.
+_ENTETE_PLAFOND_REQ = "x-ratelimit-limit-req-minute"
+
+
+def _plafond_nul(reponse: httpx.Response) -> bool:
+    """Vrai si le serveur annonce explicitement une allocation de zéro requête."""
+    valeur = reponse.headers.get(_ENTETE_PLAFOND_REQ)
+    if valeur is None:
+        return False
+    try:
+        return float(valeur) == 0.0
+    except ValueError:
+        return False
+
+
+def _modele_demande(kwargs: dict) -> str | None:
+    """Nom du modèle envoyé — `json` pour le chat, `data` pour l'upload multipart."""
+    corps = kwargs.get("json") or kwargs.get("data")
+    modele = corps.get("model") if isinstance(corps, dict) else None
+    return modele if isinstance(modele, str) else None
+
+
+def _refuser_si_plafond_nul(reponse: httpx.Response, chemin: str, kwargs: dict) -> None:
+    """Lève sans attendre quand le 429 ne peut pas se résorber."""
+    if not _plafond_nul(reponse):
+        return
+    modele = _modele_demande(kwargs)
+    designation = f"Le modèle « {modele} »" if modele else "Ce modèle"
+    raise ErreurModeleIndisponibleMistral(
+        f"{designation} n'est pas servi par votre abonnement Mistral "
+        f"(429 sur {chemin}, plafond annoncé à 0 requête/minute) — réessayer plus tard "
+        f"n'y changera rien. Choisir un autre modèle dans Préférences › IA en ligne. "
+        f"Réponse : {reponse.text[:200]}")
 
 
 def _delai_retry_after(reponse: httpx.Response) -> float | None:
@@ -173,8 +222,11 @@ class ClientMistral:
         if reponse.status_code >= 500:
             reponse = self._reessayer_5xx(reponse, methode, chemin, kwargs)
         if reponse.status_code == 429:
+            # AVANT toute attente : un plafond à 0 ne se résorbe jamais.
+            _refuser_si_plafond_nul(reponse, chemin, kwargs)
             if not retries_429:
-                raise ErreurQuotaMistral(f"Quota dépassé (429) sur {chemin}")
+                raise ErreurQuotaMistral(
+                    f"Quota dépassé (429) sur {chemin} : {reponse.text[:300]}")
             for tentative in range(1, _TENTATIVES_429 + 1):
                 attente = _delai_retry_after(reponse)
                 if attente is None:
@@ -184,14 +236,17 @@ class ClientMistral:
                     # 5/10/15 s (cumul 30 s) échouaient dans la même fenêtre — vécu le
                     # 2026-08-05 sur le 1er segment du repli découpage (deux fois).
                     attente = 20.0 * tentative
-                logger.warning("429 Mistral — attente %.1fs (tentative %d/%d)",
-                               attente, tentative, _TENTATIVES_429)
+                logger.warning("429 Mistral sur %s — attente %.1fs (tentative %d/%d) : %s",
+                               chemin, attente, tentative, _TENTATIVES_429,
+                               reponse.text[:200])
                 _dormir(attente)
                 reponse = self._client.request(methode, chemin, **kwargs)
                 if reponse.status_code != 429:
                     break
+                _refuser_si_plafond_nul(reponse, chemin, kwargs)
             else:
-                raise ErreurQuotaMistral(f"Quota dépassé (429) sur {chemin}")
+                raise ErreurQuotaMistral(
+                    f"Quota dépassé (429) sur {chemin} : {reponse.text[:300]}")
         if reponse.status_code in (401, 403):
             # Le corps porte la vraie cause — cas réel du 2026-08-31 : 403
             # tier_not_allowed (mistral-large restreint à un tier supérieur), que le

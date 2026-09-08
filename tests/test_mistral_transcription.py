@@ -8,7 +8,8 @@ import respx
 from scipy.io import wavfile
 
 from debrief_meet.core.mistral import transcription as t
-from debrief_meet.core.mistral.client import ClientMistral
+from debrief_meet.core.mistral.client import (ClientMistral,
+                                              ErreurModeleIndisponibleMistral)
 from debrief_meet.core.mistral.silences import PlanCompaction
 
 URL = "https://api.mistral.ai"
@@ -268,6 +269,33 @@ def test_erreur_serveur_sur_les_segments_remonte(tmp_path, monkeypatch):
 
     client = ClientMistral(URL, "cle")
     with pytest.raises(ErreurServeurMistral):
+        t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+
+# ── modèle non servi : surtout PAS de découpage (terrain 2026-09-08, §10.7) ─────────
+
+@respx.mock
+def test_modele_non_servi_ne_declenche_aucun_decoupage(tmp_path, monkeypatch):
+    """Un 429 à plafond nul est un refus DÉFINITIF, pas un quota momentané.
+
+    Le découper reviendrait à multiplier le même refus par le nombre de segments —
+    7 uploads inutiles pour une piste de 2 h. Test d'EFFET : faire de
+    `ErreurModeleIndisponibleMistral` une sous-classe de `ErreurQuotaMistral` le fait
+    échouer, alors que la seule vérification de la hiérarchie des classes resterait
+    verte côté client."""
+    chemin = tmp_path / "reunion.opus"
+    chemin.write_bytes(b"faux-opus")
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(return_value=httpx.Response(
+        429, headers={"x-ratelimit-limit-req-minute": "0"},
+        text='{"message":"Rate limit exceeded"}'))
+
+    def _jamais(*_a, **_k):
+        raise AssertionError("découpage tenté alors que le modèle n'est pas servi")
+
+    monkeypatch.setattr(t, "decouper_piste", _jamais)
+
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurModeleIndisponibleMistral, match="voxtral-mini-latest"):
         t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
 
 
