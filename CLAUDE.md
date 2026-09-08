@@ -506,6 +506,48 @@ implicite, la commande du message reste rejouable telle quelle. Câblé sur les 
 couvre le lanceur **et les 3 appelants réels** : le lanceur seul ne prouverait rien, c'est
 chaque site d'appel qui était muet. **Non livré** : attend le prochain build macOS.
 
+Après le retrait des modèles de CR non servis (docs/42 §10.7, 2026-09-08) : **1720 passed**,
++23 tests, en 2 commits verts indépendamment (1711 sur le premier), 2 échecs
+d'environnement habituels. Déclencheur : « Quota dépassé (429) sur v1/chat/completions »
+chez Alix (build `e170d50`, correctif du cumul de `usage` déjà embarqué), **4 fois en
+1 h 35** sur une réunion de 25 min dont toute la chaîne amont marchait (compaction 23 et
+27 plages, deux pistes transcrites par Voxtral) ; dernier CR réussi chez elle le
+2026-08-27. **Mesuré sur l'API réelle et reproduit avec la clé de Sylvain** — ce n'est
+donc ni son poste ni sa clé : `mistral-medium-latest` et `mistral-small-latest`, **les
+deux seuls choix du sélecteur**, répondent 429 avec
+`x-ratelimit-limit-req-minute: **0**` ; `mistral-large` reste en 403 `tier_not_allowed`
+(migration v5) ; `magistral-medium-latest` est un **alias** de medium ; seuls les
+`ministral-*` répondent (30/188/750 req/min). **L'allocation n'est pas épuisée, elle est
+nulle** — aucune attente ne peut aboutir, et Alix n'avait aucun réglage qui marche.
+⚠️ **Trois pistes plausibles écartées par la mesure** : fenêtre tokens/minute saturée par
+les appels Voxtral qui précèdent (réfutée par les tentatives 1 h 30 plus tard, sans
+transcription), taille du transcript (contexte **256 k des deux côtés** d'après
+`/v1/models` — la longueur des réunions n'entre pas en compte), et repli sur
+`magistral-medium` (alias). Livré en 2 volets : **migration config v6** — `MODELES_CR` /
+`MODELE_CR_DEFAUT` dans `core/config.py`, **importés** par le sélecteur et jamais
+recopiés (une liste divergente proposerait un modèle que la migration annulerait en
+silence, un test compare les deux), défaut `ministral-14b-latest`, et comme la valeur
+fautive ne peut pas être énumérée on migre **tout ce qui n'est pas dans la liste**, choix
+explicite compris ; et **le client Mistral** — la branche 429 **jetait le corps de la
+réponse** alors que les branches 401/403 et 400/422 le joignent (⚠️ **même angle mort que
+le stderr de ffmpeg ci-dessus**, corrigé le même jour : le diagnostic a de nouveau
+demandé de rejouer l'appel à la main), et un plafond à 0 déclenche désormais un refus
+**immédiat** au lieu de 20 + 40 + 60 s d'attente suivies d'un « Quota dépassé » qui envoie
+l'utilisateur attendre un déblocage qui ne viendra jamais.
+⚠️ `ErreurModeleIndisponibleMistral` est **sœur** de `ErreurQuotaMistral`, surtout pas une
+sous-classe : `transcription.py` rattrape le quota pour découper, or découper une piste
+dont le modèle est refusé multiplierait le refus par le nombre de segments — figé par un
+test d'**effet** côté transcription, pas par une vérification de hiérarchie de classes
+(régression simulée vérifiée). ⚠️ Les tests de la migration v5 passaient par `Config`,
+donc la v6 écrasait leur résultat : ils appellent désormais la v5 **seule**, sans quoi ils
+seraient restés verts en ne prouvant plus rien. ⚠️ **Ce que le choix coûte** :
+`ministral-14b` est un modèle *small / edge* (14 B, **sans** capacité `reasoning`) là où
+`mistral-medium` est un milieu de gamme « frontier » — à surveiller sur les 3 points qui
+comptent pour un CR (tenir un prompt long, ne pas inventer de participant — l'écueil de
+docs/46 —, synthétiser plutôt que paraphraser). Le vrai remède reste un abonnement
+supérieur. **Contournement sans build** : `"mistral_modele_cr": "ministral-14b-latest"`
+dans `config.json`, app fermée.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -654,7 +696,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
-| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS ; §10.5 = cumul de `usage` non typé, repli découpage cassé sur les 3 OS (terrain 2026-09-07, corrigé) ; §10.6 = compaction cassée au-delà de 100 plages (expression `aselect` trop imbriquée, 3 OS) + stderr de ffmpeg enfin journalisé (`core/ffmpeg.py`)** | `docs/42` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS ; §10.5 = cumul de `usage` non typé, repli découpage cassé sur les 3 OS (terrain 2026-09-07, corrigé) ; §10.6 = compaction cassée au-delà de 100 plages (expression `aselect` trop imbriquée, 3 OS) + stderr de ffmpeg enfin journalisé (`core/ffmpeg.py`) ; §10.7 = plus aucun modèle `mistral-*` servi en chat (429 à plafond NUL), sélecteur et défaut passés aux `ministral-*` (migration v6) + corps de la réponse 429 journalisé** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15 ; §6.4 et §16 = renommage pendant un job de fond, correctif du 2026-08-28)** | `docs/43` |
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |

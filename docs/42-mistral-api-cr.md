@@ -952,6 +952,94 @@ appelants catchent large), le changement de type est donc sans effet de bord.
 ne prouverait rien, c'est chaque site d'appel qui était muet, et un site oublié le
 redeviendrait sans qu'aucun test ne bronche.
 
+### 10.7 Aucun modèle `mistral-*` n'est plus servi en chat — 429 à plafond NUL (2026-09-08, corrigé)
+
+Rien à voir avec le découpage ni la compaction, malgré le mot « quota » : c'est
+l'**abonnement**.
+
+Terrain, poste de Alix, build `e170d50` (donc correctif §10.5 embarqué). Réunion de
+25 min, dont la chaîne amont fonctionne parfaitement — compaction OK (23 et 27 plages),
+les deux pistes transcrites par Voxtral. Puis :
+
+```
+CR Mistral échoué (…\2026-09-08_10-03-53_Rdv-client\transcription.md)
+  : Quota dépassé (429) sur v1/chat/completions
+```
+
+**Quatre fois**, à 10:33, 10:38, 12:02 et 12:06 — soit sur 1 h 35, avec 20 + 40 + 60 s
+d'attente à chaque tentative. Dernier CR réussi chez elle : **2026-08-27 16:02**.
+
+**Mesure sur l'API réelle, reproduite avec la clé de Sylvain** — ce n'est donc pas son
+poste, ni sa clé :
+
+| modèle | code | `x-ratelimit-limit-req-minute` |
+|---|---|---|
+| `mistral-medium-latest` (défaut de l'app) | 429 | **0** |
+| `mistral-small-latest` (l'autre choix du sélecteur) | 429 | **0** |
+| `mistral-medium-3.5`, `-2604`, `-3`, `magistral-*` | 429 | **0** |
+| `mistral-large-latest` | 403 | *not available in your subscription tier* |
+| `ministral-14b-latest` | 200 | 30 (937 k tokens/min) |
+| `ministral-8b-latest` | 200 | 188 (625 k tokens/min) |
+| `ministral-3b-latest` | 200 | 750 (1,3 M tokens/min) |
+
+**L'allocation n'est pas épuisée, elle est nulle.** Attendre ne peut jamais aboutir —
+d'où l'échec identique à 5 min puis à 1 h 30 d'intervalle. C'est la deuxième vague du
+resserrement de tier après le 403 sur `mistral-large` de fin août (migration v5), mais
+bien plus large : le sélecteur ne proposait alors **que** medium et small, tous deux
+morts, donc **Alix n'avait aucun réglage qui marche**.
+
+⚠️ **Trois pistes plausibles écartées par la mesure**, dans l'ordre où elles se
+présentaient : la fenêtre tokens/minute saturée par les deux appels Voxtral qui
+précèdent (réfutée par les tentatives de 12:02 et 12:06, sans transcription et 1 h 30
+plus tard) ; la taille du transcript (25 min ≈ 10 k tokens, et le contexte est de
+**256 k des deux côtés** d'après `/v1/models` — la longueur des réunions n'entre pas
+en ligne de compte) ; un repli sur `magistral-medium-latest`, qui est en fait un
+**alias** de `mistral-medium-latest` et rend le même 429.
+
+**Correctif 1 — ne proposer que du servi (migration config v6).** `MODELES_CR` et
+`MODELE_CR_DEFAUT` vivent dans `core/config.py` et le sélecteur les **importe** au lieu
+de les recopier : une liste divergente proposerait un modèle que la migration
+remplacerait au démarrage suivant, en silence. Défaut = `ministral-14b-latest`, le plus
+capable des modèles réellement servis. Contrairement à la v5, la valeur fautive ne peut
+pas être énumérée (toute la famille est morte) : la v6 migre **tout ce qui n'est pas
+dans `MODELES_CR`**, choix explicite compris. Corollaire assumé — un abonnement
+supérieur, où medium redeviendrait servi, est migré lui aussi ; le remède est alors
+d'ajouter le modèle à la liste, pas de laisser chaque poste porter une valeur que rien
+ne vérifie.
+
+⚠️ **Ce que ce choix coûte** : `ministral-14b` est un modèle de la gamme *small / edge*
+(Ministral 3, 14 milliards de paramètres, **sans** capacité `reasoning`), là où
+`mistral-medium` est un modèle de milieu de gamme « frontier ». Le contexte est
+identique, la qualité de rédaction non — à surveiller sur les trois points où ça se
+joue pour un CR : tenir un prompt long et structuré, ne pas inventer de participant
+(l'écueil déjà rencontré avec le lexique, cf. docs/46), et synthétiser au lieu de
+paraphraser. Le vrai remède reste un abonnement Mistral supérieur.
+
+**Correctif 2 — dire la vérité, et ne pas attendre pour rien.** Deux défauts du client,
+indépendants du modèle :
+
+- la branche 429 **jetait le corps de la réponse**, alors que les branches 401/403 et
+  400/422 le joignent — et que le commentaire de la 403 dit lui-même « le corps porte la
+  vraie cause ». Ici il portait tout. **Même angle mort que le stderr de ffmpeg (§10.6)**,
+  et même conséquence : le diagnostic a demandé de rejouer l'appel à la main. Le message
+  porte désormais le corps (tronqué), et le WARNING de reprise nomme l'endpoint ;
+- un plafond à 0 déclenche maintenant un refus **immédiat**, sans les 2 min d'attente,
+  avec un message qui nomme le modèle et renvoie vers Préférences › IA en ligne — au
+  lieu d'un « Quota dépassé » qui envoie l'utilisateur réessayer un déblocage qui ne
+  viendra pas.
+
+⚠️ `ErreurModeleIndisponibleMistral` est **sœur** de `ErreurQuotaMistral`, surtout pas
+une sous-classe : `transcription.py` rattrape le quota pour basculer sur le découpage,
+or découper une piste dont le modèle est refusé multiplierait le même refus par le
+nombre de segments (7 uploads inutiles pour une réunion de 2 h). Figé par un test
+d'**effet** côté transcription — le découpage lève si on l'appelle — et pas seulement
+par une vérification de hiérarchie de classes ; régression simulée vérifiée, faire
+hériter la classe de `ErreurQuotaMistral` fait tomber les deux tests.
+
+**Contournement sans build**, tant que le setup n'est pas livré : fermer l'app, mettre
+`"mistral_modele_cr": "ministral-14b-latest"` dans `config.json` — la valeur est lue
+telle quelle, et la migration v6 la conservera.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle
@@ -1030,9 +1118,35 @@ morts restés verts, CLAUDE.md 2026-08-24).
 binaire embarqué ; rendre son `subprocess.run` à `decoupage` fait tomber le test de ce
 site, lui seul.
 
+**Ajouts du 2026-09-08 (modèles servis + 429 à plafond nul, §10.7)** — +23 tests,
+**1720 passed** :
+- `test_config.py` : migration v6 sur chaque modèle mort, conservation de chaque modèle
+  servi, et deux garde-fous — le défaut est le premier de `MODELES_CR`, et il appartient
+  à la liste (un défaut absent serait migré par la v6 elle-même à chaque démarrage).
+- `test_remote_ia_view.py` : chaque modèle non servi absent du sélecteur, et le
+  sélecteur **égal** à `MODELES_CR` — une liste divergente proposerait un choix que la
+  migration annulerait en silence.
+- `test_mistral_client.py` : refus immédiat **sans aucune attente** (`_dormir` espionné),
+  plafond nul détecté aussi sur une reprise, modèle nommé qu'il vienne de `json` (chat)
+  ou de `data` (multipart), en-tête absent ou illisible traité comme un quota ordinaire,
+  et le corps de la réponse présent dans les deux messages de quota.
+- `test_mistral_transcription.py` : un modèle non servi ne déclenche **aucun** découpage.
+
+⚠️ **Les tests de la migration v5 passaient par `Config`** : enchaînée, la v6 écrasait
+leur résultat et ils ne disaient plus rien de ce que la v5 a fait sur les postes migrés.
+Ils appellent désormais `_migrer_v5_modele_cr_medium` **seule**, et un test distinct
+atteste l'état final de la chaîne complète.
+
 ## 13. Pièges connus / à surveiller
 
 - **Ne pas** router Mistral via `MoteurTranscription`/`factory.py` (§1.1).
+- **Un 429 n'est pas forcément un quota.** Regarder `x-ratelimit-limit-req-minute` :
+  à **0**, le modèle n'est pas servi par l'abonnement et aucune attente n'aboutira
+  (§10.7). Le statut HTTP ne distingue pas les deux cas — seul l'en-tête le fait.
+- **Le sélecteur de modèles se périme sans prévenir**, et rien ne le teste contre
+  l'API : Mistral a retiré `mistral-large` (403) fin août 2026 puis toute la famille
+  `mistral-*`/`magistral-*` (429 à 0) début septembre. Revalider `MODELES_CR` en réel
+  avant chaque livraison — la mesure tient en un POST par modèle.
 - **Expression de filtre ffmpeg : compter les termes, pas les caractères.**
   `av_expr_parse` s'arrête à **100 niveaux d'imbrication** et une chaîne `a+b+c` en
   consomme un par terme (§10.6). Toute expression construite par boucle doit être groupée
