@@ -466,6 +466,46 @@ il journalise maintenant la **trace** pour tout ce qui n'est pas une `ErreurMist
 Windows ; en attendant, relancer plus tard suffit (sans 429, l'envoi entier ne touche
 jamais ce code).
 
+Après la compaction des silences réparée au-delà de 100 plages (docs/42 §10.6,
+2026-09-08) : **1697 passed**, +20 tests, en 2 commits verts indépendamment (1686 sur le
+premier), avec les 2 échecs d'environnement habituels (helper Swift non compilé, audio
+canonique du benchmark). Déclencheur : la compaction sortait en **244** sur les deux
+tentatives de CR du 2026-09-07, donc la piste système partait entière (5 563 s au lieu de
+2 508 s), remplissait la fenêtre de quota Mistral et exposait le poste au 429 → repli
+découpage → au défaut de cumul de `usage` ci-dessus. Cause **mesurée sur le binaire
+livré** : `av_expr_parse` (`libavutil/eval.c`) analyse `a+b+c` **par récursion, un niveau
+par terme**, et s'arrête à `STACK_SIZE` — **100 termes passent, 101 échoue**, exactement
+(dichotomie). Or `MAX_PLAGES` en autorise **120** : le défaut était **permanent**, et sur
+les **3 OS** (la limite vit dans `libavutil`, pas dans les options de compilation — ce
+n'est donc PAS la famille « composant absent du build minimal » de docs/16 §5.5, dont
+`aselect`/`asetpts` sont exigés depuis le 2026-08-18). `244` = `AVERROR(ENOMEM)` replié
+sur un octet non signé. ⚠️ **Deux hypothèses plausibles écartées par la mesure** : la
+longueur de la ligne de commande (3 380 caractères, loin d'`ARG_MAX` — c'est pourtant ce
+risque qu'invoquait le commentaire de `MAX_PLAGES`) et un filtre manquant ; ni
+`-filter_script` ni un plafonnement des plages n'auraient traité la vraie cause.
+Correctif : `expression_selection` groupe les termes par parenthèses de 25 (profondeur
+`n/25 + 25`, soit 31 niveaux au pire cas ; groupement neutre — chaque `between` vaut 0 ou
+1, l'addition est associative). Rejoué sur le fichier réel : 5 563 s → 2 508 s, durée
+exacte. ⚠️ **Invisible à `make test`**, 3ᵉ fois dans cette famille : les tests de
+`compacter_piste` mockent `subprocess.run`, l'expression n'était donc jamais analysée par
+ffmpeg — `tests/test_build.py` l'exerce désormais à 120 plages sur le **binaire livré**,
+avec un **témoin** exigeant que la chaîne plate sorte bien en 244 (s'il devient vert, la
+limite a bougé et le premier test passerait pour de mauvaises raisons), et
+`profondeur_expression` est **dérivée de l'expression réellement produite**, jamais d'une
+formule parallèle qui resterait verte si le groupement disparaissait (piège de la colonne
+d'actions du 2026-08-24). Second volet, `core/ffmpeg.py` (nouveau) : **le stderr de ffmpeg
+n'arrivait jamais dans le log** — `CalledProcessError` ne porte que la commande et le code,
+et les codes de ffmpeg sont des `AVERROR` illisibles tels quels (8 en §10.4, 234 au piège
+des filtres, 244 ici), si bien que **les trois pannes ont été instruites en rejouant la
+commande à la main**. `executer()` lève `ErreurFfmpeg` avec le code, les **dernières**
+lignes de stderr et la commande, tout tronqué à 200 caractères par ligne et par argument
+(ffmpeg réémet les 3 ko d'expression fautive, et le log est rotatif) ; aucun argument
+implicite, la commande du message reste rejouable telle quelle. Câblé sur les **3** sites
+(`silences.py`, `decoupage.py`, `core/audio.py`) — personne ne rattrapait
+`CalledProcessError`, le changement de type est sans effet de bord. ⚠️ `tests/test_ffmpeg.py`
+couvre le lanceur **et les 3 appelants réels** : le lanceur seul ne prouverait rien, c'est
+chaque site d'appel qui était muet. **Non livré** : attend le prochain build macOS.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -517,7 +557,7 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - Bundle id : `com.sylvaingarcia.debriefmeet` (aligné partout, y compris `demarrage_auto.py`, depuis 2026-07-02).
 - **Pas d'auto-update en v1** — MAJ = re-téléchargement manuel du `.dmg`.
 - La config (`platformdirs`) et les transcriptions (`~/Documents/debriefMeet`) vivent hors du bundle → survivent au remplacement.
-- **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Pièges configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x ; et **la liste des filtres se périme** — `aselect,asetpts` manquaient (ajoutés le 2026-08-18), donc la compaction des silences Mistral échouait **dans l'app livrée uniquement**, jamais en dev où répond le ffmpeg Homebrew complet. Toute nouvelle invocation de ffmpeg dans le code oblige à revisiter `--enable-*` ; `valider_binaire` exige désormais ces filtres (binaire trop ancien → reconstruit) et le build rejoue les 2 passes de `compacter_piste`. **Même piège une 2ᵉ fois le 2026-09-02** : le **muxer `segment`** manquait → le repli découpage Mistral était cassé dans l'app livrée depuis toujours (jamais déclenché sur macOS avant le repli 5xx de docs/42 §10.1) ; sans lui ffmpeg ne reconnaît même pas `-segment_time` et sort en **8** (« Unrecognized option »), ce qui ne ressemble pas à « composant absent ». macOS seul touché (Windows = build BtbN complet, Linux = ffmpeg système). Muxer ajouté + exigé par `valider_binaire` + commande exacte du repli rejouée dans le build ; et `tests/test_build.py` interroge maintenant le **binaire livré** sur les muxers/filtres utilisés par le code — les 2 régressions étaient invisibles à `make test`.
+- **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Pièges configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x ; et **la liste des filtres se périme** — `aselect,asetpts` manquaient (ajoutés le 2026-08-18), donc la compaction des silences Mistral échouait **dans l'app livrée uniquement**, jamais en dev où répond le ffmpeg Homebrew complet. Toute nouvelle invocation de ffmpeg dans le code oblige à revisiter `--enable-*` ; `valider_binaire` exige désormais ces filtres (binaire trop ancien → reconstruit) et le build rejoue les 2 passes de `compacter_piste`. **Même piège une 2ᵉ fois le 2026-09-02** : le **muxer `segment`** manquait → le repli découpage Mistral était cassé dans l'app livrée depuis toujours (jamais déclenché sur macOS avant le repli 5xx de docs/42 §10.1) ; sans lui ffmpeg ne reconnaît même pas `-segment_time` et sort en **8** (« Unrecognized option »), ce qui ne ressemble pas à « composant absent ». macOS seul touché (Windows = build BtbN complet, Linux = ffmpeg système). Muxer ajouté + exigé par `valider_binaire` + commande exacte du repli rejouée dans le build ; et `tests/test_build.py` interroge maintenant le **binaire livré** sur les muxers/filtres utilisés par le code — les 2 régressions étaient invisibles à `make test`. ⚠️ **À ne pas confondre avec la famille voisine** : l'échec de compaction du 2026-09-07 (exit **244**) n'était PAS un composant absent mais la limite d'imbrication de l'évaluateur d'expressions de `libavutil` — il échouait donc aussi en dev, et sur les 3 OS. Le réflexe « ajouter un `--enable-*` » n'aurait rien réparé : docs/42 §10.6.
 - **`sys.executable` en app figée n'est pas un interpréteur Python générique** : `multiprocessing` (déclenché en interne par mlx/torch, ex. `resource_tracker`) le relance parfois en `-c "<code>"` pur → `__main__._relais_interprete_figee()` émule `python -c` avant tout autre routage (sinon bruit `unrecognized arguments`, sans casser la transcription).
 - Premier `codesign` réel après création du certificat : peut afficher une popup trousseau **invisible aux API de scripting/accessibilité** (fenêtre sécurisée) — nécessite un clic humain une fois (« Toujours autoriser »), aucun moyen de la détecter ou franchir en automatique.
 
@@ -614,7 +654,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
-| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS ; §10.5 = cumul de `usage` non typé, repli découpage cassé sur les 3 OS (terrain 2026-09-07, corrigé)** | `docs/42` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS ; §10.5 = cumul de `usage` non typé, repli découpage cassé sur les 3 OS (terrain 2026-09-07, corrigé) ; §10.6 = compaction cassée au-delà de 100 plages (expression `aselect` trop imbriquée, 3 OS) + stderr de ffmpeg enfin journalisé (`core/ffmpeg.py`)** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15 ; §6.4 et §16 = renommage pendant un job de fond, correctif du 2026-08-28)** | `docs/43` |
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |

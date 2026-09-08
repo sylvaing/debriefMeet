@@ -857,6 +857,101 @@ messages destinés à l'utilisateur : une trace n'y ajouterait que du bruit).
 Windows. Contournement en attendant : relancer la transcription plus tard — le 429 vient
 de la fenêtre de quota, et sans lui l'envoi entier passe sans jamais toucher ce code.
 
+### 10.6 La compaction était cassée pour toute piste de plus de 100 plages — expression `aselect` trop imbriquée (2026-09-07, corrigé)
+
+Suite directe de §10.5 : si le poste de Sylvain s'est retrouvé exposé au repli
+découpage, c'est parce que la compaction avait échoué **avant**, et donc envoyé
+5 563 s de piste système au lieu de 2 508 s. Le WARNING était dans le log des deux
+tentatives de CR (16:09:20 et 17:12:56) :
+
+```
+Compaction des silences impossible pour systeme.opus (Command '[
+  …/vendor/ffmpeg, -y, -loglevel, error, -i, …/systeme.opus,
+  -af, "aselect='between(t,5.000,9.000)+…(107 clauses)…',asetpts=N/SR",
+  -ac, 1, -ar, 16000, …/systeme_compacte.wav]'
+  returned non-zero exit status 244.) — envoi intégral
+```
+
+**Ce n'était PAS le piège 3 de §10.2** (filtres absents du build minimal) : `aselect` et
+`asetpts` ont été ajoutés le 2026-08-18 et sont exigés par `valider_binaire`. Le filtre
+est reconnu ; c'est son **expression** qui est refusée.
+
+**Cause, mesurée sur le binaire livré.** `av_expr_parse` (`libavutil/eval.c`) analyse une
+chaîne `a+b+c` **par récursion — un niveau par terme** — et s'arrête à `STACK_SIZE`.
+Dichotomie sur le nombre de termes : **100 passent, 101 échoue**, exactement. Or
+`MAX_PLAGES` en autorise **120**. Le défaut était donc **permanent** : toute piste
+dépassant 100 plages sonores partait entière, depuis la mise en service de la
+compaction.
+
+`244` n'est pas un code de composant manquant : c'est `AVERROR(ENOMEM)` (−12) replié sur
+un octet non signé. Le stderr, récupéré en rejouant la commande à la main, disait ce que
+le log ne portait pas :
+
+```
+[Parsed_aselect_0 @ …] Error while parsing expression 'between(t,5.000,9.000)+…'
+[AVFilterGraph @ …] Error initializing filters
+Error opening output files: Cannot allocate memory
+```
+
+⚠️ **Deux hypothèses écartées par la mesure**, toutes deux plausibles a priori et toutes
+deux fausses : la **longueur de la ligne de commande** (3 380 caractères mesurés, loin
+d'`ARG_MAX` — le commentaire de `MAX_PLAGES` invoquait pourtant ce risque sous Windows),
+et un **composant absent** du build minimal (les deux régressions précédentes de cette
+famille, §10.4 et §10.2, l'étaient). Ni `-filter_script` ni un plafonnement des plages
+n'auraient donc traité la vraie cause.
+
+⚠️ **Les 3 OS étaient touchés**, contrairement à §10.4 et au piège 3 de §10.2 : la limite
+vit dans `libavutil`, pas dans les options de compilation. Windows (build BtbN complet) et
+Linux (ffmpeg système) échouaient exactement pareil.
+
+**Correctif : grouper l'expression.** `expression_selection` réunit les termes en groupes
+parenthésés de `TAILLE_GROUPE_EXPRESSION = 25` ; la profondeur passe de `n` à
+`n / 25 + 25`, soit **31 niveaux** pour les 120 plages du pire cas. Le groupement est
+neutre — chaque `between` vaut 0 ou 1, l'addition est associative, `aselect` ne regarde
+que la nullité du résultat. Un seul groupe reste sans parenthèses : les pistes courantes
+gardent l'expression plate, lisible dans les logs. Mesuré : la forme groupée tient
+jusqu'à ~1900 plages là où la chaîne plate cède à 101. Rejoué sur le fichier réel du
+terrain, avec ses 107 plages : **5 563 s → 2 508 s**, durée de sortie exacte au
+centième, 13 Mo → 6,6 Mo.
+
+⚠️ **Pourquoi la suite ne pouvait pas le voir** — même famille que §10.5, et que le piège 3
+de §10.2. Les tests de `compacter_piste` mockent `subprocess.run` : l'expression n'était
+donc **jamais analysée par ffmpeg**. `tests/test_build.py` exerce désormais la compaction
+à 120 plages sur le **binaire réellement livré**, avec un **témoin** qui exige que la
+chaîne plate sorte bien en 244 — s'il devenait vert, la limite aurait bougé et le premier
+test passerait pour de mauvaises raisons. `profondeur_expression` est en outre **dérivée
+de l'expression réellement produite**, jamais recalculée par une formule parallèle : un
+garde-fou qui refait le calcul de son côté reste vert même si le groupement disparaît du
+code (piège de la colonne d'actions, CLAUDE.md 2026-08-24). Régression simulée vérifiée :
+rétablir la chaîne plate fait tomber 4 tests, dont celui du binaire embarqué.
+
+**Non livré** : le correctif attend le prochain build macOS. En attendant, les réunions de
+plus de ~100 plages sonores continuent de partir entières — sans perte de CR, mais avec le
+risque de 429 décrit en §10.5.
+
+#### Le stderr de ffmpeg n'arrivait jamais dans le log (corrigé, `core/ffmpeg.py`)
+
+Angle mort commun aux trois pannes de cette section. `subprocess.run(..., check=True,
+capture_output=True)` lève une `CalledProcessError` qui ne porte que la commande et le
+code de sortie, et tous les appelants journalisent `exc` : **le message de ffmpeg — la
+seule chose qui dise ce qu'il reproche — était systématiquement perdu.** Or ses codes de
+sortie sont des `AVERROR` négatifs repliés sur un octet, illisibles tels quels : `8` en
+§10.4 (« Unrecognized option », CR d'1 h 52 perdu), `234` au piège 3 de §10.2 (= EINVAL),
+`244` ici. Les trois ont été instruits en rejouant la commande à la main.
+
+`core/ffmpeg.py` centralise le lancement : `executer()` lève `ErreurFfmpeg` portant le
+code, les **dernières** lignes de stderr (c'est là que ffmpeg rend son verdict) et la
+commande, chaque ligne et chaque argument tronqués à 200 caractères — ffmpeg réémet
+l'expression fautive en entier (3 ko ici) alors que l'information tient en 3 lignes, et le
+log de l'app est rotatif. **Aucun argument implicite** : la commande du message reste
+rejouable telle quelle par un humain. Câblé sur les **3** sites — `silences.py`,
+`decoupage.py`, `core/audio.py` ; personne ne rattrapait `CalledProcessError` (les
+appelants catchent large), le changement de type est donc sans effet de bord.
+
+⚠️ `tests/test_ffmpeg.py` couvre le lanceur **et les 3 appelants réels** : le lanceur seul
+ne prouverait rien, c'est chaque site d'appel qui était muet, et un site oublié le
+redeviendrait sans qu'aucun test ne bronche.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle
@@ -917,9 +1012,31 @@ amputer `PAIRES_FIN` fait échouer les 3 tests d'arbitre ; retirer `activated.co
 restent verts. C'est précisément pourquoi les tests d'effet existent (cf. les items de menu
 morts restés verts, CLAUDE.md 2026-08-24).
 
+**Ajouts du 2026-09-08 (compaction au-delà de 100 plages + stderr, §10.6)** — +20 tests,
+**1697 passed** :
+- `tests/test_build.py` : `compacter_piste` exécutée à `MAX_PLAGES` plages sur le binaire
+  **livré**, plus un **témoin** exigeant que la chaîne plate sorte bien en 244 — les tests
+  unitaires mockent `subprocess.run`, l'expression n'était donc jamais analysée par ffmpeg.
+- `test_mistral_silences.py` : expression plate en deçà du seuil / groupée au-delà ;
+  groupement qui ne perd ni ne réordonne aucune plage ; profondeur au pire cas de
+  `MAX_PLAGES` **dérivée de l'expression réellement produite**, pas d'une formule
+  parallèle qui resterait verte si le groupement disparaissait du code.
+- `tests/test_ffmpeg.py` (nouveau) : verdict de ffmpeg conservé, message borné malgré un
+  stderr de plusieurs kilo-octets, troncature annoncée, commande rejouable, stderr
+  vide/texte/non-UTF-8 — **et les 3 appelants réels** (`silences`, `decoupage`, `audio`),
+  parce que c'est chaque site d'appel qui était muet, pas le lanceur.
+
+⚠️ **Régressions simulées** : rétablir la chaîne plate fait tomber 4 tests dont celui du
+binaire embarqué ; rendre son `subprocess.run` à `decoupage` fait tomber le test de ce
+site, lui seul.
+
 ## 13. Pièges connus / à surveiller
 
 - **Ne pas** router Mistral via `MoteurTranscription`/`factory.py` (§1.1).
+- **Expression de filtre ffmpeg : compter les termes, pas les caractères.**
+  `av_expr_parse` s'arrête à **100 niveaux d'imbrication** et une chaîne `a+b+c` en
+  consomme un par terme (§10.6). Toute expression construite par boucle doit être groupée
+  par parenthèses — et son garde-fou dérivé de la chaîne produite, jamais recalculé.
 - **httpx multipart** : `data` **doit être un `dict`** (valeurs-listes = champs répétés) ;
   une liste de tuples casse l'encodage du corps (`TypeError … tuple found`). Cf. spike.
 - **Pas de découpage par défaut** (§10) : envoyer la piste `.opus` **entière** (validé
