@@ -15,7 +15,7 @@ from debrief_meet.core import prompts as _prompts
 
 logger = logging.getLogger(__name__)
 
-VERSION_COURANTE = 5
+VERSION_COURANTE = 6
 
 # `sys.platform` est un test stdlib, autorisé dans `core/` (la règle d'or interdit les
 # *modules* OS-spécifiques, pas la détection d'OS) — docs/31 §3.1.
@@ -24,6 +24,21 @@ _WINDOWS = sys.platform == "win32"
 # production sur une machine à laquelle le développeur n'a pas accès, les logs sont
 # le seul canal de debug (docs/49 L5). macOS reste off par défaut (dev local).
 _LOGS_PAR_DEFAUT = _WINDOWS or sys.platform.startswith("linux")
+
+#: Modèles de rédaction du CR proposés à l'utilisateur, du plus capable au plus léger.
+#: **Mesuré le 2026-09-08** sur `/v1/chat/completions` avec notre clé : toute la famille
+#: `mistral-*` / `magistral-*` répond **429 avec `x-ratelimit-limit-req-minute: 0`** —
+#: l'allocation n'est pas épuisée, elle est NULLE, donc attendre ne peut jamais aboutir
+#: (`mistral-large` répond 403 `tier_not_allowed` depuis fin août 2026, `magistral-medium`
+#: est un simple alias de `mistral-medium`). Seuls les `ministral-*` sont servis :
+#: 30 req/min et 937 k tokens/min pour le 14b, 188/625 k pour le 8b, 750/1,3 M pour le 3b.
+#: Contexte identique à `mistral-medium` (256 k tokens) — la longueur des réunions n'est
+#: donc pas en cause dans ce choix. Ne proposer que du servi : un modèle mort dans le
+#: sélecteur envoie l'utilisateur droit sur 2 min d'attente puis « Quota dépassé »
+#: (terrain du 2026-09-08, docs/42 §10.7).
+MODELES_CR = ("ministral-14b-latest", "ministral-8b-latest", "ministral-3b-latest")
+#: Le plus capable des modèles réellement servis.
+MODELE_CR_DEFAUT = MODELES_CR[0]
 
 _DEFAUTS: dict[str, Any] = {
     "version": VERSION_COURANTE,
@@ -90,11 +105,7 @@ _DEFAUTS: dict[str, Any] = {
     # décision adaptative §1) ; "voxtral" : force la re-transcription cloud.
     "mistral_source_transcription": "auto",
     "mistral_modele_transcription": "voxtral-mini-latest",
-    # medium par défaut (2026-08-31) : mistral-large refuse désormais nos clés
-    # (403 tier_not_allowed, restreint aux abonnements supérieurs — constaté en réel
-    # sur le CR de la réunion commerce). mistral-medium est le plus robuste des
-    # modèles encore accessibles sur notre tier.
-    "mistral_modele_cr": "mistral-medium-latest",
+    "mistral_modele_cr": MODELE_CR_DEFAUT,
     "mistral_duree_max_min": 180,
     "mistral_confidentialite_acceptee": False,
 }
@@ -161,6 +172,8 @@ class Config:
             self._migrer_v4_retrait_prompt_pipedrive(donnees)
         if version < 5:
             self._migrer_v5_modele_cr_medium(donnees)
+        if version < 6:
+            self._migrer_v6_modele_cr_ministral(donnees)
         donnees["version"] = VERSION_COURANTE
         return True
 
@@ -243,3 +256,24 @@ class Config:
         figerait un échec que l'UI ne permet plus de corriger vers autre chose."""
         if donnees.get("mistral_modele_cr") in ("mistral-large-latest", "mistral-large-2512"):
             donnees["mistral_modele_cr"] = "mistral-medium-latest"
+
+    @staticmethod
+    def _migrer_v6_modele_cr_ministral(donnees: dict[str, Any]) -> None:
+        """v6 : tout modèle qui n'est plus servi → `MODELE_CR_DEFAUT` (ministral-14b).
+
+        Deuxième vague du resserrement de tier après la v5, et bien plus large :
+        `mistral-medium` ET `mistral-small` — les deux SEULS choix qu'offrait alors le
+        sélecteur — répondent 429 avec une limite de **0 requête/minute** (mesuré le
+        2026-09-08 ; cf. `MODELES_CR`). Contrairement à la v5, la valeur fautive ne
+        peut donc pas être énumérée : on migre **tout ce qui n'est pas dans
+        `MODELES_CR`**, y compris un choix explicite. Laisser une valeur morte
+        figerait un échec que le sélecteur ne permet plus de corriger, et le message
+        rendu à l'utilisateur (« Quota dépassé ») l'enverrait attendre un déblocage
+        qui ne viendra pas.
+
+        Corollaire assumé : un abonnement supérieur, où `mistral-medium` redeviendrait
+        servi, est migré lui aussi. Le remède est alors d'ajouter le modèle à
+        `MODELES_CR` — pas de laisser chaque poste porter une valeur que rien ne
+        vérifie."""
+        if donnees.get("mistral_modele_cr") not in MODELES_CR:
+            donnees["mistral_modele_cr"] = MODELE_CR_DEFAUT

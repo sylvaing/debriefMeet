@@ -7,7 +7,7 @@ import pytest
 import httpx
 import respx
 
-from debrief_meet.core.config import Config
+from debrief_meet.core.config import MODELES_CR, Config
 from debrief_meet.ui.remote_ia_view import RemoteIAView
 
 
@@ -35,29 +35,43 @@ def test_combo_modele_transcription_persiste(qapp, tmp_path):
 
 
 def test_combo_modele_cr_persiste(qapp, tmp_path):
-    # small, pas medium : medium est le défaut depuis la v5, le sélectionner
-    # n'émettrait pas currentIndexChanged et le test ne persisterait rien.
+    # Pas le premier item : c'est le défaut, le sélectionner n'émettrait pas
+    # currentIndexChanged et le test ne persisterait rien.
+    autre = MODELES_CR[1]
     cfg = _config(tmp_path)
     vue = RemoteIAView(cfg)
-    idx = vue._combo_modele_cr.findData("mistral-small-latest")
+    idx = vue._combo_modele_cr.findData(autre)
     vue._combo_modele_cr.setCurrentIndex(idx)
     relu = Config(chemin=tmp_path / "config.json")
     relu.charger()
-    assert relu.get("mistral_modele_cr") == "mistral-small-latest"
+    assert relu.get("mistral_modele_cr") == autre
 
 
 def test_combo_modele_cr_demarre_sur_le_defaut(qapp, tmp_path):
     cfg = _config(tmp_path)
     vue = RemoteIAView(cfg)
-    assert vue._combo_modele_cr.currentData() == "mistral-medium-latest"
+    assert vue._combo_modele_cr.currentData() == "ministral-14b-latest"
 
 
-def test_mistral_large_retire_du_selecteur(qapp, tmp_path):
-    """403 tier_not_allowed depuis fin août 2026 (migration config v5) : le
-    proposer reconduirait l'échec qu'on vient de migrer."""
+@pytest.mark.parametrize("mort", ["mistral-large-latest", "mistral-medium-latest",
+                                  "mistral-small-latest", "magistral-medium-latest"])
+def test_modeles_non_servis_retires_du_selecteur(qapp, tmp_path, mort):
+    """Mesuré le 2026-09-08 : large répond 403 tier_not_allowed, tout le reste de la
+    famille mistral-* répond 429 avec une limite de 0 req/min. Les proposer envoie
+    l'utilisateur sur 2 min d'attente puis « Quota dépassé », sans issue."""
     cfg = _config(tmp_path)
     vue = RemoteIAView(cfg)
-    assert vue._combo_modele_cr.findData("mistral-large-latest") == -1
+    assert vue._combo_modele_cr.findData(mort) == -1
+
+
+def test_selecteur_et_migration_partagent_la_meme_liste(qapp, tmp_path):
+    """Un sélecteur qui divergerait de `MODELES_CR` proposerait un modèle que la
+    migration v6 remplacerait au démarrage suivant — choix sans effet, en silence."""
+    cfg = _config(tmp_path)
+    vue = RemoteIAView(cfg)
+    proposes = [vue._combo_modele_cr.itemData(i)
+                for i in range(vue._combo_modele_cr.count())]
+    assert proposes == list(MODELES_CR)
 
 
 def test_case_forcer_voxtral_decochee_par_defaut(qapp, tmp_path):

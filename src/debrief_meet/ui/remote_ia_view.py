@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from debrief_meet.core import mode_transcription
 from debrief_meet.core.arret_threads import proteger_thread
-from debrief_meet.core.config import Config
+from debrief_meet.core.config import MODELES_CR, Config
 from debrief_meet.ui.assistant_mistral import AssistantMistral
 from debrief_meet.ui.testeur_connexion_mistral import TesteurConnexionMistral
 from debrief_meet.ui.theme import C, SANS
@@ -32,9 +32,12 @@ _DELAI_AUTOSAVE_MS = 400
 
 # Modèles proposés au combo — à reconfirmer sur docs.mistral.ai (docs/42 §5).
 _MODELES_TRANSCRIPTION = ["voxtral-mini-latest"]
-# mistral-large retiré le 2026-08-31 : 403 tier_not_allowed sur notre abonnement
-# (restreint aux tiers supérieurs par Mistral) — migration config v5.
-_MODELES_CR = ["mistral-small-latest", "mistral-medium-latest"]
+# Liste importée, JAMAIS recopiée : la migration v6 remplace toute valeur absente de
+# `MODELES_CR`, donc un sélecteur qui divergerait proposerait un modèle que la config
+# refuserait au prochain démarrage. Ne contient que du servi — cf. la mesure du
+# 2026-09-08 en tête de `core/config.py` (mistral-medium/small : 429 à 0 req/min ;
+# mistral-large : 403 tier_not_allowed).
+_MODELES_CR = list(MODELES_CR)
 
 
 def _libelle_champ(texte: str) -> QLabel:

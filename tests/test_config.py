@@ -6,7 +6,8 @@ import sys
 import pytest
 
 from debrief_meet.core import prompts as prompts_mod
-from debrief_meet.core.config import Config, VERSION_COURANTE, _DEFAUTS
+from debrief_meet.core.config import (MODELE_CR_DEFAUT, MODELES_CR, Config,
+                                      VERSION_COURANTE, _DEFAUTS)
 
 
 class TestDefauts:
@@ -31,7 +32,7 @@ class TestDefauts:
         assert config_tmp.get("mistral_base_url") == "https://api.mistral.ai"
         assert config_tmp.get("mistral_source_transcription") == "auto"
         assert config_tmp.get("mistral_modele_transcription") == "voxtral-mini-latest"
-        assert config_tmp.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert config_tmp.get("mistral_modele_cr") == "ministral-14b-latest"
         assert config_tmp.get("mistral_duree_max_min") == 180
         assert config_tmp.get("mistral_confidentialite_acceptee") is False
 
@@ -225,27 +226,30 @@ class TestMigrationV2Prompts:
 
 class TestMigrationV3ModeleCr:
     """v2 → v3 : modèle de CR par défaut mistral-small → mistral-large.
-    Depuis la v5, la chaîne complète aboutit à mistral-medium (large → 403
-    tier_not_allowed) — les assertions portent sur l'état final."""
+    La chaîne complète aboutit désormais à ministral-14b (v5 : large → medium sur
+    403 tier_not_allowed ; v6 : toute la famille mistral-* à 0 req/min) — les
+    assertions portent sur l'état final."""
 
     def test_ancien_defaut_migre(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier(
             {"version": 2, "mistral_modele_cr": "mistral-small-latest"})
-        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert cfg.get("mistral_modele_cr") == "ministral-14b-latest"
         assert cfg.get("version") == VERSION_COURANTE
 
-    def test_choix_explicite_conserve(self, config_tmp_avec_fichier):
+    def test_choix_explicite_migre_aussi_depuis_la_v6(self, config_tmp_avec_fichier):
+        """Ce test attestait la conservation d'un choix explicite jusqu'à la v5.
+        La v6 migre TOUT ce qui n'est plus servi : medium en fait partie."""
         cfg = config_tmp_avec_fichier(
             {"version": 2, "mistral_modele_cr": "mistral-medium-latest"})
-        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert cfg.get("mistral_modele_cr") == "ministral-14b-latest"
         assert cfg.get("version") == VERSION_COURANTE
 
     def test_depuis_v1_les_migrations_s_enchainent(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier(
             {"version": 1, "mistral_modele_cr": "mistral-small-latest",
              "prompts": [{"titre": "Perso", "contenu": "X"}]})
-        # v3 l'a passé à large, v5 à medium : résultat net.
-        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        # v3 l'a passé à large, v5 à medium, v6 à ministral-14b : résultat net.
+        assert cfg.get("mistral_modele_cr") == "ministral-14b-latest"
         titres = [p["titre"] for p in cfg.get("prompts")]
         # v2 a ajouté les deux CR BlueMind, v4 a retiré le Pipedrive : résultat net.
         assert titres == ["Perso", "CR full .md"]
@@ -257,22 +261,54 @@ class TestMigrationV5ModeleCrMedium:
     août 2026, modèle retiré du sélecteur). Migre AUSSI un choix explicite —
     conserver large figerait un échec que l'UI ne permet plus de corriger."""
 
-    def test_large_latest_migre(self, config_tmp_avec_fichier):
+    def test_v5_seule_remplace_large_par_medium(self):
+        """La v5 est testée SEULE : enchaînée, la v6 écraserait son effet et le test
+        ne dirait plus rien de ce que cette migration a fait sur les postes migrés."""
+        donnees = {"mistral_modele_cr": "mistral-large-latest"}
+        Config._migrer_v5_modele_cr_medium(donnees)
+        assert donnees["mistral_modele_cr"] == "mistral-medium-latest"
+
+    def test_v5_seule_reconnait_la_version_datee(self):
+        donnees = {"mistral_modele_cr": "mistral-large-2512"}
+        Config._migrer_v5_modele_cr_medium(donnees)
+        assert donnees["mistral_modele_cr"] == "mistral-medium-latest"
+
+    def test_chaine_complete_aboutit_a_ministral(self, config_tmp_avec_fichier):
         cfg = config_tmp_avec_fichier(
             {"version": 4, "mistral_modele_cr": "mistral-large-latest"})
-        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
+        assert cfg.get("mistral_modele_cr") == "ministral-14b-latest"
         assert cfg.get("version") == VERSION_COURANTE
 
-    def test_large_date_migre(self, config_tmp_avec_fichier):
-        cfg = config_tmp_avec_fichier(
-            {"version": 4, "mistral_modele_cr": "mistral-large-2512"})
-        assert cfg.get("mistral_modele_cr") == "mistral-medium-latest"
 
-    def test_small_explicite_conserve(self, config_tmp_avec_fichier):
-        cfg = config_tmp_avec_fichier(
-            {"version": 4, "mistral_modele_cr": "mistral-small-latest"})
-        assert cfg.get("mistral_modele_cr") == "mistral-small-latest"
+class TestMigrationV6ModeleCrMinistral:
+    """v5 → v6 : toute la famille mistral-*/magistral-* répond 429 avec
+    `x-ratelimit-limit-req-minute: 0` sur notre abonnement (mesuré le 2026-09-08).
+    L'allocation est NULLE, pas épuisée : attendre ne peut jamais aboutir, d'où
+    l'échec constaté 4 fois en 1 h 35 chez une utilisatrice. Le sélecteur ne
+    proposait alors que medium et small — les deux morts."""
+
+    @pytest.mark.parametrize("mort", ["mistral-medium-latest", "mistral-small-latest",
+                                      "mistral-large-latest", "magistral-medium-latest",
+                                      "mistral-medium-2604"])
+    def test_tout_modele_non_servi_migre(self, config_tmp_avec_fichier, mort):
+        cfg = config_tmp_avec_fichier({"version": 5, "mistral_modele_cr": mort})
+        assert cfg.get("mistral_modele_cr") == "ministral-14b-latest"
         assert cfg.get("version") == VERSION_COURANTE
+
+    @pytest.mark.parametrize("servi", list(MODELES_CR))
+    def test_modele_servi_conserve(self, config_tmp_avec_fichier, servi):
+        """Un choix parmi les modèles proposés reste intact — la v6 ne réaligne pas
+        tout le monde sur le défaut, elle ne remplace que ce qui ne peut pas marcher."""
+        cfg = config_tmp_avec_fichier({"version": 5, "mistral_modele_cr": servi})
+        assert cfg.get("mistral_modele_cr") == servi
+
+    def test_defaut_est_le_plus_capable_des_modeles_servis(self):
+        assert MODELE_CR_DEFAUT == MODELES_CR[0] == "ministral-14b-latest"
+
+    def test_le_defaut_figure_dans_la_liste_proposee(self):
+        """Garde-fou : un défaut absent du sélecteur serait migré par la v6 elle-même
+        au démarrage suivant, en boucle."""
+        assert _DEFAUTS["mistral_modele_cr"] in MODELES_CR
 
 
 class TestMigrationV4RetraitPromptPipedrive:
