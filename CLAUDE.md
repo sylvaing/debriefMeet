@@ -426,8 +426,45 @@ vérifiés par **régression simulée** : amputer `PAIRES_FIN` fait échouer les
 d'arbitre, et retirer `activated.connect` fait échouer les 3 tests d'**effet** du raccourci
 tandis que les 2 tests de simple présence restent verts — c'est pourquoi les tests d'effet
 existent (cf. les items de menu morts du 2026-08-24). Menu ⋯ rendu offscreen et regardé.
-**Reste : aucune validation en réel** — le raccourci n'a jamais été tapé dans l'app et la
-transcription distante n'a jamais tourné contre la vraie API (tout est mocké `respx`).
+**Premier usage réel le 2026-09-07, chez Alix : échec** — cf. § suivant. Le raccourci et
+le pipeline ont bien fonctionné ; c'est le repli découpage qui a cédé, sur du code
+antérieur et commun au CR.
+
+Après le correctif du cumul de `usage` (docs/42 §10.5, 2026-09-07) : **1681 passed,
+0 échec** en environnement complet (1677 avant, +4 tests). Diagnostic terrain (build
+`4d967e7`, poste Windows) : une réunion de **2 h**, transcription distante seule,
+429 sur l'envoi entier → repli découpage → tous les segments transcrits **et facturés**
+→ `TypeError: unsupported operand type(s) for +: 'int' and 'dict'`, transcription
+perdue. Cause **mesurée sur l'API réelle** le jour même : `usage` n'est pas un plat de
+nombres — Voxtral y renvoie `prompt_tokens_details` (sous-dictionnaire) et
+`service_tier` (chaîne), or `_transcrire_decoupe` faisait `usage_total.get(cle, 0) +
+valeur`. ⚠️ **La forme de `usage` dépend de la DURÉE envoyée, bascule franche à 30 s** (mesuré en
+faisant varier un sinus synthétique, même clé/modèle/requête) : **< 30 s** → `usage` porte
+`prompt_tokens_details` (dict) + `service_tier` (str) — **plante** ; **≥ 30 s** → forme
+aplatie avec `request_count`, Mistral découpant lui-même en interne et renvoyant un usage
+agrégé — passe. Donc le déclencheur est le **dernier segment** du découpage : `L mod 840 <
+30`, soit une fenêtre de **~3,6 % des pistes**. Alix : `moi.opus` = 5061,98 s = 6×840 +
+**21,98 s** → ❌. Sylvain, même commit `4d967e7` le même jour : ~5563 s = 6×840 + 523 s →
+✅ à 11:37, 16:11 **et 17:14**. Le chronométrage colle (7 segments à ~6 s + une attente de
+20 s = les 74 s entre 16:24:14 et 16:25:28). ⚠️ **Hypothèse fausse écartée en cours de
+route** : « déploiement serveur entre 16:11 et 16:25 », cohérente avec les 3 points connus
+alors et réfutée par le découpage réussi de 17:14 — c'est le passage à une mesure
+**paramétrique** (varier la durée) et non ponctuelle qui a sorti la règle. Ce n'est donc
+pas « le problème de Alix » : tout poste non corrigé perd sa transcription en tombant
+dans la fenêtre, et rien dans les logs ne le voit venir (`usage` n'est journalisé nulle
+part). ⚠️ `TranscriptionMistral.usage` **n'a aucun
+consommateur** dans l'app (§11 de docs/42 interdit toute notion de coût) : 2 h de réunion
+perdues pour agréger une valeur que rien n'affiche — d'où un `_cumuler_usage` qui
+privilégie la robustesse (somme les nombres, descend dans les sous-dictionnaires, recopie
+tout autre type tel quel). ⚠️ Invisible à la suite : les 6 tests du repli découpage
+mockent leurs payloads **sans clé `usage`**, donc la boucle de cumul ne tournait jamais —
+le test de régression rejoue le relevé réel et échoue, sans le correctif, avec le message
+**exact** du terrain (régression simulée vérifiée). Deuxième volet : `_WorkerCRMistral`
+n'émettait que `str(exc)`, le diagnostic ne livrait donc qu'une ligne sans provenance ;
+il journalise maintenant la **trace** pour tout ce qui n'est pas une `ErreurMistral`.
+**Non livré à Alix** — son poste tourne `4d967e7`, le correctif attend le prochain build
+Windows ; en attendant, relancer plus tard suffit (sans 429, l'envoi entier ne touche
+jamais ce code).
 
 ## Environnements Python — ne pas confondre
 
@@ -577,7 +614,7 @@ Machines cibles Windows : Bastien (AMD Ryzen 5 PRO 5675U + iGPU Radeon), Alix (I
 | Vibrancy native menu tray (macOS, NSVisualEffectView) — non implémenté | `docs/38` |
 | **Interco BlueMind (calendrier, invités, notifications) — 🔄 code+tests faits ; fix récurrences 2026-07-27 (§5.2)** | `docs/40` |
 | ffmpeg embarqué Windows (rétention Opus garantie) | `docs/41` |
-| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS, repli découpage cassé** | `docs/42` |
+| **Interco Mistral (CR cloud adaptatif, transcription Voxtral) — ✅ terminé, validé manuellement, fusionné dans `main` ; §4.1 = association BlueMind proposée avant le CR ; §4.2 = transcription distante SEULE au raccourci ⌘T/Ctrl+T (2026-09-03) ; §10.4 = muxer `segment` absent du ffmpeg embarqué macOS ; §10.5 = cumul de `usage` non typé, repli découpage cassé sur les 3 OS (terrain 2026-09-07, corrigé)** | `docs/42` |
 | **Réorganisation 1 dossier/réunion — ✅ terminé, validé manuellement, fusionné dans `main` (bilan §15 ; §6.4 et §16 = renommage pendant un job de fond, correctif du 2026-08-28)** | `docs/43` |
 | Édition lite Windows — **obsolète**, remplacée par docs/45 (historique : décisions, pièges, terrain) | `docs/44` |
 | **Mode de transcription unifié (un seul build, réglage distant/local) — 🔄 code+tests faits, build VM à lancer** | `docs/45` |

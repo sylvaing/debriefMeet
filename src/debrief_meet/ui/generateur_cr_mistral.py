@@ -64,6 +64,16 @@ class _WorkerCRMistral(QObject):
                 sortie = pipeline.generer_cr_reunion(self._md, self._config, prompt=self._prompt)
             self.terminee.emit(sortie)
         except Exception as exc:  # noqa: BLE001 — remonté à l'UI, jamais de crash
+            # Une `ErreurMistral` est un échec diagnostiqué : son message suffit, et
+            # `_sur_erreur` le journalise déjà. Tout autre type est un bug du pipeline,
+            # dont seul le message remontait — un `TypeError` levé au fond du repli
+            # découpage n'a laissé qu'une ligne sans provenance dans le diagnostic du
+            # 2026-09-07 (docs/42 §10.5). La trace part ici, dans le thread qui l'a vue.
+            from debrief_meet.core.mistral.client import ErreurMistral
+
+            if not isinstance(exc, ErreurMistral):
+                logger.exception("Pipeline Mistral : exception inattendue (%s)",
+                                 type(exc).__name__)
             self.erreur.emit(str(exc))
 
 

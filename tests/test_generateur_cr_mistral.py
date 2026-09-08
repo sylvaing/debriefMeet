@@ -3,12 +3,14 @@
 monkeypatché, aucun réseau réel."""
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 
 import pytest
 
 from debrief_meet.core.mistral import pipeline
+from debrief_meet.core.mistral.client import ErreurMistral
 from debrief_meet.ui.generateur_cr_mistral import (
     TACHE_TRANSCRIPTION,
     GestionnaireCRMistral,
@@ -270,3 +272,50 @@ def test_lancer_transcription_refuse_si_indisponible(config_tmp, tmp_path, qapp)
     g = GestionnaireCRMistral(config_tmp)
     assert g.lancer_transcription(tmp_path / "reunion.md") is False
     assert g.job_en_cours() is None
+
+
+# ── trace des bugs du pipeline (diagnostic du 2026-09-07) ──────────────────────────
+#
+# Un `TypeError` levé au fond du repli découpage n'a laissé qu'une ligne sans
+# provenance dans le diagnostic terrain (« unsupported operand type(s) for +: 'int'
+# and 'dict' ») : le worker ne remontait que `str(exc)`. Localiser le défaut a
+# demandé de relire le code. Les échecs DIAGNOSTIQUÉS (`ErreurMistral`), eux, sont
+# des messages destinés à l'utilisateur : y ajouter une trace ne ferait que du bruit.
+
+def test_exception_inattendue_journalise_la_trace(config_tmp, tmp_path, qapp, qtbot,
+                                                  monkeypatch, caplog):
+    config_tmp.set("mistral_cle_api", "x")
+
+    def _bug(chemin, config, prompt=None):
+        raise TypeError("unsupported operand type(s) for +: 'int' and 'dict'")
+
+    monkeypatch.setattr(pipeline, "generer_cr_reunion", _bug)
+
+    g = GestionnaireCRMistral(config_tmp)
+    with caplog.at_level(logging.ERROR):
+        assert g.lancer(tmp_path / "reunion.md") is True
+        qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+    traces = [r for r in caplog.records if r.exc_info and r.name.endswith("generateur_cr_mistral")]
+    assert traces, "un bug du pipeline doit laisser sa trace dans les logs"
+    assert "TypeError" in traces[0].getMessage()
+
+
+def test_erreur_mistral_diagnostiquee_ne_journalise_pas_de_trace(config_tmp, tmp_path, qapp,
+                                                                 qtbot, monkeypatch, caplog):
+    config_tmp.set("mistral_cle_api", "x")
+
+    def _refus(chemin, config, prompt=None):
+        raise ErreurMistral("Réunion trop longue pour la transcription cloud")
+
+    monkeypatch.setattr(pipeline, "generer_cr_reunion", _refus)
+
+    g = GestionnaireCRMistral(config_tmp)
+    echecs: list[tuple] = []
+    g.echoue.connect(lambda md, message: echecs.append((md, message)))
+    with caplog.at_level(logging.ERROR):
+        assert g.lancer(tmp_path / "reunion.md") is True
+        qtbot.waitUntil(lambda: g.job_en_cours() is None, timeout=5000)
+
+    assert echecs, "le message part quand même à l'UI"
+    assert not [r for r in caplog.records if r.exc_info], "pas de trace pour un refus attendu"

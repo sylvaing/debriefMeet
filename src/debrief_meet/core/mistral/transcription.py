@@ -298,8 +298,36 @@ def _transcrire_decoupe(client: ClientMistral, chemin: Path, modele: str,
             texte, segs = _parser(payload, offset=offset)
             texte_total = (texte_total + " " + texte).strip()
             segs_total.extend(segs)
-            usage_seg = payload.get("usage") or {}
-            for cle, valeur in usage_seg.items():
-                usage_total[cle] = usage_total.get(cle, 0) + (valeur or 0)
+            _cumuler_usage(usage_total, payload.get("usage") or {})
     return TranscriptionMistral(texte=texte_total, segments=segs_total, usage=usage_total,
                                 decoupee=True)
+
+
+def _cumuler_usage(total: dict, ajout: dict) -> None:
+    """Additionne les compteurs d'usage d'un segment dans `total`, en place.
+
+    `usage` n'est pas un plat de nombres : mesuré le 2026-09-07 sur l'API réelle,
+    Voxtral renvoie aussi un sous-dictionnaire (`prompt_tokens_details`) et une
+    chaîne (`service_tier`). Les additionner à un entier levait
+    `TypeError: unsupported operand type(s) for +: 'int' and 'dict'`, APRÈS l'upload
+    de tous les segments — donc en perdant la transcription entière alors que tous
+    les appels avaient réussi et été facturés (terrain 2026-09-07, réunion de 2 h ;
+    docs/42 §10.5). Le champ n'est lu par personne dans l'app : sa robustesse primait
+    sur son exactitude.
+
+    Seuls les nombres se cumulent ; un sous-dictionnaire se cumule récursivement ;
+    tout autre type est recopié tel quel (le dernier segment gagne). Un type
+    inattendu ne peut donc plus faire échouer un découpage réussi.
+    """
+    for cle, valeur in ajout.items():
+        courant = total.get(cle)
+        if isinstance(valeur, dict):
+            imbrique = courant if isinstance(courant, dict) else {}
+            _cumuler_usage(imbrique, valeur)
+            total[cle] = imbrique
+        elif isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+            total[cle] = valeur
+        elif isinstance(courant, (int, float)) and not isinstance(courant, bool):
+            total[cle] = courant + valeur
+        else:
+            total[cle] = valeur

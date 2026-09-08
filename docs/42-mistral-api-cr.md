@@ -753,6 +753,110 @@ build minimal se périme à chaque nouvelle invocation de ffmpeg dans le code, e
 symptôme n'apparaît que dans l'app livrée. C'est maintenant couvert par des tests, mais
 la règle de docs/16 §5.5 reste la première chose à rouvrir.
 
+### 10.5 Le repli s'est exécuté, et c'est le cumul de `usage` qui a perdu la transcription (2026-09-07, corrigé)
+
+Terrain, poste Windows (build `4d967e7`, mode distant). Réunion de **2 h**
+(`2026-09-07_14-36-08`), transcription distante seule au raccourci (§4.2) — le premier
+usage réel de cette action. Séquence, à la seconde :
+
+```
+16:24:14  Quota Mistral (429) pour moi.opus — repli découpage sans retry
+16:24:59  429 Mistral — attente 20.0s (tentative 1/3)      ← retry d'un SEGMENT, normal
+16:25:28  Transcription Mistral échouée : unsupported operand type(s) for +: 'int' and 'dict'
+```
+
+Le repli a fonctionné : les segments ont été découpés, envoyés, transcrits — **et
+facturés**. Puis `_transcrire_decoupe` a additionné leurs compteurs d'usage :
+
+```python
+usage_total[cle] = usage_total.get(cle, 0) + (valeur or 0)   # ← 0 + {...}
+```
+
+**Cause : `usage` n'est pas un plat de nombres.** Mesuré le jour même sur l'API réelle
+(`/v1/audio/transcriptions`, `voxtral-mini-latest`, 2 s d'audio) :
+
+```json
+"usage": {
+  "prompt_audio_seconds": 2, "prompt_tokens": 4,
+  "total_tokens": 380, "completion_tokens": 1,
+  "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 375},
+  "service_tier": "standard"
+}
+```
+
+`prompt_tokens_details` est un **sous-dictionnaire**, `service_tier` une **chaîne** :
+`0 + {...}` lève le `TypeError` vu par l'utilisatrice, et `0 + "standard"` l'aurait levé
+juste après.
+
+#### La forme de `usage` dépend de la DURÉE de l'audio envoyé — bascule à 30 s
+
+C'est ce qui explique que le même commit `4d967e7` ait échoué chez Alix et réussi chez
+Sylvain le même jour, à 13 min d'écart, puis **encore** à 17:14. Mesuré sur la même clé,
+le même modèle et la requête exacte de `_construire_donnees`, en faisant seulement varier
+la durée d'un sinus synthétique :
+
+| durée envoyée | clés de `usage` | verdict |
+|---|---|---|
+| 2 / 5 / 10 / 20 / 25 / **29** s | + `prompt_tokens_details` (**dict**), `service_tier` (**str**) | **plante** |
+| **30** / 31 / 35 / 40 / 60 s | + `request_count` (int), rien d'imbriqué | passe |
+
+La bascule est **franche et reproductible à 30 s**. Le `request_count` de la seconde
+forme dit ce qui se passe : au-delà de 30 s, Mistral **découpe lui-même** en interne et
+renvoie un usage *agrégé*, donc aplati ; en dessous, c'est une inférence unique et l'usage
+brut sort tel quel, avec ses sous-structures.
+
+#### Donc le déclencheur, c'est le DERNIER segment du découpage
+
+`decouper_piste` coupe à `LIMITE_SEGMENT_S = 840` s. Une piste de durée `L` produit un
+dernier segment de `L mod 840` — et si ce reste est **< 30 s**, ce segment-là revient sous
+la forme DICT et fait tomber tout le découpage, au tout dernier tour de boucle, après que
+les 6 ou 8 autres ont été uploadés et facturés.
+
+Les deux postes du 2026-09-07, calculés depuis les « Durées livrées » de leurs logs :
+
+| poste | piste | durée | découpage | reste | résultat |
+|---|---|---|---|---|---|
+| Alix | `moi.opus` | 5061,98 s (84,4 min) | 6 × 840 s | **21,98 s** | ❌ `int + dict` |
+| Alix | `systeme.opus` | 5060,18 s | 6 × 840 s | 20,18 s | (jamais atteint) |
+| Sylvain | `systeme.opus` | ~5563 s | 6 × 840 s | ~523 s | ✅ |
+
+**La fenêtre fait 30 s sur 840, soit ~3,6 % des pistes.** Ce n'est donc ni un déploiement
+serveur, ni une différence de compte, ni un hasard réseau : c'est une **loterie sur la
+durée de la réunion**, et Alix est tombée dedans. Le chronométrage le confirme —
+7 segments à ~6 s chacun plus une attente de 20 s font bien les 74 s entre le début du
+découpage (16:24:14) et le `TypeError` (16:25:28).
+
+⚠️ **Une hypothèse fausse, écartée par les données.** Une première lecture avait conclu à
+un déploiement Mistral entre 16:11 et 16:25 — cohérente avec les trois points connus à ce
+moment-là (Sylvain OK à 16:11, Alix KO à 16:25, mesure DICT à 16:50), et **réfutée** par
+le découpage réussi de Sylvain à 17:14. C'est le passage à une mesure *paramétrique*
+(faire varier la durée) plutôt qu'à une mesure ponctuelle qui a sorti la vraie règle.
+
+⚠️ **Ce champ n'est lu par personne.** `TranscriptionMistral.usage` n'a aucun
+consommateur dans l'app (§11 interdit toute notion de coût) : une transcription de 2 h a
+été perdue, après que tous les appels ont réussi, pour agréger une valeur que rien
+n'affiche. Le correctif privilégie donc la **robustesse** sur l'exactitude —
+`_cumuler_usage` ne somme que les nombres, descend récursivement dans les
+sous-dictionnaires, et recopie tout autre type tel quel : un champ d'un type inattendu
+ne peut plus faire échouer un découpage réussi.
+
+⚠️ **Pourquoi la suite ne pouvait pas le voir.** Les 6 tests du repli découpage mockent
+leurs payloads **sans clé `usage`** — `payload.get("usage") or {}` vaut `{}` et la boucle
+de cumul ne tournait jamais. Le test de régression rejoue le relevé ci-dessus tel quel ;
+sans le correctif il échoue avec le message **exact** du terrain (vérifié par régression
+simulée). Même famille que les pièges du 2026-08-24 et du 2026-08-28 : un chemin de repli
+que rien n'exerce vraiment reste vert jusqu'au jour où il tire.
+
+⚠️ **Le log ne disait pas d'où venait l'exception.** `_WorkerCRMistral` n'émettait que
+`str(exc)`, donc le diagnostic n'a livré qu'une ligne sans provenance ; localiser le
+défaut a demandé de relire le code. Le worker journalise maintenant la **trace** pour
+tout ce qui n'est pas une `ErreurMistral` (les échecs diagnostiqués, eux, sont des
+messages destinés à l'utilisateur : une trace n'y ajouterait que du bruit).
+
+**Non livré à Alix** : son poste tourne `4d967e7`, le correctif attend le prochain build
+Windows. Contournement en attendant : relancer la transcription plus tard — le 429 vient
+de la fenêtre de quota, et sans lui l'envoi entier passe sans jamais toucher ce code.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle

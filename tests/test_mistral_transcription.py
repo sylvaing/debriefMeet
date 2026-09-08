@@ -504,3 +504,68 @@ def test_analyser_piste_fournit_le_plan(tmp_path):
     analyse = t.analyser_piste(_wav_audible(tmp_path, secondes=3.0))
     assert analyse.plan is not None
     assert analyse.plan.duree_totale_s == pytest.approx(3.0, abs=0.1)
+
+
+# ── cumul de l'usage dans le repli découpage (terrain 2026-09-07) ──────────────────
+#
+# Une réunion de 2 h a été perdue chez une utilisatrice Windows : 429 sur l'envoi
+# entier → repli découpage → tous les segments transcrits et facturés → puis
+# `TypeError: unsupported operand type(s) for +: 'int' and 'dict'` au moment
+# d'additionner les `usage`. Mesuré le jour même sur l'API réelle : `usage` porte
+# `prompt_tokens_details` (sous-dictionnaire) et `service_tier` (chaîne) à côté de
+# ses compteurs. Aucun test ne pouvait le voir : tous les payloads de découpage
+# ci-dessus sont mockés SANS clé `usage`, donc la boucle de cumul ne tournait jamais.
+
+_USAGE_REEL = {                       # relevé de /v1/audio/transcriptions, 2026-09-07
+    "prompt_audio_seconds": 2,
+    "prompt_tokens": 4,
+    "total_tokens": 380,
+    "completion_tokens": 1,
+    "prompt_tokens_details": {"cached_tokens": 0, "audio_tokens": 375},
+    "service_tier": "standard",
+}
+
+
+@respx.mock
+def test_decoupage_survit_a_l_usage_reel_de_voxtral(tmp_path, monkeypatch):
+    """Le découpage aboutit alors que `usage` mélange nombres, dict et chaîne."""
+    chemin = tmp_path / "longue.opus"
+    chemin.write_bytes(b"faux-opus-long")
+
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [
+        httpx.Response(429, json={"message": "rate limit"}),      # envoi entier refusé
+        httpx.Response(200, json={"text": "un", "usage": _USAGE_REEL}),
+        httpx.Response(200, json={"text": "deux", "usage": _USAGE_REEL}),
+    ]
+
+    seg1 = tmp_path / "seg1.opus"
+    seg1.write_bytes(b"x")
+    seg2 = tmp_path / "seg2.opus"
+    seg2.write_bytes(b"y")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg1, seg2])
+
+    client = ClientMistral(URL, "cle")
+    resultat = t.transcrire_fichier(client, chemin, "voxtral-mini-latest")
+
+    assert resultat.texte == "un deux", "la transcription des 2 segments est rendue"
+    assert resultat.decoupee is True
+    # Les compteurs se cumulent, y compris dans le sous-dictionnaire ; la chaîne est
+    # recopiée telle quelle plutôt que d'interrompre un découpage réussi.
+    assert resultat.usage["total_tokens"] == 760
+    assert resultat.usage["prompt_tokens_details"]["audio_tokens"] == 750
+    assert resultat.usage["service_tier"] == "standard"
+
+
+def test_cumuler_usage_ne_somme_que_les_nombres():
+    total: dict = {}
+    t._cumuler_usage(total, {"n": 1, "x": 1.5, "details": {"a": 2}, "tier": "standard",
+                             "flag": True, "vide": None})
+    t._cumuler_usage(total, {"n": 2, "x": 0.5, "details": {"a": 3, "b": 1}, "tier": "premier",
+                             "flag": False, "vide": None})
+    assert total["n"] == 3
+    assert total["x"] == pytest.approx(2.0)
+    assert total["details"] == {"a": 5, "b": 1}
+    assert total["tier"] == "premier", "dernier segment gagne pour les non-nombres"
+    assert total["flag"] is False, "un booléen n'est pas un compteur"
+    assert total["vide"] is None
