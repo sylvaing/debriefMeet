@@ -9,7 +9,6 @@ Pas de dépendance à ffmpeg : `subprocess.run` est mocké pour `compacter_piste
 from __future__ import annotations
 
 import re
-import subprocess
 
 import numpy as np
 import pytest
@@ -212,49 +211,3 @@ def test_compacter_groupe_l_expression_de_beaucoup_de_plages(tmp_path, monkeypat
     filtre = commandes[0][commandes[0].index("-af") + 1]
     assert filtre.startswith("aselect='(") and filtre.endswith("',asetpts=N/SR")
     assert filtre.count("between(t,") == 107
-
-
-# ── stderr de ffmpeg dans le message d'erreur ───────────────────────────────────
-
-def test_echec_ffmpeg_porte_le_stderr_et_le_code(tmp_path, monkeypatch):
-    """Le repli journalise `exc` : sans stderr, le diagnostic repart de zéro.
-
-    Le message du 2026-09-07 ne disait que « returned non-zero exit status 244 » —
-    244 n'est documenté nulle part, et il a fallu rejouer la commande à la main
-    pour lire « Cannot allocate memory »."""
-    monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: "/usr/bin/ffmpeg")
-
-    def _run(cmd, **kwargs):
-        raise subprocess.CalledProcessError(
-            244, cmd,
-            stderr=(b"[Parsed_aselect_0 @ 0x1] Error while parsing expression '"
-                    + b"between(t,0.000,1.000)+" * 200 + b"'\n"
-                    b"[AVFilterGraph @ 0x2] Error initializing filters\n"
-                    b"Error opening output files: Cannot allocate memory\n"),
-        )
-
-    monkeypatch.setattr("subprocess.run", _run)
-    source = tmp_path / "systeme.opus"
-    source.write_bytes(b"audio")
-
-    with pytest.raises(silences.ErreurCompactionFfmpeg) as excinfo:
-        silences.compacter_piste(source, tmp_path, PlanCompaction(((1.0, 2.0),), 100.0))
-
-    message = str(excinfo.value)
-    assert "244" in message
-    assert "Cannot allocate memory" in message
-    assert "Error initializing filters" in message
-    # …sans recopier les milliers de caractères que ffmpeg réémet.
-    assert len(message) < 2_000
-
-
-def test_stderr_vide_reste_journalisable(tmp_path, monkeypatch):
-    monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: "/usr/bin/ffmpeg")
-    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: (_ for _ in ()).throw(
-        subprocess.CalledProcessError(1, cmd, stderr=b"")))
-    source = tmp_path / "systeme.opus"
-    source.write_bytes(b"audio")
-
-    with pytest.raises(silences.ErreurCompactionFfmpeg) as excinfo:
-        silences.compacter_piste(source, tmp_path, PlanCompaction(((1.0, 2.0),), 100.0))
-    assert "aucune sortie d'erreur" in str(excinfo.value)

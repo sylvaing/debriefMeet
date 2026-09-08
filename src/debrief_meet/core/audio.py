@@ -112,10 +112,10 @@ def _wav_vers_float_mono(chemin) -> tuple[np.ndarray, int]:
 
 
 def _decoder_ffmpeg(chemin) -> tuple[np.ndarray, int]:
-    import subprocess
     import tempfile
     from pathlib import Path
 
+    from debrief_meet.core.ffmpeg import executer
     from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable, chemin_ffmpeg
 
     exe = chemin_ffmpeg()
@@ -123,12 +123,8 @@ def _decoder_ffmpeg(chemin) -> tuple[np.ndarray, int]:
         raise ErreurFfmpegIntrouvable()
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "decode.wav"
-        subprocess.run(
-            [exe, "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
-             "-f", "wav", str(wav)],
-            check=True, capture_output=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        executer(exe, "-y", "-i", str(chemin), "-ac", "1", "-ar", "16000",
+                 "-f", "wav", str(wav))
         return _wav_vers_float_mono(wav)
 
 

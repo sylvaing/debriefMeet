@@ -38,7 +38,9 @@ def test_decouper_appelle_ffmpeg_avec_les_bons_arguments(tmp_path, monkeypatch):
         (dossier_sortie / "seg_000.opus").write_bytes(b"x")
         (dossier_sortie / "seg_001.opus").write_bytes(b"x")
 
-    monkeypatch.setattr(decoupage.subprocess, "run", _run)
+    # `decoupage` délègue à `core/ffmpeg.executer` : c'est le module subprocess
+    # lui-même qu'on intercepte, plus l'import réexporté par `decoupage`.
+    monkeypatch.setattr("subprocess.run", _run)
 
     segments = decoupage.decouper_piste(source, dossier_sortie, limite_s=840)
 
@@ -57,7 +59,7 @@ def test_decouper_retourne_segments_tries(tmp_path, monkeypatch):
     source.write_bytes(b"audio")
     dossier_sortie = tmp_path / "out"
     monkeypatch.setattr(
-        decoupage.subprocess, "run", _faux_subprocess_run(dossier_sortie, ".opus", 3))
+        "subprocess.run", _faux_subprocess_run(dossier_sortie, ".opus", 3))
 
     segments = decoupage.decouper_piste(source, dossier_sortie)
 

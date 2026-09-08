@@ -19,12 +19,12 @@ La compaction n'a lieu que si elle retire une part significative de la piste
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from debrief_meet.core.ffmpeg import executer
 from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable, chemin_ffmpeg
 
 #: Plancher de parole, appliqué au RMS d'une tranche de `PAS_S` (audio BRUT, sans
@@ -129,16 +129,6 @@ def plan_compaction(audio: np.ndarray, sr: int = 16_000) -> PlanCompaction:
     return PlanCompaction(tuple(plages), duree_totale)
 
 
-class ErreurCompactionFfmpeg(RuntimeError):
-    """Échec d'une commande ffmpeg de compaction, **stderr compris**.
-
-    `CalledProcessError` ne rend que la commande et le code de sortie, et le repli
-    se contentait de journaliser `exc` : le message de ffmpeg était donc perdu. Le
-    diagnostic du 2026-09-08 a coûté une reproduction manuelle du binaire embarqué
-    pour découvrir un « Cannot allocate memory » que le code 244 ne laissait pas
-    deviner — d'où cette exception, qui embarque le résumé de stderr."""
-
-
 def expression_selection(plages: tuple[tuple[float, float], ...]) -> str:
     """Expression `aselect` gardant `plages`, groupée pour rester analysable.
 
@@ -239,39 +229,6 @@ def compacter_piste(chemin: Path, dossier_sortie: Path, plan: PlanCompaction) ->
     return sortie
 
 
-#: Bornes du résumé de stderr : ffmpeg réémet l'expression entière dans son message
-#: d'erreur (3 ko ici), or l'information tient dans les dernières lignes.
-_MAX_LIGNES_STDERR = 5
-_MAX_CAR_LIGNE = 200
-
-
-def _abreger(texte: str) -> str:
-    if len(texte) <= _MAX_CAR_LIGNE:
-        return texte
-    return f"{texte[:_MAX_CAR_LIGNE]}… (+{len(texte) - _MAX_CAR_LIGNE} car.)"
-
-
-def _resumer_stderr(flux: bytes | str | None) -> str:
-    """Dernières lignes de stderr, chacune tronquée — journalisables telles quelles."""
-    if not flux:
-        return "aucune sortie d'erreur"
-    texte = flux.decode("utf-8", "replace") if isinstance(flux, bytes) else flux
-    lignes = [ligne.strip() for ligne in texte.splitlines() if ligne.strip()]
-    if not lignes:
-        return "aucune sortie d'erreur"
-    return " | ".join(_abreger(ligne) for ligne in lignes[-_MAX_LIGNES_STDERR:])
-
-
 def _ffmpeg(exe: str, *args: str) -> None:
-    commande = [exe, "-y", "-loglevel", "error", *args]
-    try:
-        subprocess.run(
-            commande,
-            check=True, capture_output=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except subprocess.CalledProcessError as exc:
-        raise ErreurCompactionFfmpeg(
-            f"ffmpeg code {exc.returncode} : {_resumer_stderr(exc.stderr)}"
-            f" — commande : {' '.join(_abreger(a) for a in commande)}"
-        ) from exc
+    """Passe l'appel au lanceur commun, qui lève `ErreurFfmpeg` avec stderr."""
+    executer(exe, "-y", "-loglevel", "error", *args)

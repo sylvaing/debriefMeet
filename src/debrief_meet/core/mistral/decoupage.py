@@ -10,9 +10,9 @@ compacts, contrairement à un ré-encodage WAV.
 """
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
+from debrief_meet.core.ffmpeg import executer
 from debrief_meet.core.fichiers import ErreurFfmpegIntrouvable, chemin_ffmpeg
 
 # 840 s = 14 min — marge sous la limite « ~15 min » documentée par Mistral pour
@@ -27,17 +27,16 @@ def decouper_piste(chemin: Path, dossier_sortie: Path,
     Retourne les chemins des segments dans l'ordre chronologique — l'offset temporel
     du segment d'index `i` est `i * limite_s` secondes (chaque segment est réécrit
     avec des timestamps repartant de 0 via `-reset_timestamps 1`, à réappliquer côté
-    appelant). Lève `ErreurFfmpegIntrouvable` si ffmpeg est indisponible."""
+    appelant). Lève `ErreurFfmpegIntrouvable` si ffmpeg est indisponible, et
+    `ErreurFfmpeg` — stderr résumé compris — si la commande échoue : c'est ce repli
+    qui sortait en 8 sans rien dire le 2026-09-02, muxer `segment` absent du binaire
+    embarqué (docs/42 §10.4)."""
     exe = chemin_ffmpeg()
     if exe is None:
         raise ErreurFfmpegIntrouvable()
     dossier_sortie.mkdir(parents=True, exist_ok=True)
     motif = dossier_sortie / f"seg_%03d{chemin.suffix}"
-    subprocess.run(
-        [exe, "-y", "-loglevel", "error", "-i", str(chemin),
-         "-f", "segment", "-segment_time", str(limite_s),
-         "-reset_timestamps", "1", "-c", "copy", str(motif)],
-        check=True, capture_output=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    executer(exe, "-y", "-loglevel", "error", "-i", str(chemin),
+             "-f", "segment", "-segment_time", str(limite_s),
+             "-reset_timestamps", "1", "-c", "copy", str(motif))
     return sorted(dossier_sortie.glob(f"seg_*{chemin.suffix}"))
