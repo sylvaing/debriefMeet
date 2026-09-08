@@ -43,6 +43,19 @@ FRACTION_UTILE = 0.8
 #: une ligne de commande trop longue casse sous Windows. Élargir la fusion ne fait
 #: qu'AJOUTER de l'audio — jamais en perdre.
 MAX_PLAGES = 120
+#: Profondeur d'imbrication maximale de l'évaluateur d'expressions de ffmpeg
+#: (`STACK_SIZE` de `libavutil/eval.c` — **mesurée à 100 exactement** sur le binaire
+#: embarqué le 2026-09-08, par dichotomie sur le nombre de termes).
+PROFONDEUR_EVAL_FFMPEG = 100
+#: Taille des groupes parenthésés de l'expression `aselect` (cf. `expression_selection`).
+#: Profondeur obtenue : `n / TAILLE + TAILLE`, soit ~30 niveaux pour les `MAX_PLAGES`
+#: plages du pire cas — et la mesure confirme le modèle : à 25 la chaîne tient
+#: jusqu'à ~1900 plages là où une chaîne plate cède à 101.
+TAILLE_GROUPE_EXPRESSION = 25
+#: Sortie de ffmpeg quand `av_expr_parse` rend `AVERROR(ENOMEM)` (= −12 rendu en octet
+#: non signé). Documenté ici parce que rien, ni dans le code de sortie ni dans le
+#: message (« Cannot allocate memory »), ne désigne le nombre de plages.
+CODE_SORTIE_ENOMEM = 244
 #: Débit du ré-encodage, aligné sur celui de la rétention (`core.fichiers`).
 _DEBIT_KBPS = 24
 
@@ -116,13 +129,89 @@ def plan_compaction(audio: np.ndarray, sr: int = 16_000) -> PlanCompaction:
     return PlanCompaction(tuple(plages), duree_totale)
 
 
+class ErreurCompactionFfmpeg(RuntimeError):
+    """Échec d'une commande ffmpeg de compaction, **stderr compris**.
+
+    `CalledProcessError` ne rend que la commande et le code de sortie, et le repli
+    se contentait de journaliser `exc` : le message de ffmpeg était donc perdu. Le
+    diagnostic du 2026-09-08 a coûté une reproduction manuelle du binaire embarqué
+    pour découvrir un « Cannot allocate memory » que le code 244 ne laissait pas
+    deviner — d'où cette exception, qui embarque le résumé de stderr."""
+
+
+def expression_selection(plages: tuple[tuple[float, float], ...]) -> str:
+    """Expression `aselect` gardant `plages`, groupée pour rester analysable.
+
+    Terrain du 2026-09-07 : une réunion de 93 min à **107 plages** sortait en
+    `CODE_SORTIE_ENOMEM` sur les deux tentatives de CR. L'évaluateur de ffmpeg
+    analyse `a+b+c` par récursion — **un niveau par terme** — et s'arrête à
+    `PROFONDEUR_EVAL_FFMPEG` : au-delà de 100 plages la compaction échouait donc
+    toujours, sur les 3 OS (la limite est dans `libavutil`, pas dans le build
+    minimal de macOS), alors que `MAX_PLAGES` en autorise 120. Ni la longueur de la
+    ligne de commande (3,4 ko mesurés, très loin d'`ARG_MAX`) ni un filtre absent
+    (docs/16 §5.5) n'étaient en cause.
+
+    Réunir les termes en groupes parenthésés de `TAILLE_GROUPE_EXPRESSION` ramène la
+    profondeur de `n` à `n / TAILLE + TAILLE`. Le groupement est neutre : chaque
+    `between` vaut 0 ou 1, l'addition est associative, et `aselect` ne regarde que
+    la nullité du résultat. Un seul groupe reste sans parenthèses — les pistes
+    courantes gardent l'expression plate, lisible dans les logs.
+    """
+    termes = [f"between(t,{debut:.3f},{fin:.3f})" for debut, fin in plages]
+    groupes = [
+        "+".join(termes[i:i + TAILLE_GROUPE_EXPRESSION])
+        for i in range(0, len(termes), TAILLE_GROUPE_EXPRESSION)
+    ]
+    if len(groupes) <= 1:
+        return groupes[0] if groupes else ""
+    return "+".join(f"({groupe})" for groupe in groupes)
+
+
+def _termes_de_premier_niveau(expression: str) -> list[str]:
+    """Découpe sur les `+` hors parenthèses (celles de `between(t,a,b)` comprises)."""
+    termes: list[str] = []
+    niveau = debut = 0
+    for i, car in enumerate(expression):
+        if car == "(":
+            niveau += 1
+        elif car == ")":
+            niveau -= 1
+        elif car == "+" and niveau == 0:
+            termes.append(expression[debut:i])
+            debut = i + 1
+    termes.append(expression[debut:])
+    return termes
+
+
+def profondeur_expression(nb_plages: int) -> int:
+    """Profondeur d'analyse de l'expression RÉELLEMENT produite pour `nb_plages`.
+
+    Mesurée sur la sortie de `expression_selection`, jamais recalculée par une
+    formule parallèle : un garde-fou qui refait le calcul de son côté reste vert
+    même si le groupement disparaît du code (piège déjà rencontré sur la largeur de
+    la colonne d'actions, CLAUDE.md 2026-08-24). `av_expr_parse` descend d'un niveau
+    par terme d'une chaîne `a+b+c`, et d'un niveau de plus pour entrer dans une
+    parenthèse."""
+    expression = expression_selection(tuple((0.0, 0.0) for _ in range(nb_plages)))
+    if not expression:
+        return 0
+    groupes = _termes_de_premier_niveau(expression)
+    interne = max(
+        (1 + len(_termes_de_premier_niveau(groupe[1:-1]))
+         for groupe in groupes if groupe.startswith("(")),
+        default=0,
+    )
+    return len(groupes) + interne
+
+
 def compacter_piste(chemin: Path, dossier_sortie: Path, plan: PlanCompaction) -> Path:
     """Écrit un Opus 16 kHz mono ne contenant que les plages de `plan`.
 
     `aselect` garde les tranches voulues et `asetpts=N/SR` réécrit les horodatages
     pour que la sortie soit continue — d'où le besoin de `plan.vers_original` en
     retour. L'expression est entre apostrophes : sans elles, les virgules de
-    `between(t,a,b)` seraient lues comme des séparateurs de filtres par ffmpeg.
+    `between(t,a,b)` seraient lues comme des séparateurs de filtres par ffmpeg ; elle
+    est aussi groupée par parenthèses (cf. `expression_selection`).
 
     Sortie en Opus (même codec et débit que la rétention) et non en WAV : garder 60 %
     d'une piste de 98 min ferait un WAV de plus de 100 Mo, soit un envoi bien pire que
@@ -136,7 +225,7 @@ def compacter_piste(chemin: Path, dossier_sortie: Path, plan: PlanCompaction) ->
     exe = chemin_ffmpeg()
     if exe is None:
         raise ErreurFfmpegIntrouvable()
-    expression = "+".join(f"between(t,{debut:.3f},{fin:.3f})" for debut, fin in plan.plages)
+    expression = expression_selection(plan.plages)
     intermediaire = dossier_sortie / (chemin.stem + "_compacte.wav")
     sortie = dossier_sortie / (chemin.stem + "_compacte.opus")
     _ffmpeg(exe, "-i", str(chemin),
@@ -150,9 +239,39 @@ def compacter_piste(chemin: Path, dossier_sortie: Path, plan: PlanCompaction) ->
     return sortie
 
 
+#: Bornes du résumé de stderr : ffmpeg réémet l'expression entière dans son message
+#: d'erreur (3 ko ici), or l'information tient dans les dernières lignes.
+_MAX_LIGNES_STDERR = 5
+_MAX_CAR_LIGNE = 200
+
+
+def _abreger(texte: str) -> str:
+    if len(texte) <= _MAX_CAR_LIGNE:
+        return texte
+    return f"{texte[:_MAX_CAR_LIGNE]}… (+{len(texte) - _MAX_CAR_LIGNE} car.)"
+
+
+def _resumer_stderr(flux: bytes | str | None) -> str:
+    """Dernières lignes de stderr, chacune tronquée — journalisables telles quelles."""
+    if not flux:
+        return "aucune sortie d'erreur"
+    texte = flux.decode("utf-8", "replace") if isinstance(flux, bytes) else flux
+    lignes = [ligne.strip() for ligne in texte.splitlines() if ligne.strip()]
+    if not lignes:
+        return "aucune sortie d'erreur"
+    return " | ".join(_abreger(ligne) for ligne in lignes[-_MAX_LIGNES_STDERR:])
+
+
 def _ffmpeg(exe: str, *args: str) -> None:
-    subprocess.run(
-        [exe, "-y", "-loglevel", "error", *args],
-        check=True, capture_output=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    commande = [exe, "-y", "-loglevel", "error", *args]
+    try:
+        subprocess.run(
+            commande,
+            check=True, capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.CalledProcessError as exc:
+        raise ErreurCompactionFfmpeg(
+            f"ffmpeg code {exc.returncode} : {_resumer_stderr(exc.stderr)}"
+            f" — commande : {' '.join(_abreger(a) for a in commande)}"
+        ) from exc

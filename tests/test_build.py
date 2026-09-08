@@ -366,6 +366,80 @@ class TestFfmpegVendor:
                 f"dans l'app livrée (ajouter à --enable-filter dans build_ffmpeg.sh)"
             )
 
+    def _opus_de_test(self, tmp_path, duree_s: int = 40):
+        """Petit Opus sonore, encodé PAR le binaire embarqué (pas de fixture)."""
+        import math
+        import struct
+
+        pcm = tmp_path / "src.f32"
+        pcm.write_bytes(b"".join(
+            struct.pack("<f", 0.2 * math.sin(2 * math.pi * 440 * i / 16000))
+            for i in range(16000 * duree_s)
+        ))
+        source = tmp_path / "src.opus"
+        subprocess.run(
+            [str(self.BINAIRE), "-y", "-loglevel", "error",
+             "-f", "f32le", "-ar", "16000", "-ac", "1", "-i", str(pcm),
+             "-c:a", "libopus", "-b:a", "24k", str(source)],
+            check=True, capture_output=True,
+        )
+        return source
+
+    def test_compaction_reelle_a_beaucoup_de_plages_avec_le_binaire_embarque(
+            self, tmp_path, monkeypatch):
+        """`compacter_piste` sur le binaire EMBARQUÉ, avec un nombre RÉALISTE de plages.
+
+        Le terrain du 2026-09-07 (réunion de 93 min, 107 plages) sortait en 244 :
+        l'évaluateur d'expressions de ffmpeg s'arrête à 100 niveaux d'imbrication
+        et `a+b+c` en consomme un par terme, alors que `MAX_PLAGES` en autorise 120.
+        Les tests unitaires ne pouvaient pas le voir — ils mockent `subprocess.run`,
+        donc l'expression n'était jamais analysée par ffmpeg. La limite vit dans
+        `libavutil`, pas dans le build minimal : les 3 OS étaient touchés.
+        """
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        from debrief_meet.core.mistral import silences
+
+        monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: str(self.BINAIRE))
+        source = self._opus_de_test(tmp_path, duree_s=40)
+        # Plus de plages que la limite de l'évaluateur, jusqu'au pire cas autorisé.
+        nb = max(110, silences.MAX_PLAGES)
+        assert nb > silences.PROFONDEUR_EVAL_FFMPEG, "le cas testé doit dépasser la limite"
+        plages = tuple((i * 0.3, i * 0.3 + 0.1) for i in range(nb))
+        plan = silences.PlanCompaction(plages=plages, duree_totale_s=40.0)
+
+        sortie = silences.compacter_piste(source, tmp_path, plan)
+
+        assert sortie.exists() and sortie.stat().st_size > 0
+        assert not (tmp_path / "src_compacte.wav").exists(), "WAV intermédiaire non nettoyé"
+
+    def test_expression_plate_echoue_bien_sur_le_binaire_embarque(self, tmp_path):
+        """Fige la limite mesurée : sans groupement, ffmpeg REFUSE l'expression.
+
+        C'est le témoin du correctif — s'il devenait vert, le groupement de
+        `expression_selection` ne protégerait plus de rien et le test précédent
+        passerait pour de mauvaises raisons."""
+        if not self.BINAIRE.exists():
+            pytest.skip("ffmpeg non compilé — lancer : bash packaging/build_ffmpeg.sh")
+        from debrief_meet.core.mistral import silences
+
+        source = self._opus_de_test(tmp_path, duree_s=40)
+        plate = "+".join(
+            f"between(t,{i * 0.3:.3f},{i * 0.3 + 0.1:.3f})"
+            for i in range(silences.PROFONDEUR_EVAL_FFMPEG + 7)
+        )
+        resultat = subprocess.run(
+            [str(self.BINAIRE), "-y", "-loglevel", "error", "-i", str(source),
+             "-af", f"aselect='{plate}',asetpts=N/SR",
+             "-ac", "1", "-ar", "16000", str(tmp_path / "plate.wav")],
+            capture_output=True, text=True,
+        )
+        assert resultat.returncode == silences.CODE_SORTIE_ENOMEM, (
+            f"code inattendu {resultat.returncode} — la limite d'imbrication de ffmpeg "
+            f"a changé, revoir PROFONDEUR_EVAL_FFMPEG :\n{resultat.stderr[-300:]}"
+        )
+        assert "Cannot allocate memory" in resultat.stderr
+
     def test_decoupage_reel_avec_le_binaire_embarque(self, tmp_path, monkeypatch):
         """`decouper_piste` sur le binaire EMBARQUÉ, pas celui du PATH.
 

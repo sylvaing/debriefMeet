@@ -8,6 +8,9 @@ Pas de dépendance à ffmpeg : `subprocess.run` est mocké pour `compacter_piste
 """
 from __future__ import annotations
 
+import re
+import subprocess
+
 import numpy as np
 import pytest
 
@@ -151,3 +154,107 @@ def test_compacter_construit_le_filtre_aselect(tmp_path, monkeypatch):
     assert filtre == "aselect='between(t,10.000,12.500)+between(t,100.000,101.000)',asetpts=N/SR"
     assert commandes[0][-1].endswith("_compacte.wav") and "16000" in commandes[0]
     assert "libopus" in commandes[1] and commandes[1][-1].endswith("_compacte.opus")
+
+
+# ── Expression `aselect` : profondeur d'analyse (terrain 2026-09-07) ─────────────
+#
+# Une réunion de 93 min à 107 plages sortait en 244 sur les DEUX tentatives de CR :
+# l'évaluateur de ffmpeg analyse `a+b+c` par récursion, un niveau par terme, et
+# s'arrête à 100 (`STACK_SIZE` de libavutil/eval.c, mesuré). `MAX_PLAGES` en
+# autorisant 120, toute piste de plus de 100 plages échouait — sur les 3 OS.
+
+def test_expression_reste_plate_pour_une_piste_ordinaire():
+    """Les parenthèses n'apparaissent que là où elles servent (lisibilité des logs)."""
+    plages = tuple((float(i), float(i) + 0.5) for i in range(silences.TAILLE_GROUPE_EXPRESSION))
+    expression = silences.expression_selection(plages)
+    # `between(t,…)` a ses propres parenthèses : c'est le GROUPEMENT qu'on interdit ici.
+    assert not expression.startswith("(") and ")+(" not in expression
+    assert expression.count("between(t,") == len(plages)
+
+
+def test_expression_groupee_au_dela_du_seuil():
+    plages = tuple((float(i), float(i) + 0.5) for i in range(silences.TAILLE_GROUPE_EXPRESSION + 1))
+    expression = silences.expression_selection(plages)
+    assert expression.startswith("(") and ")+(" in expression
+
+
+def test_groupement_ne_perd_ni_ne_reordonne_aucune_plage():
+    """Le groupement est une réécriture : mêmes plages, même ordre, rien en plus."""
+    plages = tuple((float(i) * 3, float(i) * 3 + 1) for i in range(107))
+    trouvees = re.findall(r"between\(t,([\d.]+),([\d.]+)\)",
+                          silences.expression_selection(plages))
+    assert [(float(a), float(b)) for a, b in trouvees] == list(plages)
+
+
+def test_profondeur_sous_la_limite_ffmpeg_au_pire_cas():
+    """Garde-fou : `MAX_PLAGES` doit rester analysable par ffmpeg.
+
+    La limite est invisible au code — elle ne se voit qu'à l'exécution, sur une
+    piste assez découpée. Sans groupement, `MAX_PLAGES` (120) dépasse les 100
+    niveaux : c'est exactement ce qui a été livré pendant des mois."""
+    assert silences.MAX_PLAGES > silences.PROFONDEUR_EVAL_FFMPEG, (
+        "si MAX_PLAGES repassait sous la limite, ce garde-fou ne prouverait plus rien"
+    )
+    assert silences.profondeur_expression(silences.MAX_PLAGES) < silences.PROFONDEUR_EVAL_FFMPEG
+
+
+def test_compacter_groupe_l_expression_de_beaucoup_de_plages(tmp_path, monkeypatch):
+    """Le groupement traverse bien jusqu'à la ligne de commande réellement passée."""
+    monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    commandes: list[list[str]] = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: commandes.append(cmd))
+    source = tmp_path / "systeme.opus"
+    source.write_bytes(b"audio")
+    plages = tuple((float(i) * 3, float(i) * 3 + 1) for i in range(107))
+
+    silences.compacter_piste(source, tmp_path, PlanCompaction(plages, duree_totale_s=5563.0))
+
+    filtre = commandes[0][commandes[0].index("-af") + 1]
+    assert filtre.startswith("aselect='(") and filtre.endswith("',asetpts=N/SR")
+    assert filtre.count("between(t,") == 107
+
+
+# ── stderr de ffmpeg dans le message d'erreur ───────────────────────────────────
+
+def test_echec_ffmpeg_porte_le_stderr_et_le_code(tmp_path, monkeypatch):
+    """Le repli journalise `exc` : sans stderr, le diagnostic repart de zéro.
+
+    Le message du 2026-09-07 ne disait que « returned non-zero exit status 244 » —
+    244 n'est documenté nulle part, et il a fallu rejouer la commande à la main
+    pour lire « Cannot allocate memory »."""
+    monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: "/usr/bin/ffmpeg")
+
+    def _run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(
+            244, cmd,
+            stderr=(b"[Parsed_aselect_0 @ 0x1] Error while parsing expression '"
+                    + b"between(t,0.000,1.000)+" * 200 + b"'\n"
+                    b"[AVFilterGraph @ 0x2] Error initializing filters\n"
+                    b"Error opening output files: Cannot allocate memory\n"),
+        )
+
+    monkeypatch.setattr("subprocess.run", _run)
+    source = tmp_path / "systeme.opus"
+    source.write_bytes(b"audio")
+
+    with pytest.raises(silences.ErreurCompactionFfmpeg) as excinfo:
+        silences.compacter_piste(source, tmp_path, PlanCompaction(((1.0, 2.0),), 100.0))
+
+    message = str(excinfo.value)
+    assert "244" in message
+    assert "Cannot allocate memory" in message
+    assert "Error initializing filters" in message
+    # …sans recopier les milliers de caractères que ffmpeg réémet.
+    assert len(message) < 2_000
+
+
+def test_stderr_vide_reste_journalisable(tmp_path, monkeypatch):
+    monkeypatch.setattr(silences, "chemin_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: (_ for _ in ()).throw(
+        subprocess.CalledProcessError(1, cmd, stderr=b"")))
+    source = tmp_path / "systeme.opus"
+    source.write_bytes(b"audio")
+
+    with pytest.raises(silences.ErreurCompactionFfmpeg) as excinfo:
+        silences.compacter_piste(source, tmp_path, PlanCompaction(((1.0, 2.0),), 100.0))
+    assert "aucune sortie d'erreur" in str(excinfo.value)
