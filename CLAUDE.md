@@ -548,6 +548,46 @@ docs/46 —, synthétiser plutôt que paraphraser). Le vrai remède reste un abo
 supérieur. **Contournement sans build** : `"mistral_modele_cr": "ministral-14b-latest"`
 dans `config.json`, app fermée.
 
+Après la journalisation du **succès** des intercos (2026-09-11) : **1734 passed, 0 échec**
+en environnement complet (1724 avant, +10 tests), en 2 commits verts indépendamment.
+Déclencheur : le diagnostic de Cyril (build `f77f407`), « la connexion BlueMind ne
+marche pas ». Verdict réel : elle marchait — 2 lignes d'URL saisie **sans `/api`** à
+10:37 et 10:38, corrigée avant son redémarrage de 10:43:58, puis 2 flux CR qui forcent
+chacun une resync (`attendre_sync`) **sans la moindre erreur**. Mais ce verdict n'a pu
+être rendu que par un raisonnement **en creux** : une sync réussie ne journalisait
+**rien** (`_sur_terminee` n'émettait qu'un signal), donc le log ne permettait que de
+constater l'absence d'échec — jamais d'affirmer que l'interco fonctionne. ⚠️ **Même
+angle mort que le stderr de ffmpeg (§10.6) et que le corps du 429 Mistral (§10.7)**, tous
+deux corrigés 3 jours plus tôt : la famille, ce sont les chemins où l'information existe
+au moment des faits et n'est simplement jamais écrite. 3 trous bouchés :
+
+1. **Sync BlueMind réussie** → `INFO Sync BlueMind réussie — N événement(s) dans la
+   fenêtre`, dans `_sur_terminee`, symétrique du WARNING de `_sur_erreur`. ⚠️ `N` est le
+   contenu de la **fenêtre entière** (−90 j/+30 j), pas un delta : la resync est toujours
+   complète depuis docs/40 §5.2, le nom du signal (`ajoutes_ou_maj`) est un reliquat du
+   chemin incrémental retiré. Volume ~100 lignes/jour au timer de 15 min, contre 5 Mo × 6
+   de rotation — négligeable (le log de Cyril fait 100 ko pour 68 h).
+2. **« Tester la connexion » BlueMind** — son verdict ne vivait que dans le label des
+   Préférences, effacé à la fermeture de la fenêtre : rien ne disait si le bouton avait
+   seulement été cliqué. INFO/WARNING dans le **worker** (les 2 branches au même endroit,
+   impossible de diverger de ce qui est affiché). L'URL est journalisée **telle que
+   saisie**, dans les 2 branches — c'est le champ qui était faux, et l'export de
+   diagnostic la transmet déjà en clair. Ce worker n'avait **aucun test** : nouveau
+   `test_testeur_connexion_bluemind.py` (4).
+3. **« Tester la connexion » Mistral** — idem, plus le **nombre de modèles servis**, tiré
+   du corps de `v1/models` déjà reçu puis jeté : c'est exactement la mesure qui a démêlé
+   §10.7 (clé valide, plafonds nuls). ⚠️ D'où un `_nombre_de_modeles` **défensif** —
+   sans la garde, un 200 au corps illisible remonte dans le `except Exception` et
+   s'affiche à l'utilisateur comme une **connexion en échec** (régression simulée
+   vérifiée, c'est l'objet d'un test dédié).
+
+⚠️ Chaque ligne de succès est doublée d'une **contre-épreuve** (« un échec ne journalise
+aucun succès ») : c'est elle qui rend la ligne exploitable en diagnostic — la lire doit
+suffire à conclure, sans avoir à vérifier qu'aucun WARNING ne suit. Et 2 tests figent
+qu'aucun secret ne fuit par ces logs (token BlueMind, clé Mistral) — ils ne voyagent
+qu'en en-tête et les messages d'erreur des 2 clients ne reprennent que des corps de
+réponse serveur. Les 10 tests ont été validés par **régression simulée**.
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
