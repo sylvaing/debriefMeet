@@ -351,6 +351,14 @@ class SynchroCalendrier(QObject):
 
     @Slot(int)
     def _sur_terminee(self, n: int) -> None:
+        # INFO et non DEBUG, pour la même raison que le WARNING de `_sur_erreur` : sans
+        # cette ligne, un succès ne laisse AUCUNE trace, et un diagnostic ne peut que
+        # constater l'absence d'échec — jamais affirmer que l'interco fonctionne. Cas
+        # réel du 2026-09-11 : deux lignes d'URL invalide le matin, plus rien ensuite,
+        # impossible de dire depuis le seul log si la correction avait pris.
+        # `n` est le nombre d'événements de la fenêtre entière (la resync est toujours
+        # complète, docs/40 §5.2 : le store est remplacé, ce n'est pas un delta).
+        logger.info("Sync BlueMind réussie — %d événement(s) dans la fenêtre", n)
         self._en_cours = False
         self.terminee.emit(n)
 

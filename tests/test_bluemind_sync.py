@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -204,6 +204,68 @@ def test_synchroniser_emet_terminee(qapp, tmp_path, qtbot):
     sync.synchroniser_si_necessaire()
     qtbot.waitUntil(lambda: len(recus) == 1, timeout=3000)
     sync.terminer()
+
+
+@respx.mock
+def test_sync_reussie_journalisee_en_info_avec_le_nombre(qapp, tmp_path, qtbot, caplog):
+    """Un succès doit laisser une trace dans le log, avec le nombre d'événements.
+
+    Sans elle, un diagnostic ne peut que constater l'ABSENCE d'échec, jamais affirmer
+    que l'interco fonctionne : le 2026-09-11, un poste avait deux lignes « URL invalide »
+    le matin puis plus rien du tout, et le log seul ne disait pas si la correction avait
+    pris. Dates calculées depuis `now` : `SynchroCalendrier` n'expose pas d'horloge
+    injectable, un événement daté en dur sortirait de la fenêtre −90 j avec le temps."""
+    import logging
+
+    maintenant = datetime.now(timezone.utc)
+    debut = maintenant + timedelta(days=1)
+    values = [
+        {"uid": f"evt-{i}", "value": {"main": _main(
+            summary=f"Réunion {i}",
+            debut=(debut + timedelta(hours=i)).isoformat(),
+            fin=(debut + timedelta(hours=i + 1)).isoformat())}}
+        for i in range(2)
+    ]
+    respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(
+        return_value=httpx.Response(200, json={"uid": "u1", "value": {}}))
+    respx.post(f"{URL}/calendars/_search").mock(
+        return_value=httpx.Response(200, json={"values": values}))
+
+    cfg = _config_bluemind(tmp_path)
+    sync = SynchroCalendrier(cfg, store=StoreCalendrier(tmp_path / "bm.sqlite3"))
+    recus = []
+    sync.terminee.connect(lambda n: recus.append(n))
+    with caplog.at_level(logging.INFO, logger="debrief_meet.core.bluemind.sync"):
+        sync.synchroniser_si_necessaire()
+        qtbot.waitUntil(lambda: len(recus) == 1, timeout=3000)
+    sync.terminer()
+
+    assert recus == [2], "les 2 événements de la fenêtre doivent être comptés"
+    lignes = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert len(lignes) == 1, f"une seule ligne de succès attendue, vu {caplog.text!r}"
+    assert "2 événement(s)" in lignes[0].getMessage(), lignes[0].getMessage()
+
+
+@respx.mock
+def test_sync_en_echec_ne_journalise_aucun_succes(qapp, tmp_path, qtbot, caplog):
+    """Contre-épreuve : c'est ce qui rend la ligne de succès exploitable en diagnostic —
+    la lire doit suffire à conclure, sans vérifier qu'aucun WARNING ne suit."""
+    import logging
+
+    respx.get(f"{URL}/users/bluemind.net/byEmail/{EMAIL}").mock(return_value=httpx.Response(500))
+    respx.post(f"{URL}/directory/bluemind.net/_search").mock(return_value=httpx.Response(500))
+
+    cfg = _config_bluemind(tmp_path)
+    sync = SynchroCalendrier(cfg, store=StoreCalendrier(tmp_path / "bm.sqlite3"))
+    erreurs = []
+    sync.echouee.connect(lambda m: erreurs.append(m))
+    with caplog.at_level(logging.INFO, logger="debrief_meet.core.bluemind.sync"):
+        sync.synchroniser_si_necessaire()
+        qtbot.waitUntil(lambda: len(erreurs) == 1, timeout=3000)
+    sync.terminer()
+
+    assert "réussie" not in caplog.text
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
 
 
 @respx.mock
