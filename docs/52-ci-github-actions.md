@@ -268,3 +268,16 @@ rapide.
   build.yml --ref claude/sleepy-neumann-8d6867`, accepté maintenant que le workflow est
   enregistré) : `linux` **4 min 35** (cache pip restauré), `windows` **7 min 53**,
   les deux artefacts présents, `release` sauté comme prévu hors tag.
+- **2026-10-20, run 5** (`-f macos=true`, premier essai du job macOS, sans secrets donc
+  identité éphémère attendue) : `windows` et `linux` ✅ ; `macos` **jamais démarré** —
+  GitHub n'a pas trouvé de runner (« The job was not acquired by Runner of type hosted
+  even after multiple attempts », annotations « capacity constraints, jobs targeting
+  macOS arm64 runners may experience longer queue times »), job **annulé par GitHub
+  après 15 min de file**, 0 minute facturée. Relancé seul (`gh run rerun --failed`) :
+  **même sort**, annulé après 15 min de file. Le job macOS n'a donc **jamais exécuté une
+  seule étape** le 2026-10-20 — rien n'est vérifié de son contenu (trousseau,
+  `make dmg`, `create-dmg` hors session graphique). À rejouer un autre jour :
+  `gh workflow run build.yml --ref <branche> -f macos=true`, ou `gh run rerun <id>
+  --failed` sur ce run. Si la pénurie persiste, essayer l'étiquette explicite
+  `macos-15` à la place de `macos-latest` (même pool arm64, file parfois différente) ;
+  `macos-13` est Intel, inutilisable (mlx).
