@@ -35,20 +35,10 @@ _MOTIF_PARENTHESES = re.compile(r"\([^)]*\)")
 
 
 def corrections_par_defaut() -> list[dict]:
-    """Tableau par défaut (copie fraîche à chaque appel) — vocabulaire BlueMind,
-    l'app n'étant déployée qu'en interne (docs/46 §7)."""
-    return [
-        {"entendu": "afida", "ecrire": "Acme"},
-        {"entendu": "aron", "ecrire": "Bastien"},
-                        {"entendu": "Blue Moon, Bluemine, Blue Mind", "ecrire": "BlueMind"},
-        {"entendu": "Hotlook, hot look", "ecrire": "Outlook"},
-        {"entendu": "Seppning Club, Second Club", "ecrire": "SecNumCloud"},
-        {"entendu": "Maza, Mazin", "ecrire": "ACME (société fictive)"},
-        {"entendu": "dire-câble, dircad", "ecrire": "dircab (directeur de cabinet)"},
-        {"entendu": "Mappy", "ecrire": "MAPI"},
-        {"entendu": "IMAT", "ecrire": "IMAP"},
-        {"entendu": "SNTP", "ecrire": "SMTP"},
-    ]
+    """Tableau par défaut (copie fraîche à chaque appel) : **vierge**. Le vocabulaire
+    d'une organisation (noms de collègues, de clients, jargon) ne regarde qu'elle — il se
+    saisit dans Préférences › Lexique, jamais dans le code (docs/46 §7)."""
+    return []
 
 
 def _exploitables(corrections: list[dict] | None) -> list[tuple[list[str], str]]:
@@ -110,7 +100,7 @@ def completer_prompt(prompt: str, config) -> str:
 
 def termes_biais(corrections: list[dict] | None) -> list[str]:
     """Colonne « à écrire » des lignes exploitables, sans les précisions entre
-    parenthèses (« ACME (société fictive) » → « MASA ») — destinée au
+    parenthèses (« ACME (société fictive) » → « ACME ») — destinée au
     `context_bias` Voxtral. Le découpage en jetons sans espace ni virgule reste
     l'affaire de `mistral.transcription._jetons_context_bias`."""
     termes: list[str] = []

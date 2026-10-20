@@ -409,16 +409,16 @@ class TestPrompts:
 
 
 class TestLexique:
-    def test_defaut_pre_rempli_et_actif(self, config_tmp):
-        corrections = config_tmp.get("lexique_corrections")
-        assert isinstance(corrections, list) and corrections
-        assert {"entendu": "Blue Moon, Bluemine, Blue Mind", "ecrire": "BlueMind"} in corrections
+    def test_defaut_vierge_et_actif(self, config_tmp):
+        # Lexique vierge dans le code (docs/46 §7) mais actif : la première ligne
+        # saisie dans les Préférences est injectée sans autre réglage.
+        assert config_tmp.get("lexique_corrections") == []
         assert config_tmp.get("lexique_actif") is True
 
     def test_retro_compat_fichier_sans_la_cle(self, config_tmp_avec_fichier):
-        # Une installation existante récupère le tableau par défaut, actif (docs/46 §1).
+        # Une installation existante sans la clé récupère un tableau vide, actif (docs/46 §1).
         cfg = config_tmp_avec_fichier({"modele": "small"})
-        assert cfg.get("lexique_corrections")
+        assert cfg.get("lexique_corrections") == []
         assert cfg.get("lexique_actif") is True
 
     def test_instances_isolees(self, tmp_path):

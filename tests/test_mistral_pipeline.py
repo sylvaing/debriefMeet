@@ -372,23 +372,24 @@ def test_association_injecte_la_date_dans_le_cr(tmp_path, config_tmp):
 
 @respx.mock
 def test_lexique_injecte_le_bloc_dans_le_prompt_cr(tmp_path, config_tmp):
-    """Défauts : lexique actif + tableau pré-rempli → le bloc de corrections suit le
+    """Lexique actif par défaut + une ligne saisie → le bloc de corrections suit le
     prompt résolu, quel que soit son chemin d'entrée (docs/46 §5.1)."""
     md = _md_avec_transcript(tmp_path)
-    _configurer(config_tmp)
+    _configurer(config_tmp, lexique_corrections=[
+        {"entendu": "Seppning Club", "ecrire": "SecNumCloud"}])
     route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
 
     pipeline.generer_cr_reunion(md, config_tmp)
 
     corps = route_cr.calls.last.request.content
     assert b"Corrections de transcription" in corps
-    assert b"SecNumCloud" in corps                    # ligne du tableau par défaut
+    assert b"SecNumCloud" in corps                    # ligne du tableau saisi
 
 
 @respx.mock
 def test_lexique_complete_aussi_le_prompt_ponctuel(tmp_path, config_tmp):
     md = _md_avec_transcript(tmp_path)
-    _configurer(config_tmp)
+    _configurer(config_tmp, lexique_corrections=[{"entendu": "Mappy", "ecrire": "MAPI"}])
     route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
 
     pipeline.generer_cr_reunion(md, config_tmp, prompt="Prompt ponctuel choisi.")
@@ -416,7 +417,7 @@ def test_lexique_alimente_le_context_bias_voxtral(tmp_path, config_tmp):
     md = _md_placeholder(tmp_path)
     _piste(tmp_path, "moi")
     _configurer(config_tmp, lexique_corrections=[
-        {"entendu": "Maza", "ecrire": "ACME (société fictive)"},
+        {"entendu": "Acmé", "ecrire": "ACME (société fictive)"},
         {"entendu": "Seppning Club", "ecrire": "SecNumCloud"},
     ])
     route_t = respx.post(f"{URL}/v1/audio/transcriptions").mock(
@@ -427,8 +428,8 @@ def test_lexique_alimente_le_context_bias_voxtral(tmp_path, config_tmp):
 
     corps = route_t.calls.last.request.content
     assert corps.count(b'name="context_bias"') == 2
-    assert b"MASA" in corps and b"SecNumCloud" in corps
-    assert "ministère".encode() not in corps          # précision parenthèses exclue
+    assert b"ACME" in corps and b"SecNumCloud" in corps
+    assert b"fictive" not in corps                    # précision parenthèses exclue
 
 
 @respx.mock

@@ -813,11 +813,11 @@ def test_dedup_ecarte_le_doublon_micro():
 
 
 def test_dedup_variantes_de_transcription():
-    # Les deux captations du même propos divergent un peu (« Rob calme » / « Bastien
+    # Les deux captations du même propos divergent un peu (« Rob calme » / « Bob
     # calme ») : similarité ≥ 0,8 → doublon quand même.
     blocs = _entrelaces_(
         moi=[(5.0, "il y a Rob calme son collègue pour la réunion il le calme")],
-        participants=[(5.6, "Et Bastien calme son collègue pendant la réunion. Il le calme.")])
+        participants=[(5.6, "Et Bob calme son collègue pendant la réunion. Il le calme.")])
     assert len(blocs) == 1 and blocs[0][0] == "Participants"
 
 

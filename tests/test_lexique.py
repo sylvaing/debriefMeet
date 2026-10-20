@@ -1,30 +1,31 @@
 """Tests unitaires — lexique de corrections (core/lexique.py, docs/46)."""
 from __future__ import annotations
 
+import pytest
+
 from debrief_meet.core import lexique
 
 
 # ── corrections_par_defaut() ─────────────────────────────────────────────────────
 
-def test_corrections_par_defaut_lignes_completes():
-    defauts = lexique.corrections_par_defaut()
-    assert defauts, "tableau par défaut non vide (docs/46 §7)"
-    for c in defauts:
-        assert c["entendu"].strip() and c["ecrire"].strip()
+def test_corrections_par_defaut_vierge():
+    """Aucun vocabulaire d'organisation dans le code (docs/46 §7) — le dépôt est
+    public, le lexique se remplit dans les Préférences."""
+    assert lexique.corrections_par_defaut() == []
 
 
 def test_corrections_par_defaut_renvoie_une_copie_fraiche():
     a = lexique.corrections_par_defaut()
-    a[0]["ecrire"] = "modifié"
+    a.append({"entendu": "x", "ecrire": "X"})
     b = lexique.corrections_par_defaut()
-    assert b[0]["ecrire"] != "modifié"           # pas de partage d'état
+    assert b == []                                # pas de partage d'état
 
 
 # ── bloc_instructions() ──────────────────────────────────────────────────────────
 
 def test_bloc_rendu_variantes_multiples():
-    bloc = lexique.bloc_instructions([])
-    assert "- « barat », « bara » → Acme" in bloc
+    bloc = lexique.bloc_instructions([{"entendu": "akmé, acmé", "ecrire": "Acme"}])
+    assert "- « akmé », « acmé » → Acme" in bloc
 
 
 def test_bloc_contient_chapeau_et_garde_fou():
@@ -37,7 +38,7 @@ def test_bloc_contient_chapeau_et_garde_fou():
 
 def test_bloc_preserve_l_ordre_du_tableau():
     bloc = lexique.bloc_instructions([
-        {"entendu": "afida", "ecrire": "Acme"},
+        {"entendu": "akmé", "ecrire": "Acme"},
         {"entendu": "Mappy", "ecrire": "MAPI"},
     ])
     assert bloc.index("Acme") < bloc.index("MAPI")
@@ -64,13 +65,21 @@ def test_bloc_none_si_rien_d_exploitable():
 
 # ── completer_prompt() ───────────────────────────────────────────────────────────
 
+@pytest.fixture
+def config_tmp(config_tmp):
+    """Lexique par défaut vierge (docs/46 §7) : les tests d'injection posent une
+    ligne fictive — l'activation, elle, reste celle des défauts."""
+    config_tmp.set("lexique_corrections", [{"entendu": "akmé", "ecrire": "Acme"}])
+    return config_tmp
+
+
 def test_completer_prompt_sans_annonce_bloc_en_tete(config_tmp):
     # Prompt sans ligne d'annonce → bloc en TÊTE : jamais en fin de prompt, où il
     # serait au contact direct de la transcription concaténée derrière.
-    out = lexique.completer_prompt("Fais un CR.", config_tmp)   # défauts : actif + tableau
+    out = lexique.completer_prompt("Fais un CR.", config_tmp)   # défaut : actif
     assert out.startswith("Corrections de transcription :")
     assert out.endswith("\n\nFais un CR.")
-    assert "BlueMind" in out
+    assert "Acme" in out
 
 
 def test_completer_prompt_insere_avant_l_annonce_de_transcription(config_tmp):
@@ -115,10 +124,10 @@ def test_completer_prompt_tableau_vide_identite(config_tmp):
 
 def test_termes_biais_retire_les_parentheses():
     termes = lexique.termes_biais([
-        {"entendu": "Maza", "ecrire": "ACME (société fictive)"},
+        {"entendu": "Acmé", "ecrire": "ACME (société fictive)"},
         {"entendu": "Mappy", "ecrire": "MAPI"},
     ])
-    assert termes == ["MASA", "MAPI"]
+    assert termes == ["ACME", "MAPI"]
 
 
 def test_termes_biais_filtre_les_lignes_incompletes():
@@ -130,8 +139,13 @@ def test_termes_biais_filtre_les_lignes_incompletes():
     assert termes == ["MAPI"]
 
 
-def test_termes_biais_defaut_sans_espace_ni_virgule():
-    """Voxtral (comma_separated) refuse espaces et virgules (code 3051) — les termes
-    par défaut doivent être des jetons valides une fois les parenthèses retirées."""
-    for terme in lexique.termes_biais(lexique.corrections_par_defaut()):
+def test_termes_biais_sans_espace_ni_virgule_apres_parentheses():
+    """Voxtral (comma_separated) refuse espaces et virgules (code 3051) — une précision
+    entre parenthèses retirée ne doit laisser ni espace ni virgule dans le jeton."""
+    termes = lexique.termes_biais([
+        {"entendu": "acmé", "ecrire": "ACME (société fictive, exemple)"},
+        {"entendu": "Mappy", "ecrire": "MAPI"},
+    ])
+    assert termes == ["ACME", "MAPI"]
+    for terme in termes:
         assert " " not in terme and "," not in terme

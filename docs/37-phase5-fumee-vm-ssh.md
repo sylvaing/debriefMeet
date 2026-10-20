@@ -26,7 +26,7 @@
 
 ## 1. Contexte et périmètre
 
-La VM (`192.168.1.29`, SSH `sylvaing` (mot de passe hors dépôt)) n'offre **pas de bureau via
+La VM (`192.168.1.29`, SSH `sylvaing`, mot de passe hors dépôt) n'offre **pas de bureau via
 SSH** (OpenSSH Windows = session sans desktop interactif) : le tray Qt n'y est pas
 testable. En revanche, l'installeur Inno Setup s'exécute en silencieux, le système
 de fichiers et le Registre se vérifient par commandes, et `debriefMeet.exe

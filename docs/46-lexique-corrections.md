@@ -30,9 +30,9 @@
 5. **Bonus Voxtral** : la colonne « À écrire » alimente le `context_bias` de la
    transcription Voxtral, **après** les noms d'invités BlueMind (prioritaires), dans la
    limite des 100 jetons existante.
-6. **Défauts pré-remplis** avec le vocabulaire BlueMind (cf. §7) et lexique **actif par
-   défaut** — les installations existantes (clé absente → défaut) en bénéficient
-   immédiatement.
+6. **Tableau par défaut vierge** (cf. §7) et lexique **actif par défaut** — la première
+   ligne saisie dans les Préférences est injectée sans autre réglage. Le vocabulaire
+   d'une organisation (collègues, clients, jargon) ne vit **jamais dans le code**.
 
 Détails actés (mineurs) :
 - Une cellule « Entendu » accepte **plusieurs variantes séparées par des virgules**
@@ -85,7 +85,7 @@ def termes_biais(corrections) -> list[str]      # colonne « À écrire », pour
   d'injection (§5) — la politique (clé d'activation, tableau vide) vit ici, pas chez
   les appelants.
 - `termes_biais(corrections)` : colonne « À écrire » des lignes exploitables, **sans**
-  les précisions entre parenthèses (`ACME (société fictive)` → `MASA`).
+  les précisions entre parenthèses (`ACME (société fictive)` → `ACME`).
   Le découpage en jetons sans espace ni virgule reste l'affaire de
   `_jetons_context_bias` (transcription.py), qui traite déjà ce cas pour les invités.
 
@@ -203,24 +203,21 @@ Contenu de la section (`_section_lexique`, `setMaximumWidth(600)` comme les autr
 
 ## 7. Tableau par défaut
 
-Repris du besoin d'origine (vocabulaire BlueMind — l'app n'est déployée qu'en interne) :
+**Vierge** (`corrections_par_defaut()` rend `[]`) depuis la préparation de la publication
+du dépôt (2026-10-20). Jusque-là, le tableau était pré-rempli avec le vocabulaire interne
+de l'organisation qui a vu naître l'app (prénoms de collègues, clients, sigles métier) :
+c'est précisément le genre de donnée qui n'a rien à faire dans un dépôt public. Le
+vocabulaire se saisit dans Préférences › Lexique et vit dans `config.json`.
 
-| entendu | ecrire |
-|---|---|
-| afida | Acme |
-| aron | Bastien |
-| Blue Moon, Bluemine, Blue Mind | BlueMind |
-| Hotlook, hot look | Outlook |
-| Seppning Club, Second Club | SecNumCloud |
-| Maza, Mazin | ACME (société fictive) |
-| dire-câble, dircad | dircab (directeur de cabinet) |
-| Mappy | MAPI |
-| IMAT | IMAP |
-| SNTP | SMTP |
+Conséquence pour une installation antérieure dont le `config.json` ne porte **pas** la
+clé `lexique_corrections` (jamais touchée dans les Préférences, donc jamais persistée) :
+le tableau apparaît vide après mise à jour — à ressaisir une fois. Une installation qui
+avait modifié le tableau est intacte (la clé existante prime sur le défaut, comme pour
+`prompts`).
 
-(« IMAT, SNTP → IMAP, SMTP » de la capture d'origine est éclaté en 2 lignes : une
-correspondance = un terme cible, sinon le rendu « → IMAP, SMTP » est ambigu et
-`termes_biais` propre.)
+Règle de forme conservée : une correspondance = **un** terme cible (« IMAT, SNTP →
+IMAP, SMTP » s'éclate en 2 lignes), sinon le rendu « → IMAP, SMTP » est ambigu et
+`termes_biais` impropre.
 
 Le chapeau mentionne déjà les sigles à étendre (MTE, MEAE, RIE, DINUM, ANSSI, SNUM,
 RESCOM, UGAP) ? **Non** — ces sigles-là sont *corrects* quand ils sont bien entendus ;

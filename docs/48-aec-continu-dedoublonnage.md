@@ -20,7 +20,7 @@
 > Résultat : quasi toutes les phrases du correspondant sont transcrites **en double**
 > (« Moi » puis « Participants »), la transcription est illisible et le CR Mistral
 > travaille sur un texte pollué (attribution des propos fragilisée, cf. l'incident
-> « Rob/Bastien » du CR un client).
+> « X/Y » d'un CR client du 2026-08-06).
 
 ---
 
@@ -143,7 +143,7 @@ Dans `core/reunion.py`, horodater le **premier échantillon reçu** de chaque pi
 ## 5. Validation
 
 - **Tests unitaires étape A** : paires de segments synthétiques (doublon net,
-  doublon avec variantes de transcription type « Rob calme »/« Bastien calme »,
+  doublon avec variantes de transcription type « Rob calme »/« Bob calme »,
   répétition courte légitime, segments hors fenêtre) — aucun corpus réel en dépôt
   (les transcriptions réelles restent hors git, cf. règle de confidentialité).
 - **Tests unitaires étape B** : écho synthétique (voix = bruit filtré) injecté à
@@ -197,7 +197,7 @@ Risques et garde-fous :
 
 ## 8. Rechute du 2026-08-18 — le délai calé se périme en cours de réunion
 
-Réunion « réunion de chantier » (53 min, micro interne du MacBook Air, sortie sur
+Réunion de chantier avec un client (53 min, micro interne du MacBook Air, sortie sur
 haut-parleurs). À partir de la ligne 260 de la transcription, la voix du
 correspondant apparaît **sur les deux pistes** : le contenu reste complet mais
 l'attribution ne vaut plus rien. Pas de rapport avec la diarisation — aucune n'a
