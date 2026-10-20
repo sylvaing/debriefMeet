@@ -18,6 +18,7 @@ on:
     # n'enregistre un workflow (donc n'accepte un workflow_dispatch) qu'une fois
     # qu'il a tourné sur un événement push de sa branche. À retirer.
     branches: ["claude/sleepy-neumann-8d6867"]
+    paths-ignore: [".github/workflows/diag.yml"]
   workflow_dispatch:
 
 permissions:
