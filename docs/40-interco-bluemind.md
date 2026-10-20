@@ -85,11 +85,10 @@ core/planificateur_reunions.py  # F3 : surveille la réplique, émet les notific
 - **Auth** : header `X-BM-ApiKey: <clé API personnelle>` sur toutes les requêtes.
   Base URL : `https://<serveur>/api` (le suffixe `/api` est **obligatoire** — valider à
   la saisie dans les Préférences).
-- **Lib de référence** (lecture seule, ne PAS l'installer) :
-***REMOVED***
-  la bibliothèque Python interne de BlueMind, accessible aux salariés (dépôt interne).
-  Compléments : le catalogue d'endpoints du projet frère
-  `ENDPOINTS.md du projet frère bluemind-mcp` (mêmes conventions [réf]/[pressenti]).
+- **Lib de référence** (lecture seule, ne PAS l'installer) : la bibliothèque Python
+  interne de BlueMind, accessible aux salariés (dépôt interne, hors de ce projet).
+  Compléments : le catalogue d'endpoints du projet frère `bluemind-mcp` (mêmes
+  conventions [réf]/[pressenti]), lui aussi hors de ce dépôt.
 - Endpoints utilisés ici :
 
 | Op | Endpoint | Confiance |
