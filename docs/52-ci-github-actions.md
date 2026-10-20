@@ -74,6 +74,14 @@ Deux retouches **sans effet sur la VM** (les défauts sont ses chemins d'avant) 
   (celui que `actions/setup-python` met dans le `PATH`).
 - `packaging/windows/telecharger_ffmpeg.cmd` : `FFMPEG_CACHE_DIR` (défaut
   `C:\Users\sylvaing\build\ffmpeg-cache`), pour que `actions/cache` restaure le zip.
+  **Et un ré-épinglage forcé** : le build BtbN du 2026-07-12 répondait **404** au premier
+  run — BtbN purge ses autobuilds datés au bout de quelques semaines, et la VM ne s'en
+  apercevait pas (zip en cache depuis juillet). Épinglé désormais sur
+  `autobuild-2026-10-20-13-08` (`ffmpeg-n8.1.3-18-g46d899d7a0`, même ligne 8.1 ;
+  SHA256 `26634a5e…`). Conséquence pour la VM : son cache a l'ancien SHA → le script
+  retéléchargera au prochain build (c'est son chemin nominal). ⚠️ Le prochain setup
+  Windows embarque donc un ffmpeg 8.1.3 au lieu de 8.1.2 — à passer par la fumée
+  `scripts/fumee_setup_vm.sh` comme n'importe quel build.
 
 `packaging/linux/build_app.sh` n'a pas bougé : il se résout par rapport à son propre
 chemin. `ISCC_EXE` n'a pas eu besoin d'être défini — l'image `windows-latest`
@@ -85,10 +93,31 @@ embarque Inno Setup 6 à l'emplacement que le script cherche déjà.
 |-------|-----|----------|
 | pip (Windows) | `actions/setup-python` `cache: pip` sur `pyproject.toml` | le venv `.venv-build` créé par le script lit le cache pip de l'utilisateur du runner |
 | pip (Linux) | `pip-ubuntu2604-<hash pyproject.toml>` sur `~/.cache/pip` | idem, dans le conteneur |
-| zip ffmpeg BtbN (~100 Mo) | `ffmpeg-btbn-<hash telecharger_ffmpeg.cmd>` | l'URL et le SHA256 sont épinglés dans le script : changer de version ffmpeg change la clé. Le script revérifie le SHA256 à chaque build, cache ou pas. |
+| zip ffmpeg BtbN (~170 Mo) | `ffmpeg-btbn-<hash telecharger_ffmpeg.cmd>` | l'URL et le SHA256 sont épinglés dans le script : changer de version ffmpeg change la clé. Le script revérifie le SHA256 à chaque build, cache ou pas. |
 
 Rien d'autre n'est mis en cache : aucun modèle n'est téléchargé au build, aucun secret
-n'est requis (`GITHUB_TOKEN` suffit pour la release).
+n'est requis (`GITHUB_TOKEN` suffit pour la release et le miroir ci-dessous).
+
+### Miroir du zip ffmpeg — release `outils-build`
+
+Deux mécanismes se cumulent contre la CI Windows : **BtbN purge ses autobuilds datés**
+(404 au premier run) et **GitHub évince un cache inutilisé 7 jours**. Sans parade, tout
+build lancé après une pause de plus d'une semaine échouerait en `[2/6]`. D'où un
+miroir : le zip épinglé est aussi l'**asset `ffmpeg-win64-lgpl.zip` de la release
+`outils-build`** du dépôt (pré-release, tag hors `v*` donc sans effet sur le workflow,
+ce n'est pas une version de l'app). Quand `actions/cache` manque, un step
+`gh release download` dépose cet asset dans le cache **avant** `build_app.cmd` ; le
+script le trouve « déjà en cache », vérifie le SHA256 et continue. Le step est en
+`continue-on-error` : miroir absent (fork, asset pas encore remplacé) → le script
+retombe sur l'URL BtbN et échoue proprement si elle a été purgée. Rien à faire côté VM.
+
+**Ré-épingler ffmpeg** (nouvelle ligne BtbN) = 3 gestes, dans cet ordre :
+télécharger le zip et calculer son SHA256 ; mettre à jour `FFMPEG_URL` + `FFMPEG_SHA256`
+dans `telecharger_ffmpeg.cmd` ; remplacer l'asset :
+
+```bash
+gh release upload outils-build ffmpeg-win64-lgpl.zip --clobber
+```
 
 ## 6. Ce que fait encore le Mac
 
@@ -142,3 +171,12 @@ lancer pour « voir si ça passe » — `make test` en local fait ça en 25 s.
   audio canonique du benchmark — tous deux dans `test_build.py`, que les gates de
   build excluent). Premier `workflow_dispatch` : résultat consigné ci-dessous par
   l'agent au moment du run.
+- **2026-10-20, run 1** (push sur la branche, déclencheur temporaire — GitHub n'enregistre
+  un workflow, donc n'accepte `gh workflow run`, qu'après un premier événement sur sa
+  branche ou sa fusion dans `main`) : job `version` ✅ en 10 s ; `linux` ❌ en 1 min
+  (`git rev-parse` : « dubious ownership », le workspace est monté dans le conteneur
+  avec l'uid du runner et les steps tournent en root → `safe.directory` ajouté) ;
+  `windows` ❌ en 1 min (`[2/6]` : **404 sur le zip BtbN**, cf. §4 et §5 — ré-épinglé +
+  miroir `outils-build`). Tout ce qui précédait passait : setup-python 3.13, Inno Setup
+  déjà sur l'image, `pip install -e .[windows,dev]` en 1 min, apt dans le conteneur en
+  1 min.

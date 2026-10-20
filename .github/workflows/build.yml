@@ -98,10 +98,30 @@ jobs:
       # invalide le cache tout seul. Le script vérifie le SHA256 à chaque build,
       # cache restauré ou non.
       - name: Cache du zip ffmpeg (BtbN)
+        id: cache-ffmpeg
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\ffmpeg-cache\ffmpeg-win64-lgpl.zip
           key: ffmpeg-btbn-${{ hashFiles('packaging/windows/telecharger_ffmpeg.cmd') }}
+
+      # BtbN purge ses autobuilds datés (404 constaté au premier run, docs/52 §9) et
+      # GitHub évince un cache inutilisé 7 jours : sans miroir, tout build après une
+      # pause échouerait. Le zip épinglé est donc aussi un asset de la release
+      # `outils-build` de CE dépôt ; on le dépose dans le cache, le script vérifie
+      # son SHA256 comme d'habitude. continue-on-error : si le miroir manque (fork,
+      # asset pas encore mis à jour après un ré-épinglage), le script retombe sur
+      # l'URL BtbN — et échoue proprement si elle a été purgée.
+      - name: Zip ffmpeg depuis le miroir du dépôt (si cache absent)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = "$env:RUNNER_TEMP\ffmpeg-cache"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          gh release download outils-build --repo $env:GITHUB_REPOSITORY --pattern ffmpeg-win64-lgpl.zip --dir $dir --clobber
+          Get-ChildItem $dir
 
       # Même format que scripts/build_app_windows_vm.sh [1/4] : date UTC puis hash
       # git court → VERSION_COMPLETE = "<__version__>+<AAAAMMJJ>.<hash>".
@@ -170,8 +190,12 @@ jobs:
           key: pip-ubuntu2604-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-ubuntu2604-
 
+      # safe.directory : le workspace est monté dans le conteneur avec l'uid du runner
+      # (1001) alors que les steps tournent en root — git 2.35+ refuse sinon
+      # (« dubious ownership », constaté au premier run).
       - name: BUILD_INFO (date UTC + hash git court)
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           date -u +%Y%m%d > BUILD_INFO
           git rev-parse --short HEAD >> BUILD_INFO
           cat BUILD_INFO
