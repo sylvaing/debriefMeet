@@ -135,4 +135,4 @@ Le seuil de clustering est trop sensible. À calibrer en Phase 5 (paramètre `mi
 - AEC livekit : **disponible** (v1.1.12, win-amd64) ✓
 - Capture AEC simultanée : **ÉCHEC** (bug COM thread — voir BUG 1)
 - Périphérique entrée par défaut : Microphone Array (Realtek, 4 canaux)
-- Périphérique sortie par défaut : écouteurs casque Bluetooth (Bluetooth)
+- Périphérique sortie par défaut : écouteurs Bluetooth

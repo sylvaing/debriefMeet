@@ -1,7 +1,7 @@
 # Correctifs fuites CoreAudio — capture micro & capture système
 
 > **Statut :** ✅ implémenté (2026-07-02) — 530 passed.
-> **Origine :** enquête système menée dans `un dossier hors dépôt` (session Claude dédiée).
+> **Origine :** enquête système menée hors de ce dépôt (session Claude dédiée).
 > Ce document est conçu pour être donné tel quel à une session IA d'implémentation.
 > **Périmètre : 2 correctifs ciblés + 1 test de non-régression chacun. Rien d'autre.**
 
