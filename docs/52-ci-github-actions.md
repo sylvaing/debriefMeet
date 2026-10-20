@@ -209,3 +209,7 @@ chose qu'un tag : ne pas le lancer pour « voir si ça passe » — `make test` 
   `debriefmeet_0.3.0+20261020.dd79dae_amd64.deb`, 127 Mo) ; `windows` **8 min 44**
   (caches pip et ffmpeg restaurés, PySide6 6.11.2, 1518 passed / 8 skipped en 1 min 25,
   setup de 176 Mo). Déclencheur `push` temporaire retiré dans la foulée.
+- **2026-10-20, run 4** ✅ — premier vrai **`workflow_dispatch`** (`gh workflow run
+  build.yml --ref claude/sleepy-neumann-8d6867`, accepté maintenant que le workflow est
+  enregistré) : `linux` **4 min 35** (cache pip restauré), `windows` **7 min 53**,
+  les deux artefacts présents, `release` sauté comme prévu hors tag.
