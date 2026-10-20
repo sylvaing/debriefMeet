@@ -92,7 +92,7 @@ embarque Inno Setup 6 à l'emplacement que le script cherche déjà.
 | Cache | Clé | Pourquoi |
 |-------|-----|----------|
 | pip (Windows) | `actions/setup-python` `cache: pip` sur `pyproject.toml` | le venv `.venv-build` créé par le script lit le cache pip de l'utilisateur du runner |
-| pip (Linux) | `pip-ubuntu2604-<hash pyproject.toml>` sur `~/.cache/pip` | idem, dans le conteneur |
+| pip (Linux) | `pip-ubuntu2604-<hash pyproject.toml>` sur `/root/.cache/pip` (`PIP_CACHE_DIR`) | idem, dans le conteneur — pas `~/.cache/pip` : `HOME=/github/home` y appartient à l'uid du runner et pip refuse un cache dont il n'est pas propriétaire |
 | zip ffmpeg BtbN (~170 Mo) | `ffmpeg-btbn-<hash telecharger_ffmpeg.cmd>` | l'URL et le SHA256 sont épinglés dans le script : changer de version ffmpeg change la clé. Le script revérifie le SHA256 à chaque build, cache ou pas. |
 
 Rien d'autre n'est mis en cache : aucun modèle n'est téléchargé au build, aucun secret
@@ -180,3 +180,20 @@ lancer pour « voir si ça passe » — `make test` en local fait ça en 25 s.
   miroir `outils-build`). Tout ce qui précédait passait : setup-python 3.13, Inno Setup
   déjà sur l'image, `pip install -e .[windows,dev]` en 1 min, apt dans le conteneur en
   1 min.
+- **2026-10-20, run 2** : `windows` ✅ en **9 min 33** — miroir `outils-build` pris
+  (« Zip deja en cache »), SHA256 vérifié, **1518 passed, 8 skipped** en 1 min 41,
+  PyInstaller + ISCC, artefact `debriefMeet-setup-windows` de 177 Mo ; caches pip et
+  ffmpeg sauvegardés. `linux` ❌ : venv et version OK, puis **segfault au milieu de la
+  gate**, dans `tests/test_surveillant.py` (pas le segfault de teardown connu, que le
+  script tolère). Diagnostic par un workflow temporaire (matrice PySide6 6.12.0 /
+  6.11.1, `faulthandler`, `ldd` du plugin multimédia, `QMediaDevices.audioInputs()`
+  seul) : **aucune lib manquante** ; avec **6.11.1**, Qt Multimedia tente PulseAudio,
+  échoue proprement (« pa_context_connect() failed »), rend une liste vide, 8 passed ;
+  avec **6.12.0** (Qt 6.12, FFmpeg 9.0.1 embarqué), le constructeur de `QMediaDevices`
+  **segfaulte** (`surveillant_peripheriques.py:63`). Ce n'est pas propre à la CI :
+  `build_app.sh` recrée `.venv-build` à chaque build, le LXC prendrait aussi 6.12.0
+  (sortie le mois précédent). → **`PySide6>=6.6,<6.12` dans `pyproject.toml`**, les 3
+  OS — Windows avait passé la gate avec 6.12.0 (1518 passed) mais aucun build 6.12 n'a
+  été fumé ; lever la borne = rejouer la gate Linux sans serveur audio. Le Mac (dev) est
+  en 6.11.1, inchangé. Au passage : `PYTHONFAULTHANDLER=1` sur les deux jobs, et le
+  cache pip Linux déplacé en `/root/.cache/pip` (pip le désactivait sous `/github/home`).

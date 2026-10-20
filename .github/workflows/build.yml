@@ -18,7 +18,6 @@ on:
     # n'enregistre un workflow (donc n'accepte un workflow_dispatch) qu'une fois
     # qu'il a tourné sur un événement push de sa branche. À retirer.
     branches: ["claude/sleepy-neumann-8d6867"]
-    paths-ignore: [".github/workflows/diag.yml"]
   workflow_dispatch:
 
 permissions:
@@ -28,6 +27,9 @@ env:
   # Suite de tests sans matériel ni session graphique — sur les 3 OS (CLAUDE.md § Tests).
   QT_QPA_PLATFORM: offscreen
   PYTHONUTF8: "1"
+  # Un crash natif (Qt, PortAudio) dans la gate pytest imprime la pile Python au lieu
+  # d'un « Segmentation fault » nu — c'est ce qui a identifié QMediaDevices (docs/52 §9).
+  PYTHONFAULTHANDLER: "1"
 
 jobs:
   # ── 0. Garde-fou tag ↔ version ────────────────────────────────────────────────
@@ -165,6 +167,9 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
       LANG: C.UTF-8
+      # HOME=/github/home appartient à l'uid du runner, pas à root : pip y DÉSACTIVE
+      # son cache (« not owned by the current user », constaté au run 2).
+      PIP_CACHE_DIR: /root/.cache/pip
     steps:
       # Miroir de scripts/provisionner_lxc_ubuntu.sh [2/5] + [3/5] (mêmes paquets,
       # mêmes raisons — voir les commentaires de ce script), + git/ca-certificates
@@ -187,7 +192,7 @@ jobs:
       - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
+          path: /root/.cache/pip
           key: pip-ubuntu2604-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-ubuntu2604-
 

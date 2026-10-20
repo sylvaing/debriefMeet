@@ -8,7 +8,13 @@ version = "0.3.0"
 description = "Transcription vocale locale — dictée, réunion, journal"
 requires-python = ">=3.11"
 dependencies = [
-    "PySide6>=6.6",
+    # <6.12 : mesuré le 2026-10-20 (docs/52 §9) — avec PySide6 6.12.0 (Qt 6.12, FFmpeg 9
+    # embarqué dans Qt Multimedia), construire un `QMediaDevices` SEGFAULTE sur Linux
+    # quand aucun serveur PulseAudio/PipeWire ne répond (conteneur de build, session
+    # headless), là où 6.11.x échoue proprement (« pa_context_connect() failed », liste
+    # vide). La gate pytest du .deb mourait dans tests/test_surveillant.py. Lever la
+    # borne = rejouer cette gate sur ubuntu:26.04 sans serveur audio.
+    "PySide6>=6.6,<6.12",
     "platformdirs>=4.0",
     "numpy>=1.24",
     "sounddevice>=0.4",
