@@ -2,9 +2,15 @@
 setlocal enableextensions
 REM Build natif du setup Windows debriefMeet (appele depuis build_app_windows_vm.sh).
 REM Ne pas executer manuellement - necessite BUILD_INFO (rsync du script Mac, docs/32).
-set VM_DIR=C:\Users\sylvaing\build\debrief-meet
-cd /d %VM_DIR%
-if errorlevel 1 ( echo ERREUR : impossible de cd vers %VM_DIR% & goto :error )
+REM
+REM Deux variables d'environnement, optionnelles, pour GitHub Actions (docs/52) :
+REM   BUILD_DIR   racine des sources (defaut : le dossier de la VM Proxmox) ;
+REM   PYTHON_EXE  interpreteur Python 3.13 (defaut : le py launcher de la VM ;
+REM               sur un runner, actions/setup-python met "python" dans le PATH).
+if not defined BUILD_DIR set "BUILD_DIR=C:\Users\sylvaing\build\debrief-meet"
+if not defined PYTHON_EXE set "PYTHON_EXE=py -3.13"
+cd /d "%BUILD_DIR%"
+if errorlevel 1 ( echo ERREUR : impossible de cd vers %BUILD_DIR% & goto :error )
 echo [build_app.cmd] Repertoire : %CD%
 
 REM Un seul build depuis docs/45 (plus d'argument edition — les editions complete/lite
@@ -12,7 +18,7 @@ REM de docs/44 ont disparu, le mode distant/local est un reglage utilisateur).
 
 echo [1/6] Creation du venv Python 3.13...
 if exist .venv-build ( rmdir /s /q .venv-build )
-py -3.13 -m venv .venv-build
+%PYTHON_EXE% -m venv .venv-build
 if errorlevel 1 goto :error
 call .venv-build\Scripts\activate.bat
 python -m pip install --upgrade pip

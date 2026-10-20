@@ -12,7 +12,9 @@
 set -euo pipefail
 
 IDENTITY="debriefMeet Local"
-KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+# DEBRIEFMEET_KEYCHAIN (optionnel) : trousseau cible — sur GitHub Actions, un
+# trousseau temporaire créé par le job (docs/52 §6) ; en local, celui de session.
+KEYCHAIN="${DEBRIEFMEET_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 
 # ⚠️ PAS de `-v` (valides seulement) : un cert auto-signé est marqué
 # CSSMERR_TP_NOT_TRUSTED et serait exclu → le script régénérerait une nouvelle

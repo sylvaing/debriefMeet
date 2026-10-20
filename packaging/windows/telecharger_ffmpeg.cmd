@@ -8,10 +8,20 @@ REM Le binaire n'est JAMAIS commite dans le depot (~100 Mo) - telecharge ici,
 REM au moment du build, et verifie par SHA256.
 
 REM ── URL epinglee sur un tag date (pas releases/latest, SHA instable) ──────────
-set FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-12-13-16/ffmpeg-n8.1.2-22-g94138f6973-win64-lgpl-8.1.zip
-set FFMPEG_SHA256=4fac2e7d7de89bb4354d8c661c968c988e3ccb82b96896803cfc133298eeddc6
+REM ATTENTION : BtbN PURGE ses autobuilds dates au bout de quelques semaines — le
+REM build du 2026-07-12 epingle ici repondait 404 le 2026-10-20 (constate par la CI,
+REM docs/52 §9 ; la VM ne s'en apercevait pas, elle a le zip en cache). Le meme zip,
+REM renomme %ZIP_NAME%, est donc MIROITE dans la release GitHub `outils-build` du depot
+REM debriefMeet : la CI le depose dans le cache avant d'appeler ce script, qui ne
+REM retombe sur l'URL BtbN qu'en l'absence du zip. Re-epingler = mettre a jour l'URL,
+REM le SHA256 ET l'asset de la release miroir (docs/52 §5).
+set FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-20-13-08/ffmpeg-n8.1.3-18-g46d899d7a0-win64-lgpl-8.1.zip
+set FFMPEG_SHA256=26634a5e06429c4f51ed08ba518923f928c5e4a49ed0ee62f701e035227b91a7
 
-set CACHE_DIR=C:\Users\sylvaing\build\ffmpeg-cache
+REM FFMPEG_CACHE_DIR (optionnel) : emplacement du zip en cache — sur GitHub Actions
+REM c'est un dossier restaure par actions/cache (docs/52), sur la VM le defaut.
+if not defined FFMPEG_CACHE_DIR set "FFMPEG_CACHE_DIR=C:\Users\sylvaing\build\ffmpeg-cache"
+set "CACHE_DIR=%FFMPEG_CACHE_DIR%"
 set DEST_DIR=%~dp0ffmpeg
 set ZIP_NAME=ffmpeg-win64-lgpl.zip
 
