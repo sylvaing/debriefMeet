@@ -11,7 +11,10 @@ REM ── URL epinglee sur un tag date (pas releases/latest, SHA instable) ─�
 set FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-12-13-16/ffmpeg-n8.1.2-22-g94138f6973-win64-lgpl-8.1.zip
 set FFMPEG_SHA256=4fac2e7d7de89bb4354d8c661c968c988e3ccb82b96896803cfc133298eeddc6
 
-set CACHE_DIR=C:\Users\sylvaing\build\ffmpeg-cache
+REM FFMPEG_CACHE_DIR (optionnel) : emplacement du zip en cache — sur GitHub Actions
+REM c'est un dossier restaure par actions/cache (docs/52), sur la VM le defaut.
+if not defined FFMPEG_CACHE_DIR set "FFMPEG_CACHE_DIR=C:\Users\sylvaing\build\ffmpeg-cache"
+set "CACHE_DIR=%FFMPEG_CACHE_DIR%"
 set DEST_DIR=%~dp0ffmpeg
 set ZIP_NAME=ffmpeg-win64-lgpl.zip
 
