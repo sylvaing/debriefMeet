@@ -5,16 +5,22 @@
 #   - workflow_dispatch : build des deux cibles, binaires dans les artefacts du run
 #     (`gh workflow run build.yml`, cf. docs/52 §3).
 #
-# Les jobs windows/linux rejouent les scripts natifs des machines de build
-# (packaging/windows/build_app.cmd, packaging/linux/build_app.sh) SANS les
-# modifier dans leur logique : mêmes gates pytest bloquantes, mêmes exclusions.
-# Le Mac (.dmg signé, permissions TCC) reste hors CI : `make dmg` en local.
+# Les jobs windows/linux/macos rejouent les scripts natifs des machines de build
+# (packaging/windows/build_app.cmd, packaging/linux/build_app.sh, `make dmg`) SANS
+# les modifier dans leur logique : mêmes gates pytest bloquantes, mêmes exclusions.
+# Le DMG macOS se construit aussi en local (`make dmg`, docs/16) ; en CI il n'est
+# produit que sur un tag, ou à la demande (minutes macOS facturées ×10).
 name: Build
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Construire aussi le DMG macOS (minutes facturées ×10)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -214,11 +220,131 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # ── 3. Release GitHub (tags seulement) ────────────────────────────────────────
+  # ── 3. DMG macOS ──────────────────────────────────────────────────────────────
+  # Même commande qu'en local : `make dmg` (docs/16) — ffmpeg LGPL compilé (mis en
+  # cache), helper Swift SCK, PyInstaller, signature, create-dmg. Runner Apple
+  # Silicon obligatoire (mlx). Seulement sur tag ou à la demande : ×10 en minutes.
+  macos:
+    name: DMG macOS
+    if: github.ref_type == 'tag' || inputs.macos
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Outils Homebrew (create-dmg, pkg-config)
+        run: brew install --quiet create-dmg pkg-config
+
+      # ffmpeg LGPL minimal compilé depuis les sources (opus + ffmpeg, ~10 min) :
+      # mis en cache sur le hash du script, qui épingle versions et SHA256 ;
+      # build_ffmpeg.sh est idempotent et REVALIDE le binaire restauré.
+      - name: Cache du ffmpeg LGPL compilé
+        uses: actions/cache@v4
+        with:
+          path: |
+            packaging/vendor/ffmpeg
+            packaging/vendor/LICENSE-ffmpeg.md
+          key: ffmpeg-macos-${{ runner.arch }}-${{ hashFiles('packaging/build_ffmpeg.sh') }}
+
+      # Identité « debriefMeet Local » : la MÊME qu'en local, pour que TCC conserve
+      # Micro + Enregistrement de l'écran d'un build à l'autre (docs/16). Elle arrive
+      # par deux secrets du dépôt (export .p12 du trousseau de Sylvain, docs/52 §6).
+      # Sans secrets : refus sur un tag (un DMG de release à signature instable
+      # ferait redemander les permissions à chaque version), identité ÉPHÉMÈRE
+      # sinon (créée par creer_certificat.sh dans le trousseau temporaire) — bon pour
+      # vérifier la chaîne, pas pour installer sur un poste.
+      - name: Trousseau temporaire + identité de signature
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          # Trousseau temporaire du job (supprimé en fin de job) : jamais le trousseau
+          # de session du runner. creer_certificat.sh et build_app.sh le lisent via
+          # DEBRIEFMEET_KEYCHAIN, exporté aux steps suivants.
+          KC="$RUNNER_TEMP/debriefmeet-ci.keychain-db"
+          echo "DEBRIEFMEET_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+          KC_PWD="$(uuidgen)"
+          security create-keychain -p "$KC_PWD" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PWD" "$KC"
+          security list-keychains -d user -s "$KC" "$HOME/Library/Keychains/login.keychain-db"
+          if [ -n "$CERT_P12_BASE64" ]; then
+            echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_P12_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/security
+            rm -f "$RUNNER_TEMP/cert.p12"
+            echo "identité stable importée depuis les secrets"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            echo "::error::secrets MACOS_CERT_P12_BASE64 / MACOS_CERT_P12_PASSWORD absents — un DMG de release doit porter l'identité stable (docs/52 §6)"
+            exit 1
+          else
+            echo "::warning::aucun secret de certificat — identité ÉPHÉMÈRE : ce DMG fera redemander les permissions TCC, ne pas le diffuser"
+            bash packaging/creer_certificat.sh
+          fi
+          # Autorise codesign sans boîte de dialogue (il n'y a personne pour cliquer
+          # « Toujours autoriser » sur un runner).
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PWD" "$KC" >/dev/null
+          security find-identity -p codesigning "$KC" | grep "debriefMeet Local"
+
+      # Venv de build attendu par build_app.sh (docs/16 §2) : Python 3.13 + extras
+      # macOS (mlx-whisper, livekit, pyannote) + dev pour la gate.
+      - name: Venv de build (.venv-build)
+        run: |
+          python -m venv .venv-build
+          ./.venv-build/bin/pip install --quiet --upgrade pip
+          ./.venv-build/bin/pip install --quiet -e '.[macos,dev]' pyinstaller
+          ./.venv-build/bin/python --version
+
+      # ffmpeg avant la gate : tests/test_build.py interroge le binaire RÉELLEMENT
+      # livré (muxer segment, filtres, limite d'imbrication — docs/42 §10.4-10.6, les
+      # trois régressions invisibles à `make test`). Helper Swift compilé en ad hoc
+      # pour le même test (build_app.sh le recompile ensuite, signé).
+      - name: ffmpeg LGPL + helper Swift (pour la gate)
+        run: |
+          bash packaging/build_ffmpeg.sh
+          bash helpers/macos/sck-audio/build.sh
+
+      # Gate bloquante, mêmes exclusions que Windows/Linux, SAUF test_build.py qui
+      # tourne ici (c'est le dépôt Mac qu'il teste) moins l'audio canonique du
+      # benchmark, absent d'un clone (docs/08).
+      - name: Suite de tests (bloquant)
+        run: |
+          ./.venv-build/bin/python -m pytest -m "not integration" -q --no-cov \
+            --ignore-glob='tests/test_benchmark_*.py' \
+            --ignore-glob='tests/test_spike_backends_*.py' \
+            --deselect tests/test_build.py::TestBenchmarkBundle::test_audio_canonique_present
+
+      - name: make dmg
+        run: make dmg
+
+      - name: Signature du bundle produit
+        run: codesign -dv --verbose=4 dist/debriefMeet.app 2>&1 | grep -E "Authority|Identifier"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debriefMeet-dmg-macos
+          path: dist/debriefMeet-*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Suppression du trousseau temporaire
+        if: always()
+        run: security delete-keychain "$DEBRIEFMEET_KEYCHAIN" || true
+
+  # ── 4. Release GitHub (tags seulement) ────────────────────────────────────────
   release:
     name: Release GitHub
     if: github.ref_type == 'tag'
-    needs: [version, windows, linux]
+    needs: [version, windows, linux, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -238,12 +364,13 @@ jobs:
           files: |
             artefacts/debriefMeet-setup-*.exe
             artefacts/debriefmeet_*_amd64.deb
+            artefacts/debriefMeet-*.dmg
           fail_on_unmatched_files: true
           body: |
             debriefMeet ${{ needs.version.outputs.version }} — commit `${{ github.sha }}`.
 
             - **Windows** : `debriefMeet-setup-<version>.exe` (installeur Inno Setup, un seul build — mode distant/local au choix dans les Préférences).
             - **Linux (Ubuntu 26.04, amd64)** : `debriefmeet_<version>_amd64.deb` (`sudo apt install ./debriefmeet_*.deb`).
-            - **macOS** : le `.dmg` est construit et signé localement (`make dmg`), puis ajouté à cette release à la main si besoin (`gh release upload`).
+            - **macOS (Apple Silicon)** : `debriefMeet-<version>.dmg` (glisser dans Applications ; signature locale stable, pas de notarisation : clic droit › Ouvrir au premier lancement).
 
             Pas de mise à jour automatique : réinstaller par-dessus l'ancienne version.
