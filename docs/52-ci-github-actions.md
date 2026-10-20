@@ -16,8 +16,8 @@ Un seul fichier, `.github/workflows/build.yml`, quatre jobs :
 | Job | Runner | Rôle | Durée attendue |
 |-----|--------|------|----------------|
 | `version` | `ubuntu-latest` | Lit `__version__` (`src/debrief_meet/__init__.py`) et `version` (`pyproject.toml`), exige qu'ils soient **identiques**, et sur un tag exige `tag == v<__version__>`. Échoue en quelques secondes **avant** les builds. | < 1 min |
-| `windows` | `windows-latest` | Python 3.13 (`actions/setup-python`), Inno Setup 6 (déjà sur l'image, `choco` en secours), `BUILD_INFO`, puis **`packaging\windows\build_app.cmd`** tel quel : venv, `pip install -e .[windows,dev]`, ffmpeg BtbN (SHA256 vérifié), `generer_version.py`, **pytest bloquant**, PyInstaller onedir, ISCC. Artefact `debriefMeet-setup-windows`. | 20-35 min |
-| `linux` | `ubuntu-latest` + conteneur **`ubuntu:26.04`** | Paquets apt de `scripts/provisionner_lxc_ubuntu.sh`, `BUILD_INFO`, puis **`sh packaging/linux/build_app.sh`** tel quel : venv sur le Python système 3.14, `pip install -e .[linux,dev] pyinstaller`, `generer_version.py`, **pytest bloquant** (segfault de teardown toléré par le script, docs/49), PyInstaller, `dpkg-deb`. Artefact `debriefmeet-deb-linux`. | 10-20 min |
+| `windows` | `windows-latest` | Python 3.13 (`actions/setup-python`), Inno Setup 6 (déjà sur l'image, `choco` en secours), `BUILD_INFO`, puis **`packaging\windows\build_app.cmd`** tel quel : venv, `pip install -e .[windows,dev]`, ffmpeg BtbN (SHA256 vérifié, miroir §5), `generer_version.py`, **pytest bloquant**, PyInstaller onedir, ISCC. Artefact `debriefMeet-setup-windows`. | **≈ 9 min** mesurés (caches chauds ou froids) |
+| `linux` | `ubuntu-latest` + conteneur **`ubuntu:26.04`** | Paquets apt de `scripts/provisionner_lxc_ubuntu.sh`, `BUILD_INFO`, puis **`sh packaging/linux/build_app.sh`** tel quel : venv sur le Python système 3.14, `pip install -e .[linux,dev] pyinstaller`, `generer_version.py`, **pytest bloquant** (segfault de teardown toléré par le script, docs/49), PyInstaller, `dpkg-deb`. Artefact `debriefmeet-deb-linux`. | **≈ 5 min** mesurés |
 | `release` | `ubuntu-latest` | **Tags seulement.** Télécharge les deux artefacts et crée la Release GitHub du tag (`softprops/action-gh-release`) avec le `.exe` et le `.deb`, notes minimales. | < 1 min |
 
 Les gates pytest sont **exactement celles des scripts** (mêmes `--ignore`, mêmes
@@ -140,23 +140,30 @@ Windows/Linux seuls, et le corps de la release le dit.
 ## 7. Coût
 
 Dépôt privé : le forfait gratuit GitHub donne **2 000 min/mois**, les minutes Windows
-comptent **×2**, Linux ×1. Un run complet ≈ 30 min Windows (= 60 min facturées) +
-15 min Linux + 1 min de garde-fou/release ≈ **75-80 min facturées**. Soit ~25 runs par
-mois dans le forfait. Un `workflow_dispatch` coûte la même chose qu'un tag : ne pas le
-lancer pour « voir si ça passe » — `make test` en local fait ça en 25 s.
+comptent **×2**, Linux ×1. Mesuré sur les runs du 2026-10-20 : ≈ 9 min Windows
+(= 18 min facturées) + 5 min Linux + 1 min de garde-fou/release ≈ **25 min facturées
+par run**, soit ~80 runs par mois dans le forfait. Un `workflow_dispatch` coûte la même
+chose qu'un tag : ne pas le lancer pour « voir si ça passe » — `make test` en local fait
+ça en 45 s.
 
 ## 8. Checklist du premier run
 
-1. [ ] `make test` vert en local sur la branche (fait le 2026-10-20 : voir §9).
-2. [ ] Branche poussée, `gh workflow run build.yml --ref <branche>`.
-3. [ ] Job `version` : les deux versions lues sont identiques.
-4. [ ] Job `windows` : `[2/6]` télécharge le zip (1ᵉʳ run) et vérifie le SHA256 ;
-   `[4/6]` pytest passe en `offscreen` sur l'image GitHub (la VM tournait avec un
-   bureau — c'est la seule différence d'environnement) ; `[6/6]` ISCC trouvé ;
-   artefact `debriefMeet-setup-windows` présent, nom `debriefMeet-setup-0.3.0+<date>.<hash>.exe`.
-5. [ ] Job `linux` : apt sans question interactive ; pytest passe (ou RC=139 toléré
-   avec `N passed`) ; artefact `debriefmeet-deb-linux` présent.
-6. [ ] 2ᵉ run : les caches pip et ffmpeg sont **restaurés** (ligne « Cache restored »).
+1. [x] `make test` vert en local sur la branche (2026-10-20, §9).
+2. [x] Branche poussée ; `gh workflow run build.yml --ref <branche>` — ⚠️ répond **404
+   tant que le workflow n'est pas enregistré** (premier événement sur sa branche, ou
+   fusion dans `main`) : les runs 1-3 sont passés par un déclencheur `push` temporaire,
+   retiré depuis ; le run 4 est le premier vrai `workflow_dispatch`.
+3. [x] Job `version` : les deux versions lues sont identiques (10 s).
+4. [x] Job `windows` : `[2/6]` prend le zip du miroir et vérifie le SHA256 ; `[4/6]`
+   **1518 passed, 8 skipped** en `offscreen` sur l'image GitHub (la VM tournait avec
+   un bureau — seule différence d'environnement, sans effet) ; `[6/6]` ISCC trouvé
+   sans `choco` ; artefact `debriefMeet-setup-windows` de 176 Mo
+   (`debriefMeet-setup-0.3.0+<date>.<hash>.exe`).
+5. [x] Job `linux` : apt sans question ; **1502 passed, 24 skipped**, RC=139 de
+   teardown toléré par le script ; artefact `debriefmeet-deb-linux` de 127 Mo.
+6. [x] Caches **restaurés** au run suivant côté Windows (pip et ffmpeg, « Cache
+   restored ») ; côté Linux le cache pip se réinitialise à chaque changement de
+   `pyproject.toml` (c'est sa clé), restauré sinon.
 7. [ ] Fumée des binaires produits sur les machines de test habituelles :
    `scripts/fumee_setup_vm.sh` (Windows) et `scripts/fumee_deb_lxc.sh` (Linux) savent
    installer un fichier local — c'est la validation qui compte, la CI ne lance pas
@@ -197,3 +204,8 @@ lancer pour « voir si ça passe » — `make test` en local fait ça en 25 s.
   été fumé ; lever la borne = rejouer la gate Linux sans serveur audio. Le Mac (dev) est
   en 6.11.1, inchangé. Au passage : `PYTHONFAULTHANDLER=1` sur les deux jobs, et le
   cache pip Linux déplacé en `/root/.cache/pip` (pip le désactivait sous `/github/home`).
+- **2026-10-20, run 3** ✅ **tout vert** : `version` 7 s ; `linux` **5 min 07** (PySide6
+  6.11.2, 1502 passed / 24 skipped en 49 s, teardown RC=139 toléré,
+  `debriefmeet_0.3.0+20261020.dd79dae_amd64.deb`, 127 Mo) ; `windows` **8 min 44**
+  (caches pip et ffmpeg restaurés, PySide6 6.11.2, 1518 passed / 8 skipped en 1 min 25,
+  setup de 176 Mo). Déclencheur `push` temporaire retiré dans la foulée.
