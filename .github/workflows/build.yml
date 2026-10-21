@@ -321,12 +321,28 @@ jobs:
       # Gate bloquante, mêmes exclusions que Windows/Linux, SAUF test_build.py qui
       # tourne ici (c'est le dépôt Mac qu'il teste) moins l'audio canonique du
       # benchmark, absent d'un clone (docs/08).
+      # RC=139 toléré UNIQUEMENT si le résumé pytest rapporte des tests passés et aucun
+      # échec : segfault connu au teardown de pytest, APRÈS le rapport (PySide6 /
+      # Python 3.13-3.14, cf. CLAUDE.md et packaging/linux/build_app.sh qui applique
+      # la même règle). Run 7 : 1608 passed puis exit 139 — le build était bon.
       - name: Suite de tests (bloquant)
         run: |
+          set +e
+          TESTS_OUT="$(mktemp)"
           ./.venv-build/bin/python -m pytest -m "not integration" -q --no-cov \
             --ignore-glob='tests/test_benchmark_*.py' \
             --ignore-glob='tests/test_spike_backends_*.py' \
-            --deselect tests/test_build.py::TestBenchmarkBundle::test_audio_canonique_present
+            --deselect tests/test_build.py::TestBenchmarkBundle::test_audio_canonique_present \
+            2>&1 | tee "$TESTS_OUT"
+          RC=${PIPESTATUS[0]}
+          if [ "$RC" -ne 0 ]; then
+            if [ "$RC" -eq 139 ] && grep -qE '[0-9]+ passed' "$TESTS_OUT" \
+                && ! grep -qE '[0-9]+ failed' "$TESTS_OUT"; then
+              echo "::warning::pytest RC=139 (segfault connu au teardown) — tous les tests ont réussi, build non bloqué."
+            else
+              exit "$RC"
+            fi
+          fi
 
       - name: make dmg
         run: make dmg
