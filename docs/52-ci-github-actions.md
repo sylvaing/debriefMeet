@@ -281,3 +281,28 @@ rapide.
   --failed` sur ce run. Si la pénurie persiste, essayer l'étiquette explicite
   `macos-15` à la place de `macos-latest` (même pool arm64, file parfois différente) ;
   `macos-13` est Intel, inutilisable (mlx).
+- **2026-10-21, runs 6→8** (`-f macos=true`, 05:43 → 06:12 UTC) : la pénurie de runners
+  arm64 de la veille n'a pas duré — les trois fois le job macOS a démarré **en quelques
+  secondes**. Deux défauts du job, invisibles tant qu'il n'avait jamais tourné :
+  1. **Run 6** — step « Trousseau temporaire » : `creer_certificat.sh` importait
+     l'identité éphémère dans le **trousseau de session** du runner, puis
+     `set-key-partition-list` échouait (« item could not be found ») sur le trousseau
+     temporaire vide. Cause : `DEBRIEFMEET_KEYCHAIN` était posé via `$GITHUB_ENV`, qui
+     ne vaut que pour les steps **suivants**. Corrigé par un `export` dans le step.
+     Même run : `linux` ❌ sur un **segfault au milieu de la gate**
+     (`test_assistant_mistral.py`, thread QThread sans frame Python, 1526 tests
+     collectés) — requête bien mockée (`@respx.mock`), même code vert la veille et sur
+     les runs 7 et 8 : **intermittent**, non reproduit, à surveiller ; s'il revient,
+     reprendre la méthode du diagnostic 6.12 (§ run 2) sur ce test.
+  2. **Run 7** — gate macOS **1608 passed, 1 skipped** puis `exit 139` : le segfault
+     connu au **teardown** de pytest (CLAUDE.md), que seul `packaging/linux/build_app.sh`
+     tolérait. Le step macOS applique désormais la même règle (139 accepté uniquement
+     avec un résumé « N passed » sans « failed »).
+  3. **Run 8 ✅ — premier DMG produit par la CI** : `macos` 7 min 13 (ffmpeg LGPL
+     restauré du cache, helper Swift compilé, `make dmg`, `create-dmg` hors session
+     graphique OK), bundle signé `Authority=debriefMeet Local` /
+     `Identifier=com.sylvaingarcia.debriefmeet` — identité **éphémère** (pas de
+     secrets posés), donc DMG bon pour vérifier la chaîne, pas pour installer sur un
+     poste (§6.2). Artefacts : `debriefMeet-dmg-macos` **386 Mo**, `-setup-windows`
+     168 Mo, `-deb-linux` 120 Mo, conservés 30 jours. `windows` 8 min 51, `linux`
+     4 min. Correctifs fusionnés dans `main` (PR #2).
