@@ -101,6 +101,37 @@ mais ne peut jamais le transcrire. Détails : [doc 44](docs/44-edition-lite-wind
 
 ---
 
+## Installer le `.dmg` macOS — premier lancement
+
+Au premier lancement d'un `.dmg` **téléchargé** (depuis une Release GitHub ou un
+artefact de la CI), macOS affiche : *« debriefMeet n'a pas pu être ouvert, Apple n'a
+pas pu vérifier qu'il ne contient aucun logiciel malveillant »*, et propose de le
+mettre à la corbeille. **Ne pas le jeter** : l'app est signée avec le certificat local
+du projet, qui n'est pas notarisé par Apple, et macOS met en quarantaine tout fichier
+venu d'Internet. Un build fait sur la machine n'a pas ce marquage, c'est pourquoi il
+se lance directement.
+
+Pour autoriser l'app, une seule fois :
+
+1. Dans la boîte de dialogue, cliquer **Terminé** (pas « Placer dans la corbeille »).
+2. Ouvrir **Réglages Système → Confidentialité et sécurité**.
+3. Descendre jusqu'à la ligne *« debriefMeet a été bloqué pour protéger votre Mac »*
+   et cliquer **Ouvrir quand même**, puis confirmer avec le mot de passe de session.
+4. Relancer debriefMeet depuis le dossier Applications.
+
+Depuis macOS 15, le clic droit → **Ouvrir** ne suffit plus ; il faut passer par les
+Réglages. Alternative en terminal, équivalente :
+
+```bash
+xattr -dr com.apple.quarantine /Applications/debriefMeet.app
+```
+
+Les permissions Micro et Enregistrement de l'écran déjà accordées à une version
+précédente restent valables : tous les builds, locaux comme CI, portent la même
+identité de signature (cf. [doc 16](docs/16-packaging-macos.md), [doc 52](docs/52-ci-github-actions.md) §6).
+
+---
+
 ## Permissions macOS (une fois par machine)
 
 Deux permissions sont demandées automatiquement au premier usage :
