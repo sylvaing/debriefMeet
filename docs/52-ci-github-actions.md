@@ -306,3 +306,14 @@ rapide.
      poste (§6.2). Artefacts : `debriefMeet-dmg-macos` **386 Mo**, `-setup-windows`
      168 Mo, `-deb-linux` 120 Mo, conservés 30 jours. `windows` 8 min 51, `linux`
      4 min. Correctifs fusionnés dans `main` (PR #2).
+- **2026-10-21, run 9** (07:12 UTC, `-f macos=true` sur `main`, **secrets posés** à
+  07:11) : 3 jobs ✅, log « identité stable importée depuis les secrets ». **Preuve
+  mesurée** sur le DMG téléchargé (`debriefMeet-0.3.0+20261021.2cc3c9a.dmg`, 389 Mo) :
+  certificat extrait du bundle par `codesign -d --extract-certificates`, empreinte
+  SHA-256 `AFC05D2E…8220DE` **identique** à celle du trousseau de Sylvain
+  (`security find-certificate -c "debriefMeet Local" -Z`) ; `ffmpeg` embarqué et
+  `SCKAudioCapture` signés par la même Authority. Le nom « debriefMeet Local » ne
+  prouve rien à lui seul (l'identité éphémère du run 8 le portait aussi) : c'est
+  l'empreinte qu'il faut comparer. Un DMG de la CI est donc désormais **installable
+  sur un poste sans redemander Micro / Enregistrement de l'écran**, et un build sur
+  tag passera le garde-fou du job macOS.
