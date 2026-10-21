@@ -271,6 +271,11 @@ jobs:
           # de session du runner. creer_certificat.sh et build_app.sh le lisent via
           # DEBRIEFMEET_KEYCHAIN, exporté aux steps suivants.
           KC="$RUNNER_TEMP/debriefmeet-ci.keychain-db"
+          # $GITHUB_ENV ne vaut que pour les steps SUIVANTS : l'export couvre
+          # creer_certificat.sh appelé plus bas dans CE step (run 6 : l'identité
+          # éphémère partait dans le trousseau de session, puis
+          # set-key-partition-list ne la trouvait pas dans $KC).
+          export DEBRIEFMEET_KEYCHAIN="$KC"
           echo "DEBRIEFMEET_KEYCHAIN=$KC" >> "$GITHUB_ENV"
           KC_PWD="$(uuidgen)"
           security create-keychain -p "$KC_PWD" "$KC"
