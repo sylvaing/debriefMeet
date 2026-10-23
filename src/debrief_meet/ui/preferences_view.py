@@ -3,7 +3,7 @@
 Remplace l'ancienne `FenetrePreferences` (QDialog + onglets + OK/Annuler) par un
 widget embarquable : chaque champ persiste immédiatement (pas de bouton Appliquer).
 
-Depuis docs/45, les 9 sections sont présentes quel que soit le mode de
+Depuis docs/45, les 10 sections sont présentes quel que soit le mode de
 transcription ; c'est la section « Transcription » qui porte le choix du mode
 (distant/local) et les réglages du moteur local, montrés/cachés à chaud. Le mode
 effectif étant figé au démarrage, en changer propose un redémarrage.
@@ -49,7 +49,9 @@ from PySide6.QtWidgets import (
 from debrief_meet.core import mode_transcription, redemarrage
 from debrief_meet.core import raccourcis as raccourcis_core
 from debrief_meet.core.arret_threads import proteger_thread
+from debrief_meet import __version__
 from debrief_meet.core.config import Config
+from debrief_meet.core.verificateur_maj import VerificateurMaj
 from debrief_meet.core.logs import configurer_logs
 from debrief_meet.core.modeles import NOMS_LOGIQUES
 from debrief_meet.core.raccourcis import libelle_modificateurs
@@ -182,9 +184,11 @@ class PreferencesView(QWidget):
         bluemind_reinitialiser_sync: Callable[[], None] | None = None,
         bluemind_declencher_sync: Callable[[], None] | None = None,
         parent: QWidget | None = None,
+        verificateur_maj: VerificateurMaj | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
+        self._verificateur_maj = verificateur_maj
         self._demarrage_auto = demarrage_auto
         self._moteur = moteur
         self._reappliquer_raccourcis = reappliquer_raccourcis
@@ -919,8 +923,57 @@ class PreferencesView(QWidget):
         self._check_notifs.toggled.connect(lambda c: self._definir("notifications", c))
         lay.addWidget(self._check_notifs)
 
+        # Mise à jour automatique (docs/53) — le seul appel réseau que l'app fait sans
+        # action de l'utilisateur hors intercos configurées : débrayable, et dit comme tel.
+        bloc_maj = QVBoxLayout()
+        bloc_maj.setSpacing(6)
+        bloc_maj.addWidget(_libelle_champ("Mises à jour"))
+        self._check_maj = QCheckBox("Vérifier automatiquement les mises à jour (une fois par jour)")
+        self._check_maj.setChecked(bool(self._config.get("maj_verifier_auto")))
+        self._check_maj.toggled.connect(lambda c: self._definir("maj_verifier_auto", c))
+        bloc_maj.addWidget(self._check_maj)
+        ligne_maj = QHBoxLayout()
+        ligne_maj.setSpacing(12)
+        self._btn_maj = QPushButton("Vérifier maintenant")
+        self._btn_maj.setObjectName("secondary")
+        self._btn_maj.clicked.connect(self._verifier_maj_maintenant)
+        self._btn_maj.setEnabled(self._verificateur_maj is not None)
+        ligne_maj.addWidget(self._btn_maj)
+        self._label_maj_statut = QLabel(f"Version installée : {__version__}")
+        self._label_maj_statut.setStyleSheet(f"color: {C.INK400};")
+        ligne_maj.addWidget(self._label_maj_statut, 1)
+        bloc_maj.addLayout(ligne_maj)
+        lay.addLayout(bloc_maj)
+        if self._verificateur_maj is not None:
+            self._verificateur_maj.verification_terminee.connect(self._sur_maj_verifiee)
+            self._verificateur_maj.verification_echouee.connect(self._sur_maj_echec)
+
         lay.addStretch()
         return w
+
+    def _verifier_maj_maintenant(self) -> None:
+        if self._verificateur_maj is None:
+            return
+        if self._verificateur_maj.verifier():
+            self._label_maj_statut.setText("Vérification en cours…")
+        else:
+            self._label_maj_statut.setText("Une vérification est déjà en cours…")
+        self._label_maj_statut.setStyleSheet(f"color: {C.INK400};")
+
+    @Slot(object)
+    def _sur_maj_verifiee(self, version: object) -> None:
+        if version:
+            self._label_maj_statut.setText(
+                f"✓ Version {version} disponible — cliquez sur le badge de la barre d'outils pour l'installer")
+            self._label_maj_statut.setStyleSheet(f"color: {C.ACCENT_INK};")
+        else:
+            self._label_maj_statut.setText(f"✓ À jour ({__version__})")
+            self._label_maj_statut.setStyleSheet(f"color: {C.SUCCESS};")
+
+    @Slot(str)
+    def _sur_maj_echec(self, message: str) -> None:
+        self._label_maj_statut.setText(f"Échec : {message}")
+        self._label_maj_statut.setStyleSheet(f"color: {C.REC};")
 
     def _sur_autostart_toggle(self, coche: bool) -> None:
         try:

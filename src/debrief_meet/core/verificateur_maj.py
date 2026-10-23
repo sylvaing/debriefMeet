@@ -122,6 +122,11 @@ class VerificateurMaj(QObject):
     def en_cours(self) -> bool:
         return self._en_cours
 
+    def est_occupe(self) -> bool:
+        """Enregistrement ou job en cours (fourni par `__main__`) — on ne ferme
+        jamais l'app sous un travail."""
+        return bool(self._est_occupe())
+
     def manifeste(self) -> Manifeste | None:
         return self._manifeste
 
