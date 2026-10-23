@@ -108,6 +108,13 @@ _DEFAUTS: dict[str, Any] = {
     "mistral_modele_cr": MODELE_CR_DEFAUT,
     "mistral_duree_max_min": 180,
     "mistral_confidentialite_acceptee": False,
+    # Mise à jour automatique (docs/53) — vérification du manifeste signé de la
+    # Release GitHub 30 s après le lancement puis toutes les 24 h. Clés nouvelles :
+    # pas de migration (une config antérieure reçoit les défauts).
+    "maj_verifier_auto": True,
+    "maj_derniere_verification": "",   # ISO 8601 UTC, "" = jamais
+    "maj_version_disponible": "",      # "" = à jour ; sinon le badge est posé dès le lancement, même hors ligne
+    "maj_notes_url": "",
 }
 
 
