@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -862,3 +864,108 @@ def test_delai_de_grace_avant_de_retrograder(monkeypatch, horloge):
     micro.recuperer_echantillons()
 
     assert micro._host_api_prefere == "WASAPI"
+
+
+# ── Fermeture bloquée (docs/16 §5.7) ──────────────────────────────────────────
+# Terrain du 2026-10-23 : `stream.stop()` interbloqué avec le thread d'E/S de
+# CoreAudio (PortAudio#1174) — micro resté ouvert après la réunion, aucune ligne de
+# log. Les tests simulent ce `stop()` qui ne revient pas et portent sur l'EFFET :
+# ce que le log dit, et si le refresh PortAudio (un `Pa_Terminate`, qui buterait sur
+# le même verrou depuis le thread appelant — l'UI) est bien évité.
+
+class _FauxStreamBloque(_FauxStream):
+    """`stop()` ne revient qu'une fois `liberer` posé (toujours posé en fin de test)."""
+
+    def __init__(self, *args, liberer, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._liberer = liberer
+
+    def stop(self):
+        self._liberer.wait(timeout=10)
+
+
+@pytest.fixture()
+def flux_bloque(micro_sans_warmup, monkeypatch):
+    """Micro démarré sur un flux dont l'arrêt reste bloqué jusqu'à la fin du test."""
+    faux = _FauxSounddevice(index_valide=1)
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    liberer = threading.Event()
+    ouvrir = faux.InputStream
+
+    def ouvrir_bloquant(**kwargs):
+        s = ouvrir(**kwargs)
+        bloque = _FauxStreamBloque(s.device, s.samplerate, evenements=faux.evenements,
+                                   liberer=liberer)
+        faux.streams_ouverts[-1] = bloque
+        return bloque
+
+    monkeypatch.setattr(faux, "InputStream", ouvrir_bloquant)
+    micro_sans_warmup.demarrer(1)
+    yield micro_sans_warmup, faux
+    liberer.set()
+
+
+def _attendre_log(caplog, fragment, delai_s=2.0):
+    fin = time.monotonic() + delai_s
+    while time.monotonic() < fin:
+        if any(fragment in r.getMessage() for r in caplog.records):
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_fermeture_bloquee_journalise_un_warning(flux_bloque, monkeypatch, caplog):
+    micro, _ = flux_bloque
+    monkeypatch.setattr(CaptureMicroSounddevice, "DELAI_FERMETURE_S", 0.0)
+    monkeypatch.setattr(CaptureMicroSounddevice, "ALERTE_FERMETURE_S", 0.05)
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.arreter()
+        assert _attendre_log(caplog, "Flux micro toujours pas fermé"), (
+            "un arrêt bloqué doit laisser une trace : sans elle, le seul symptôme "
+            "est la pastille orange")
+
+
+def test_fermeture_normale_ne_journalise_aucun_warning(micro_sans_warmup, monkeypatch, caplog):
+    """Contre-épreuve : sans elle, le WARNING ci-dessus ne prouverait rien."""
+    faux = _FauxSounddevice(index_valide=1)
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    monkeypatch.setattr(CaptureMicroSounddevice, "DELAI_FERMETURE_S", 0.0)
+    monkeypatch.setattr(CaptureMicroSounddevice, "ALERTE_FERMETURE_S", 0.05)
+    micro_sans_warmup.demarrer(1)
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro_sans_warmup.arreter()
+        assert not _attendre_log(caplog, "Flux micro toujours pas fermé", delai_s=0.3)
+    assert faux.streams_ouverts[-1].closed is True
+
+
+def test_demarrer_saute_le_refresh_si_lancien_flux_est_bloque(flux_bloque, monkeypatch, caplog):
+    """Le refresh (`sd._terminate`) se bloquerait sur le verrou qui retient l'ancien
+    flux : la réunion suivante figerait l'UI au lieu de seulement démarrer."""
+    micro, faux = flux_bloque
+    monkeypatch.setattr(CaptureMicroSounddevice, "DELAI_FERMETURE_S", 0.0)
+    monkeypatch.setattr(CaptureMicroSounddevice, "ATTENTE_FERMETURE_S", 0.05)
+    micro.arreter()
+    faux.evenements.clear()
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet"):
+        micro.demarrer(1)
+
+    assert "terminate" not in faux.evenements
+    assert faux.evenements[-1] == "open", "le nouveau flux doit quand même s'ouvrir"
+    assert any("refresh PortAudio sauté" in r.getMessage() for r in caplog.records)
+
+
+def test_demarrer_rafraichit_toujours_apres_une_fermeture_normale(micro_sans_warmup, monkeypatch):
+    """Contre-épreuve : le refresh de docs/25 (hot-plug) ne doit sauter QUE sur blocage."""
+    faux = _FauxSounddevice(index_valide=1)
+    monkeypatch.setitem(sys.modules, "sounddevice", faux)
+    monkeypatch.setattr(CaptureMicroSounddevice, "DELAI_FERMETURE_S", 0.0)
+    micro_sans_warmup.demarrer(1)
+    micro_sans_warmup.arreter()
+    faux.evenements.clear()
+
+    micro_sans_warmup.demarrer(1)
+
+    assert faux.evenements.index("terminate") < faux.evenements.index("open")

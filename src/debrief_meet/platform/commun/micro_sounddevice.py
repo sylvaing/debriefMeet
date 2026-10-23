@@ -34,6 +34,15 @@ class CaptureMicroSounddevice(CaptureMicro):
     WARMUP_S = 0.2  # secondes à jeter après ouverture du flux
     DELAI_FERMETURE_S = 0.3  # délai avant fermeture physique du flux
 
+    # Fermeture physique qui ne revient pas (docs/16 §5.7) : la PortAudio 19.7.0 de
+    # sounddevice peut s'interbloquer dans `stream.stop()` avec le thread d'E/S de
+    # CoreAudio — le micro reste alors ouvert (pastille orange) jusqu'à la mort du
+    # process, et rien ne le débloque de l'intérieur. Corrigé à la source dans l'app
+    # livrée (dylib recompilée avec PortAudio#1175) ; ces deux délais n'en sont que le
+    # filet : rendre une rechute visible dans le log, et ne pas l'aggraver.
+    ALERTE_FERMETURE_S = 5.0   # au-delà, WARNING « micro non libéré »
+    ATTENTE_FERMETURE_S = 2.0  # attente max de la fermeture avant un refresh PortAudio
+
     # Comblement des trous de capture (docs/48 §8) : PortAudio peut PERDRE des
     # échantillons quand le callback est affamé (le wrapper Python attend le GIL
     # tenu par le MainThread — pousser AEC ~0,2 s/tranche, upload Mistral, UI —
@@ -215,15 +224,27 @@ class CaptureMicroSounddevice(CaptureMicro):
                 callback=self._callback,
             )
 
-    def _attendre_fermeture_differee(self) -> None:
+    def _attendre_fermeture_differee(self) -> bool:
         """Attend la fermeture physique d'un flux confié à `arreter()` (fermeture
         différée de `DELAI_FERMETURE_S`) avant de rafraîchir PortAudio — un refresh
-        avec un flux encore ouvert laisse PortAudio dans un état indéfini (cf. docs/25)."""
+        avec un flux encore ouvert laisse PortAudio dans un état indéfini (cf. docs/25).
+
+        Rend False si la fermeture n'est toujours pas revenue : l'appelant ne doit
+        alors PAS rafraîchir. `sd._terminate()` est un `Pa_Terminate`, qui ferme les
+        flux encore ouverts — il buterait sur le verrou CoreAudio qui retient
+        `_fermer_flux` et figerait le thread appelant, c'est-à-dire l'UI (docs/16 §5.7)."""
         self._fermer_event.set()  # réveille _fermer_flux immédiatement
         t = self._thread_fermeture
         if t is not None and t.is_alive():
-            t.join(timeout=2.0)
+            t.join(timeout=self.ATTENTE_FERMETURE_S)
+            if t.is_alive():
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Ancien flux micro toujours pas fermé — refresh PortAudio sauté "
+                    "(Pa_Terminate se bloquerait sur le même verrou CoreAudio)")
+                return False
         self._thread_fermeture = None
+        return True
 
     @staticmethod
     def _rafraichir_portaudio(sd) -> None:
@@ -262,8 +283,8 @@ class CaptureMicroSounddevice(CaptureMicro):
             self._silence_comble_s = 0.0
             self._reinitialiser_suivi_horodatage()
 
-        self._attendre_fermeture_differee()
-        self._rafraichir_portaudio(sd)
+        if self._attendre_fermeture_differee():
+            self._rafraichir_portaudio(sd)
 
         self._stream = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(self._stream)
@@ -301,8 +322,8 @@ class CaptureMicroSounddevice(CaptureMicro):
         with self._verrou:
             preserve = list(self._buffer)
 
-        self._attendre_fermeture_differee()
-        self._rafraichir_portaudio(sd)
+        if self._attendre_fermeture_differee():
+            self._rafraichir_portaudio(sd)
 
         nouveau = self._ouvrir_flux(sd, index_peripherique)
         self._sr_flux = self._taux_natif(nouveau)
@@ -350,6 +371,11 @@ class CaptureMicroSounddevice(CaptureMicro):
                 target=self._fermer_flux, args=(stream,), daemon=True
             )
             self._thread_fermeture.start()
+            alerte = threading.Timer(
+                self.ALERTE_FERMETURE_S, self._alerter_si_non_ferme,
+                args=(self._thread_fermeture,))
+            alerte.daemon = True
+            alerte.start()
 
     def terminer(self) -> None:
         """Fermeture propre à la sortie de l'application."""
@@ -362,6 +388,16 @@ class CaptureMicroSounddevice(CaptureMicro):
                 stream.close()
             except Exception:
                 pass
+
+    def _alerter_si_non_ferme(self, thread: threading.Thread) -> None:
+        """Un thread bloqué dans `stream.stop()` ne peut rien journaliser lui-même : c'est
+        ce minuteur qui constate. Sans lui, le seul symptôme était la pastille orange."""
+        if thread.is_alive():
+            import logging
+            logging.getLogger(__name__).warning(
+                "Flux micro toujours pas fermé %.0f s après l'arrêt — interblocage "
+                "CoreAudio probable (docs/16 §5.7) : le micro reste ouvert jusqu'au "
+                "redémarrage de l'app", self.ALERTE_FERMETURE_S)
 
     def _fermer_flux(self, stream) -> None:
         # Attend le délai normal, ou se réveille tôt si terminer() est appelé.
