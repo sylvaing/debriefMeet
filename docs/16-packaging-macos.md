@@ -36,9 +36,11 @@ Décisions actées (utilisateur) :
 
 - **Cible** : macOS **14.4+**, **arm64** uniquement.
 - **Bundle identifier** (définitif, ne doit **jamais** changer) : `com.sylvaingarcia.debriefmeet`.
-- **Pas de mise à jour distante / auto-update** en v1. **Pas de check de version**.
-  La MAJ = l'utilisateur **retélécharge le `.dmg`** et glisse la nouvelle `.app`
-  par-dessus l'ancienne dans `/Applications`.
+- ~~Pas de mise à jour distante / auto-update en v1. Pas de check de version.~~
+  **Révisé le 2026-10-23 (docs/53)** : vérification quotidienne du manifeste signé de
+  la Release, et remplacement de la `.app` dans `/Applications` depuis un zip publié
+  par la CI (même identité de signature ⇒ permissions TCC conservées). La MAJ
+  manuelle (retélécharger le `.dmg`) reste possible.
 - **Poids des modèles non embarqués** : mlx-whisper et pyannote les téléchargent à
   la volée (onboarding HF déjà en place — cf. [`13`](13-diarization-onboarding.md)).
 - **Pas de notarisation** (post-v1) : signature **auto-signée locale stable**.

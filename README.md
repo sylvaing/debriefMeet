@@ -39,8 +39,17 @@ sur une **Release** (tag `v*`), ou dans les **artefacts** d'un run lancé à la 
 | Windows 10/11 x64 | `debriefMeet-setup-<version>.exe` | double-cliquer ; met à jour une version existante en place |
 | Ubuntu 26.04 amd64 | `debriefmeet_<version>_amd64.deb` | `sudo apt install ./debriefmeet_<version>_amd64.deb` (installe `ffmpeg` et les dépendances) |
 
-Pas de mise à jour automatique : on réinstalle le nouveau fichier par-dessus. La
-config et les réunions sont conservées.
+**Mise à jour automatique depuis 0.4.0** ([doc 53](docs/53-mise-a-jour-automatique.md)) :
+l'application vérifie une fois par jour (30 s après le lancement, puis toutes les 24 h)
+s'il existe une Release plus récente — un `manifest.json` signé ed25519, vérifié avec
+la clé publique embarquée. Si oui : notification et badge « Mise à jour X disponible »
+à côté du numéro de version ; un clic télécharge le binaire (SHA256 vérifié), ferme
+l'app et lance l'installation (Windows : le setup en silencieux ; macOS : remplacement
+de l'app dans Applications). Sur Linux, le clic ouvre la page de la release : on
+réinstalle le `.deb`. C'est le seul appel réseau fait sans action de l'utilisateur hors
+intercos configurées ; il se désactive dans Préférences › Général › Mises à jour. La
+config et les réunions sont conservées. Les versions antérieures à 0.4.0 se
+réinstallent à la main, une dernière fois.
 
 ### macOS — premier lancement d'un `.dmg` téléchargé
 
@@ -130,7 +139,11 @@ PySide6 au teardown de l'interpréteur, sans rapport avec le résultat des tests
 
 Chaque build rejoue la suite de tests et **refuse de produire un binaire si elle est
 rouge**. Le tag d'une release doit être égal à la version déclarée dans
-`pyproject.toml` et `src/debrief_meet/__init__.py`.
+`pyproject.toml` et `src/debrief_meet/__init__.py` (`v0.4.0`, ou `v0.4.0-rc1` pour une
+prerelease invisible des postes). Sur un tag, le job `release` renomme les assets sans
+`+date.hash`, produit le zip macOS et un `manifest.json` signé par le secret
+`MAJ_CLE_PRIVEE_PEM`, vérifié avec la clé publique embarquée dans l'app avant
+publication — [doc 53](docs/53-mise-a-jour-automatique.md).
 
 ---
 
