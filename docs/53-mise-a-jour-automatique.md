@@ -74,10 +74,20 @@ tag v0.4.0 ──► version ──► windows / linux / macos ──► release
   pas l'API). Sémantique GitHub : *dernière release non-prerelease, non-draft, triée
   par `created_at`*, et `created_at` est **la date du commit taggé**. Conséquence :
   ne jamais tagger une release sur un commit antérieur à la précédente.
-- **Prerelease** : un tag `v0.4.0-rc1` est accepté par le garde-fou `version` et produit
-  une release `prerelease: true`, ignorée par `latest` (aucun poste ne la voit), testable
-  en pointant l'app dessus via `DEBRIEFMEET_MAJ_URL` (§6). Nettoyage :
-  `gh release delete v0.4.0-rc1 --cleanup-tag --yes`.
+- **Prerelease** : le tag `vX.Y.Z-rcN` exige `__version__ = "X.Y.ZrcN"`, et
+  `vX.Y.Z` exige `"X.Y.Z"` (`packaging/verifier_tag_version.py`, appelé par le job
+  `version`). Il produit une release `prerelease: true`, ignorée par `latest` : aucun
+  poste ne la voit. On la teste en pointant l'app dessus via `DEBRIEFMEET_MAJ_URL`
+  (§6). Nettoyage : `gh release delete vX.Y.Z-rcN --cleanup-tag --yes`.
+  ⚠️ **Une rc porte son propre numéro.** C'est ce qui la rend plus ancienne que sa
+  finale au sens PEP 440 (`0.4.1rc1 < 0.4.1`), donc remplacée par la mise à jour
+  automatique. La `v0.4.0-rc1` du 2026-10-23 avait été construite avec `"0.4.0"` (le
+  garde-fou acceptait alors n'importe quel `-rcN`) : elle se présentait comme la finale,
+  et l'app installée répondait « à jour (0.4.0) » face à la vraie `v0.4.0`. Seules ces
+  deux formes sont admises, car chacune a sa traduction par OS :
+  - **Inno** : `VersionInfoVersion` ne garde que les entiers (`0.4.1.0`) ;
+  - **Info.plist** : `CFBundle*Version` aussi (`0.4.1`), l'app lisant `__version__` ;
+  - **Debian** : `0.4.1~rc1`, car sans le tilde dpkg classe la rc **après** la finale.
 - **Dispatch** : le job `manifeste` (dispatch seulement) rejoue toute la chaîne sauf
   l'upload et dépose `manifest.json`/`manifest.sig` en artefact.
 
@@ -172,7 +182,10 @@ dernière réinstallation manuelle, comme pour 0.4.0).
   avec `python -m http.server` servant un manifeste signé (via
   `publier_manifeste.sh` et `MAJ_CLE_PRIVEE_PEM`) et le zip de `make dmg`. Le script
   shell macOS peut aussi être rejoué seul sur une fausse `.app`.
-- **Prerelease** : tag `v0.4.0-rc1`, puis `DEBRIEFMEET_MAJ_URL=https://github.com/sylvaing/debriefMeet/releases/download/v0.4.0-rc1/manifest.json`.
+- **Prerelease** : `__version__` (et `pyproject.toml`) à `"X.Y.ZrcN"`, tag
+  `vX.Y.Z-rcN`, puis `DEBRIEFMEET_MAJ_URL=https://github.com/sylvaing/debriefMeet/releases/download/vX.Y.Z-rcN/manifest.json`.
+  Pour la finale, repasser à `"X.Y.Z"` avant de tagger `vX.Y.Z` : la rc installée se
+  verra alors proposer la finale par `releases/latest`.
 
 ## 7. Pièges mesurés ou anticipés
 

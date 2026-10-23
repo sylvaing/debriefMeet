@@ -19,6 +19,9 @@ SRC = os.path.join(ROOT, "src")
 # Version lue depuis le paquet (source unique de vérité).
 _init = open(os.path.join(SRC, "debrief_meet", "__init__.py"), encoding="utf-8").read()
 VERSION = re.search(r'__version__\s*=\s*"([^"]+)"', _init).group(1)
+# Info.plist : CFBundle*Version = entiers séparés par des points. Une rc ("0.4.1rc1",
+# docs/53 §6) n'y garde que sa partie numérique ; l'app lit __version__, pas le plist.
+VERSION_PLIST = re.match(r"\d+(?:\.\d+)*", VERSION).group(0)
 
 BUNDLE_ID = "com.sylvaingarcia.debriefmeet"
 ASSETS = os.path.join(SRC, "debrief_meet", "ui", "assets")
@@ -154,12 +157,12 @@ app = BUNDLE(
     name="debriefMeet.app",
     icon=ICONE,
     bundle_identifier=BUNDLE_ID,
-    version=VERSION,
+    version=VERSION_PLIST,
     info_plist={
         "CFBundleName": "debriefMeet",
         "CFBundleDisplayName": "debriefMeet",
-        "CFBundleShortVersionString": VERSION,
-        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": VERSION_PLIST,
+        "CFBundleVersion": VERSION_PLIST,
         "LSMinimumSystemVersion": "14.4",
         "LSUIElement": True,  # app barre de menus, pas d'icône Dock
         "NSHighResolutionCapable": True,

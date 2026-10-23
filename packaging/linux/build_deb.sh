@@ -26,6 +26,9 @@ ICONE="$RACINE/src/debrief_meet/ui/assets/icons/app-icon-512.png"
 # "0.3.0+20260813.abc1234" est une syntaxe de version Debian valide).
 VERSION="$(sed -n 's/^VERSION_COMPLETE = "\(.*\)"$/\1/p' "$RACINE/src/debrief_meet/_version.py")"
 [ -n "$VERSION" ] || { echo "✗ VERSION_COMPLETE introuvable dans _version.py — lancer generer_version.py" >&2; exit 1; }
+# Une rc ("0.4.1rc1+…", docs/53 §6) s'écrit "0.4.1~rc1+…" en Debian : sans le tilde,
+# dpkg classe 0.4.1rc1 APRÈS 0.4.1 et verrait la finale comme une rétrogradation.
+VERSION="$(printf '%s' "$VERSION" | sed -E 's/^([0-9][0-9.]*)(rc[0-9]+)/\1~\2/')"
 
 PAQUET="debriefmeet_${VERSION}_amd64"
 STAGING="$RACINE/build/deb/$PAQUET"

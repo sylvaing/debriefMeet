@@ -770,9 +770,12 @@ class TestMiseAJourPackaging:
         run_release = next(s["run"] for s in jobs["release"]["steps"] if "publier_manifeste.sh" in s.get("run", ""))
         assert run_dispatch.split()[:2] == run_release.split()[:2]
 
-    def test_version_accepte_les_tags_rc(self):
+    def test_version_verifie_le_tag_par_le_script_teste(self):
+        """La règle tag ↔ __version__ vit dans verifier_tag_version.py (testé à part) :
+        le workflow doit l'appeler sur un tag, sans regex parallèle qui divergerait."""
         run = self._jobs()["version"]["steps"][1]["run"]
-        assert "(-rc[0-9]+)?$" in run
+        assert 'python3 packaging/verifier_tag_version.py "$init" "$REF_NAME"' in run
+        assert "-rc[0-9]" not in run
 
     def test_publier_manifeste_renomme_sans_plus_puis_verifie(self):
         contenu = self.PUBLIER_SH.read_text(encoding="utf-8")
@@ -1057,6 +1060,30 @@ class TestBenchmarkBundle:
         res = verifier_wheels("windows", legers)
         manquants = [p for p, ok in res.items() if not ok]
         assert not manquants, f"Sans wheel win_amd64 : {manquants}"
+
+
+class TestVersionRcParOs:
+    """Une rc (`__version__ = "0.4.1rc1"`, docs/53 §6) traduite dans chaque format OS."""
+
+    def test_info_plist_ne_porte_que_des_entiers(self):
+        spec = (ROOT / "packaging" / "debriefMeet.spec").read_text(encoding="utf-8")
+        assert '"CFBundleShortVersionString": VERSION_PLIST' in spec
+        assert '"CFBundleVersion": VERSION_PLIST' in spec
+        import re
+        motif = re.search(r'VERSION_PLIST = re\.match\(r"([^"]+)", VERSION\)', spec).group(1)
+        assert re.match(motif, "0.4.1rc1").group(0) == "0.4.1"
+
+    @pytest.mark.parametrize("complete, attendu", [
+        ("0.4.1rc1+20261023.abc1234", "0.4.1~rc1+20261023.abc1234"),
+        ("0.4.1+20261023.abc1234", "0.4.1+20261023.abc1234"),
+    ])
+    def test_deb_ecrit_la_rc_avec_un_tilde(self, complete, attendu):
+        """Sans tilde, dpkg classe 0.4.1rc1 APRÈS 0.4.1. On exécute la ligne réelle."""
+        script = (ROOT / "packaging" / "linux" / "build_deb.sh").read_text(encoding="utf-8")
+        ligne = next(l for l in script.splitlines() if l.startswith('VERSION="$(printf'))
+        sortie = subprocess.run(["bash", "-c", f'VERSION="{complete}"; {ligne}; printf %s "$VERSION"'],
+                                capture_output=True, text=True, check=True).stdout
+        assert sortie == attendu
 
 
 class TestSpecLinux:

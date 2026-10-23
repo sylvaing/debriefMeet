@@ -105,3 +105,8 @@ def test_version_numerique_complete_avec_des_zeros():
     assert mod.version_numerique("0.2.0") == "0.2.0.0"
     assert mod.version_numerique("1.0") == "1.0.0.0"
     assert mod.version_numerique("1.2.3.4") == "1.2.3.4"
+
+
+def test_version_numerique_d_une_rc_ne_garde_que_les_entiers():
+    """`VersionInfoVersion` d'Inno Setup refuse « 0.4.1rc1.0 » (docs/53 §6)."""
+    assert _charger_module().version_numerique("0.4.1rc1") == "0.4.1.0"

@@ -61,12 +61,12 @@ jobs:
             echo "::error::__version__ ($init) et pyproject.toml ($pyproj) divergent — aligner les deux avant de tagger"
             exit 1
           fi
-          # `v<version>` ou `v<version>-rcN` : une rc produit une PRERELEASE (job release),
-          # ignorée par `releases/latest` — donc invisible des postes installés, mais
-          # testable via DEBRIEFMEET_MAJ_URL (docs/53 §6).
-          if [ "$REF_TYPE" = "tag" ] && ! printf '%s' "$REF_NAME" | grep -qE "^v${init}(-rc[0-9]+)?$"; then
-            echo "::error::le tag $REF_NAME ne correspond pas à __version__ = $init (attendu : v$init ou v$init-rcN)"
-            exit 1
+          # `vX.Y.Z` ⇔ __version__ "X.Y.Z" ; `vX.Y.Z-rcN` ⇔ "X.Y.ZrcN". Une rc produit
+          # une PRERELEASE (job release), ignorée par `releases/latest`, et porte son
+          # propre numéro : sinon elle se présente comme la finale et la mise à jour
+          # automatique ne la remplace jamais (v0.4.0-rc1, 2026-10-23 — docs/53 §6).
+          if [ "$REF_TYPE" = "tag" ]; then
+            python3 packaging/verifier_tag_version.py "$init" "$REF_NAME"
           fi
           echo "version=$init" >> "$GITHUB_OUTPUT"
 

@@ -47,8 +47,9 @@ def lire_build_info(chemin: Path) -> tuple[str, str]:
 
 
 def version_numerique(version: str) -> str:
-    """"0.2.0" → "0.2.0.0" : `VersionInfoVersion` (Inno Setup) exige 4 composants."""
-    parties = version.split(".")
+    """"0.2.0" → "0.2.0.0" : `VersionInfoVersion` (Inno Setup) exige 4 composants
+    ENTIERS — une rc ("0.4.1rc1", docs/53 §6) n'en garde que la partie numérique."""
+    parties = re.match(r"\d+(?:\.\d+)*", version).group(0).split(".")
     while len(parties) < 4:
         parties.append("0")
     return ".".join(parties[:4])
