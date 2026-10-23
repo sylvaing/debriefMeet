@@ -26,5 +26,15 @@ OUT="$ROOT/dist/debriefMeet-$VERSION.dmg"
 rm -f "$OUT"
 info "création de ${OUT}…"
 create-dmg --volname "debriefMeet" --app-drop-link 450 180 "$OUT" "$APP"
-
 info "OK : $OUT"
+
+# Zip de l'app pour la mise à jour automatique (core/mise_a_jour, docs/53) — `ditto`
+# et non zip(1) : liens symboliques des frameworks Qt et bits exécutables préservés,
+# signature intacte ; --keepParent pour que l'archive contienne « debriefMeet.app/ »
+# à la racine (attendu par le script de remplacement) ; --sequesterRsrc isole les
+# éventuelles resource forks dans __MACOSX. Même VERSION que le DMG.
+ZIP="$ROOT/dist/debriefMeet-$VERSION.zip"
+rm -f "$ZIP"
+info "création de ${ZIP}…"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+info "OK : $ZIP"

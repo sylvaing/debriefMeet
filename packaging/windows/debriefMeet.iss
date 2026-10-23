@@ -32,6 +32,10 @@ OutputDir=..\..\dist
 ; nom strictement identique des deux côtés : Inno détecte l'app en cours et propose
 ; de la fermer avant d'écraser ses fichiers.
 AppMutex=debriefMeet-instance
+; Deux setups simultanés (mise à jour automatique lancée pendant qu'une install
+; manuelle tourne encore) : le second affiche « Setup is currently running » et
+; sort, au lieu de copier par-dessus le premier (docs/53).
+SetupMutex=debriefMeet-setup-instance
 CloseApplications=yes
 RestartApplications=no
 SetupIconFile=debriefMeet.ico
@@ -67,7 +71,13 @@ Source: "..\..\dist\debriefMeet\*"; DestDir: "{app}"; Flags: recursesubdirs repl
 Name: "{userstartmenu}\{#MonAppNom}"; Filename: "{app}\debriefMeet.exe"
 
 [Run]
+; Interactif : case « Lancer debriefMeet » de la page finale.
 Filename: "{app}\debriefMeet.exe"; Description: "Lancer {#MonAppNom}"; Flags: postinstall nowait skipifsilent
+; Mise à jour automatique (core/mise_a_jour, docs/53) : le setup est lancé en
+; /SILENT /AUTOUPDATE=1 par l'app elle-même, une fois morte — on la relance sans page
+; finale. UNIQUEMENT dans ce cas : une install /SILENT lancée par un admin ou une
+; GPO ne relance rien (EstMiseAJourAuto, section de code plus bas).
+Filename: "{app}\debriefMeet.exe"; Flags: nowait; Check: EstMiseAJourAuto
 
 ; ── Désinstallation complète sauf données utilisateur (D4, docs/32 §4) ──────────
 ;
@@ -91,6 +101,13 @@ Type: filesandordirs; Name: "{localappdata}\debriefMeet"
 ; uninsdeletevalue ne suffit pas (Inno ne retire que ce qu'IL a créé à l'install).
 ; On la supprime donc explicitement au désinstall, qu'elle existe ou non.
 [Code]
+// /AUTOUPDATE=1 est posé par core/mise_a_jour.PARAM_AUTOUPDATE (invariant inter-fichiers
+// figé par tests/test_build.py). {param:NOM|defaut} lit n'importe quel /NOM=valeur.
+function EstMiseAJourAuto(): Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:AUTOUPDATE|0}') = '1');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then

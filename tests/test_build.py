@@ -600,6 +600,158 @@ class TestSpecWindows:
         assert '#define MonAppFichier "debriefMeet-setup"' in contenu
         assert "OutputBaseFilename={#MonAppFichier}-{#MonAppVersion}" in contenu
 
+    # ── .iss : mise à jour automatique (docs/53) ──────────────────────────────
+
+    def _run(self) -> list[str]:
+        return [l for l in self._section("[Run]", "[UninstallDelete]").splitlines()
+                if l.strip().startswith("Filename:")]
+
+    def test_run_relance_conditionnelle_apres_mise_a_jour_auto(self):
+        """Deux entrées [Run] et pas une de plus : l'interactive (page finale, jamais
+        en silencieux) et celle de la mise à jour auto (silencieux + /AUTOUPDATE=1,
+        sans `postinstall` — sinon une case de plus sur la page finale — ni
+        `skipifsilent` — sinon elle ne tournerait jamais)."""
+        lignes = self._run()
+        assert len(lignes) == 2
+        assert all('Filename: "{app}\\debriefMeet.exe"' in l for l in lignes)
+        interactive = [l for l in lignes if "postinstall nowait skipifsilent" in l]
+        auto = [l for l in lignes if "Check: EstMiseAJourAuto" in l]
+        assert len(interactive) == 1 and len(auto) == 1
+        assert "nowait" in auto[0]
+        assert "postinstall" not in auto[0] and "skipifsilent" not in auto[0]
+
+    def test_code_est_mise_a_jour_auto(self):
+        directives = self._directives()
+        assert directives.count("[Code]") == 1, "un seul bloc [Code] (le découpage des tests s'arrête au premier)"
+        code = directives[directives.index("[Code]"):]
+        assert "function EstMiseAJourAuto(): Boolean;" in code
+        assert "WizardSilent" in code
+        assert "ExpandConstant('{param:AUTOUPDATE|0}') = '1'" in code
+
+    def test_param_autoupdate_commun_app_et_iss(self):
+        """Invariant inter-fichiers : le paramètre que l'app passe au setup est celui
+        que le .iss lit — même famille que `test_app_mutex_egal_au_mutex_de_l_app`."""
+        from pathlib import PurePath
+
+        from debrief_meet.core.mise_a_jour import PARAM_AUTOUPDATE, script_lanceur_windows
+
+        assert "{param:" + PARAM_AUTOUPDATE + "|0}" in self._directives()
+        script = script_lanceur_windows(1, PurePath("C:/s.exe"), PurePath("C:/s.log"))
+        assert f"/SILENT /{PARAM_AUTOUPDATE}=1" in script
+
+    def test_setup_mutex_contre_deux_setups_simultanes(self):
+        lignes = [l for l in self._directives().splitlines() if l.strip().startswith("SetupMutex=")]
+        assert lignes == ["SetupMutex=debriefMeet-setup-instance"]
+
+
+# ── Mise à jour automatique : chaîne de publication (docs/53 §4) ──────────────
+
+class TestMiseAJourPackaging:
+    """Ce que la CI doit publier pour que `core/mise_a_jour.py` trouve quelque chose :
+    zip macOS, assets renommés, manifeste signé et vérifié, uploadés dans le bon ordre.
+    Lecture textuelle du workflow (comme les tests Linux lisent `build_deb.sh`)."""
+
+    BUILD_DMG_SH = ROOT / "packaging" / "build_dmg.sh"
+    PUBLIER_SH = ROOT / "packaging" / "publier_manifeste.sh"
+    WORKFLOW = ROOT / ".github" / "workflows" / "build.yml"
+
+    def _jobs(self) -> dict:
+        import yaml
+
+        return yaml.safe_load(self.WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+    def test_build_dmg_produit_le_zip_de_mise_a_jour(self):
+        contenu = self.BUILD_DMG_SH.read_text(encoding="utf-8")
+        assert "ditto -c -k" in contenu and "--keepParent" in contenu
+        assert 'dist/debriefMeet-$VERSION.zip' in contenu
+        assert "unzip" not in contenu and " zip " not in contenu
+
+    def test_job_macos_uploade_dmg_et_zip_et_verifie_l_aller_retour(self):
+        job = self._jobs()["macos"]
+        upload = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/upload-artifact"))
+        assert "dist/debriefMeet-*.dmg" in upload["with"]["path"]
+        assert "dist/debriefMeet-*.zip" in upload["with"]["path"]
+        aller_retour = "\n".join(s.get("run", "") for s in job["steps"])
+        assert "ditto -x -k dist/debriefMeet-*.zip" in aller_retour
+        assert "codesign --verify --deep --strict" in aller_retour
+
+    def test_job_release_signe_verifie_et_publie_dans_l_ordre(self):
+        job = self._jobs()["release"]
+        uses = [s.get("uses", "") for s in job["steps"]]
+        assert any(u.startswith("actions/checkout") for u in uses), "checkout requis : generer_manifeste.py + core/mise_a_jour.py"
+        signature = next(s for s in job["steps"] if "publier_manifeste.sh" in s.get("run", ""))
+        assert signature["env"]["MAJ_CLE_PRIVEE_PEM"] == "${{ secrets.MAJ_CLE_PRIVEE_PEM }}"
+        gh = next(s for s in job["steps"] if s.get("uses", "").startswith("softprops/action-gh-release"))
+        fichiers = [l.strip() for l in gh["with"]["files"].splitlines() if l.strip()]
+        assert gh["with"]["fail_on_unmatched_files"] is True
+        assert not any("*" in f for f in fichiers), "noms exacts : une release incomplète doit échouer"
+        assert fichiers[-2:] == ["artefacts/manifest.json", "artefacts/manifest.sig"], \
+            "manifest.* en DERNIER : jamais un manifeste en ligne avant ses binaires"
+        assert any(f.endswith(".zip") for f in fichiers)
+        assert "-rc" in gh["with"]["prerelease"]
+        assert "Pas de mise à jour automatique" not in gh["with"]["body"]
+
+    def test_job_manifeste_en_dispatch_rejoue_la_meme_chaine(self):
+        jobs = self._jobs()
+        assert "workflow_dispatch" in jobs["manifeste"]["if"]
+        run_dispatch = next(s["run"] for s in jobs["manifeste"]["steps"] if "publier_manifeste.sh" in s.get("run", ""))
+        run_release = next(s["run"] for s in jobs["release"]["steps"] if "publier_manifeste.sh" in s.get("run", ""))
+        assert run_dispatch.split()[:2] == run_release.split()[:2]
+
+    def test_version_accepte_les_tags_rc(self):
+        run = self._jobs()["version"]["steps"][1]["run"]
+        assert "(-rc[0-9]+)?$" in run
+
+    def test_publier_manifeste_renomme_sans_plus_puis_verifie(self):
+        contenu = self.PUBLIER_SH.read_text(encoding="utf-8")
+        for cible in ('"debriefMeet-setup-$VERSION.exe"', '"debriefmeet_${VERSION}_amd64.deb"',
+                      '"debriefMeet-$VERSION.dmg"', '"debriefMeet-$VERSION.zip"'):
+            assert cible in contenu
+        assert contenu.index("generer_manifeste.py\" generer") < contenu.index("generer_manifeste.py\" signer") \
+            < contenu.index("generer_manifeste.py\" verifier")
+        assert "MAJ_CLE_PRIVEE_PEM" in contenu
+        assert os.access(self.PUBLIER_SH, os.X_OK)
+
+    def test_publier_manifeste_tourne_reellement(self, tmp_path, monkeypatch):
+        """Le script shell de la CI, exécuté sur de faux artefacts avec une paire
+        éphémère substituée à la clé embarquée (via le code de l'app)."""
+        import subprocess
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding, NoEncryption, PrivateFormat, PublicFormat,
+        )
+
+        cle = Ed25519PrivateKey.generate()
+        art = tmp_path / "artefacts"
+        art.mkdir()
+        for nom in ("debriefMeet-setup-0.4.0+20261023.abc1234.exe", "debriefmeet_0.4.0+20261023.abc1234_amd64.deb",
+                    "debriefMeet-0.4.0+20261023.abc1234.dmg", "debriefMeet-0.4.0+20261023.abc1234.zip"):
+            (art / nom).write_bytes(nom.encode())
+        # La vérification passe par la clé embarquée : on la remplace dans une copie
+        # du module, importée par le sous-processus via sitecustomize.
+        pub = cle.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode()
+        site = tmp_path / "site"
+        site.mkdir()
+        (site / "sitecustomize.py").write_text(
+            "import debrief_meet.core.mise_a_jour as m\n"
+            f"m.CLE_PUBLIQUE_PEM = {pub!r}\n", encoding="utf-8")
+        env = dict(os.environ,
+                   MAJ_CLE_PRIVEE_PEM=cle.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode(),
+                   PYTHONPATH=f"{site}{os.pathsep}{ROOT / 'src'}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+                   PATH=f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}")
+        r = subprocess.run(["bash", str(self.PUBLIER_SH), "0.4.0", "v0.4.0", "x/y", str(art)],
+                           env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert sorted(p.name for p in art.iterdir()) == [
+            "debriefMeet-0.4.0.dmg", "debriefMeet-0.4.0.zip", "debriefMeet-setup-0.4.0.exe",
+            "debriefmeet_0.4.0_amd64.deb", "manifest.json", "manifest.sig"]
+        assert "signature OK" in r.stdout
+        # Relance idempotente (noms déjà finaux) : même résultat.
+        r2 = subprocess.run(["bash", str(self.PUBLIER_SH), "0.4.0", "v0.4.0", "x/y", str(art)],
+                            env=env, capture_output=True, text=True)
+        assert r2.returncode == 0, r2.stdout + r2.stderr
+
 
 # ── Benchmark : assemblage du bundle portable ─────────────────────────────────
 
