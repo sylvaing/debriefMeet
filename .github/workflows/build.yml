@@ -362,7 +362,9 @@ jobs:
           d="$(mktemp -d)"
           ditto -x -k dist/debriefMeet-*.zip "$d"
           codesign --verify --deep --strict "$d/debriefMeet.app"
-          codesign -dv "$d/debriefMeet.app" 2>&1 | grep -q "Authority=debriefMeet Local"
+          # --verbose=4 : sans lui `codesign -dv` ne liste pas les Authority (1er run CI
+          # de docs/53 rouge pour ça) ; pas de `grep -q` sous pipefail (SIGPIPE).
+          codesign -dv --verbose=4 "$d/debriefMeet.app" 2>&1 | grep "Authority=debriefMeet Local"
 
       - uses: actions/upload-artifact@v4
         with:
