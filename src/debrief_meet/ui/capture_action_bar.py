@@ -29,7 +29,7 @@ _ICONES = {
 }
 _LABELS_DEMARRER = {
     Mode.DICTEE: "Démarrer la dictée",
-    Mode.REUNION: "Démarrer la réunion",
+    Mode.REUNION: "Démarrer l'enregistrement",
     Mode.JOURNAL: "Démarrer le journal",
 }
 

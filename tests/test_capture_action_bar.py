@@ -19,7 +19,7 @@ def test_etat_repos_bouton_actif_et_pas_de_chrono(qapp):
     assert barre._chrono.isHidden()
     assert barre._point.isHidden()
     assert barre._msg_autre.isHidden()
-    assert "Démarrer la réunion" in barre._bouton.text()
+    assert "Démarrer l'enregistrement" in barre._bouton.text()
 
 
 def test_etat_actif_affiche_point_et_chrono(qapp):
@@ -89,7 +89,7 @@ def test_clic_refuse_restaure_l_etat_precedent(qapp):
     # mode_change émis → le bouton doit revenir de « Démarrage… » à l'état repos.
     barre = CaptureActionBar(Mode.REUNION, avec_recherche=False)
     barre._bouton.click()                          # personne ne réapplique d'état
-    assert "Démarrer la réunion" in barre._bouton.text()
+    assert "Démarrer l'enregistrement" in barre._bouton.text()
     assert barre._bouton.isEnabled()
 
 
