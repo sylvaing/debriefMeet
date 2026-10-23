@@ -19,7 +19,8 @@ Un seul fichier, `.github/workflows/build.yml`, cinq jobs :
 | `windows` | `windows-latest` | Python 3.13 (`actions/setup-python`), Inno Setup 6 (déjà sur l'image, `choco` en secours), `BUILD_INFO`, puis **`packaging\windows\build_app.cmd`** tel quel : venv, `pip install -e .[windows,dev]`, ffmpeg BtbN (SHA256 vérifié, miroir §5), `generer_version.py`, **pytest bloquant**, PyInstaller onedir, ISCC. Artefact `debriefMeet-setup-windows`. | **≈ 9 min** mesurés (caches chauds ou froids) |
 | `linux` | `ubuntu-latest` + conteneur **`ubuntu:26.04`** | Paquets apt de `scripts/provisionner_lxc_ubuntu.sh`, `BUILD_INFO`, puis **`sh packaging/linux/build_app.sh`** tel quel : venv sur le Python système 3.14, `pip install -e .[linux,dev] pyinstaller`, `generer_version.py`, **pytest bloquant** (segfault de teardown toléré par le script, docs/49), PyInstaller, `dpkg-deb`. Artefact `debriefmeet-deb-linux`. | **≈ 5 min** mesurés |
 | `macos` | `macos-latest` (Apple Silicon) | **Tag, ou dispatch avec `macos=true`.** Trousseau temporaire + identité « debriefMeet Local » (secrets, §6), venv 3.13 `[macos,dev]`, ffmpeg LGPL compilé (cache) + helper Swift, **pytest bloquant** (`test_build.py` inclus, sur le binaire réel), puis **`make dmg`** tel quel. Artefact `debriefMeet-dmg-macos`. | ≈ 15-25 min (ffmpeg en cache ou non) — **×10** en facturation |
-| `release` | `ubuntu-latest` | **Tags seulement.** Télécharge les trois artefacts et crée la Release GitHub du tag (`softprops/action-gh-release`) avec `.exe`, `.deb` et `.dmg`, notes minimales. | < 1 min |
+| `manifeste` | `ubuntu-latest` | **Dispatch seulement.** Rejoue la chaîne du job `release` sans publier (renommage, `manifest.json` signé et vérifié) et la dépose en artefact — docs/53 §3. | < 1 min |
+| `release` | `ubuntu-latest` | **Tags seulement.** Checkout + `cryptography`, télécharge les artefacts, **renomme les assets sans `+date.hash`**, génère `manifest.json`, le **signe** avec le secret `MAJ_CLE_PRIVEE_PEM` et le **vérifie** avec la clé publique embarquée dans l'app (`packaging/publier_manifeste.sh`), puis crée la Release du tag (`softprops/action-gh-release`) avec `.exe`, `.deb`, `.dmg`, `.zip`, `manifest.json`, `manifest.sig` — `manifest.*` en dernier. `prerelease` sur un tag `-rcN`. Docs/53. | < 1 min |
 
 Les gates pytest sont **exactement celles des scripts** (mêmes `--ignore`, mêmes
 marqueurs, `QT_QPA_PLATFORM=offscreen` posé au niveau du workflow) : un test rouge
@@ -35,7 +36,7 @@ contre les libs système de l'image du runner, pas celles d'Ubuntu 26.04.
 
 | Déclencheur | Builds | Où vont les binaires |
 |-------------|--------|----------------------|
-| `git push origin v0.3.1` (tag `v*`) | windows + linux + **macos**, **puis release** | **Release GitHub** `v0.3.1` : `debriefMeet-setup-0.3.1+<date>.<hash>.exe`, `debriefmeet_0.3.1+<date>.<hash>_amd64.deb`, `debriefMeet-0.3.1+<date>.<hash>.dmg` |
+| `git push origin v0.4.0` (tag `v*`, ou `v0.4.0-rc1` ⇒ prerelease) | windows + linux + **macos**, **puis release** | **Release GitHub** `v0.4.0` : `debriefMeet-setup-0.4.0.exe`, `debriefmeet_0.4.0_amd64.deb`, `debriefMeet-0.4.0.dmg`, `debriefMeet-0.4.0.zip`, `manifest.json`, `manifest.sig` (noms publics sans `+date.hash` depuis docs/53 — le `VERSION_COMPLETE` reste dans les binaires) |
 | `workflow_dispatch` (à la demande) | windows + linux (+ macos si `macos=true`) | **Artefacts du run** (onglet Actions → le run → « Artifacts »), conservés 30 jours ; pas de release |
 
 Le garde-fou `version` refuse un tag qui ne correspond pas à `__version__` : bumper
@@ -169,6 +170,16 @@ Ce que ça implique : la clé privée de ce certificat quitte le Mac pour les se
 GitHub (chiffrés, lisibles seulement par les runs). Elle ne vaut rien en dehors de
 debriefMeet (auto-signée, pas de chaîne Apple), et si elle est compromise, on en
 régénère une et on accepte de re-cliquer deux permissions.
+
+### 6.1 bis Clé de signature des mises à jour (docs/53 §4)
+
+Second secret, `MAJ_CLE_PRIVEE_PEM` : la clé privée ed25519 (PEM) qui signe
+`manifest.json`. Générée une fois hors dépôt (`openssl genpkey -algorithm ed25519`),
+posée par `gh secret set MAJ_CLE_PRIVEE_PEM < fichier.pem` ; la clé publique
+correspondante est la constante `CLE_PUBLIQUE_PEM` de `core/mise_a_jour.py`. Le job
+`release` **vérifie** la signature avec cette constante avant de publier : un secret qui
+ne correspond pas à la clé embarquée fait échouer la release, jamais les postes.
+Sans le secret, `release` (et `manifeste` en dispatch) échouent en `::error::`.
 
 ### 6.2 Ce que fait le job sans les secrets
 

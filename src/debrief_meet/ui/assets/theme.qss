@@ -64,6 +64,12 @@ QToolButton#navTab:checked { color: #2A46B8; border-bottom-color: #3B5BDB; }
 QToolButton#gearBtn { background: transparent; border: none; border-radius: 8px; padding: 0; }
 QToolButton#gearBtn:checked { background: #EEF1FE; }
 
+/* ---------- Badge « Mise à jour disponible » (toolbar, docs/53) ---------- */
+QToolButton#majBadge { background: #EEF1FE; color: #2A46B8; border: 1px solid #C9D2F6;
+  border-radius: 9px; padding: 2px 8px 2px 6px; font-size: 11.5px; font-weight: 600; }
+QToolButton#majBadge:hover { border-color: #3B5BDB; background: #E3E8FC; }
+QToolButton#majBadge:disabled { color: #7A828F; border-color: #E7E9EE; background: #F5F6F8; }
+
 /* ---------- Tableau : en-tête + lignes (correctifs #3 et #4) ---------- */
 QHeaderView::section { background: #FBFBFC; color: #98A2B3; font-family: "IBM Plex Mono";
   font-size: 10px; text-transform: uppercase; border: none; border-bottom: 1px solid #EFF1F4;

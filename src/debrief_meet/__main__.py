@@ -359,6 +359,17 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         tray.rafraichir_raccourcis()
         return echecs
 
+    # Mise à jour automatique (docs/53) — construit AVANT la fenêtre (les Préférences
+    # y branchent « Vérifier maintenant »), démarré après le tray.
+    from debrief_meet.core.verificateur_maj import VerificateurMaj
+
+    def _travail_en_cours() -> bool:
+        return (machine.est_actif
+                or gestionnaire_diar.job_en_cours() is not None
+                or gestionnaire_cr_mistral.job_en_cours() is not None)
+
+    verificateur_maj = VerificateurMaj(config, est_occupe=_travail_en_cours, parent=app)
+
     fenetre = FenetrePrincipale(
         machine, config, demarrage_auto=adaptateurs.demarrage_auto,
         presse_papiers=adaptateurs.presse_papiers, gestionnaire=gestionnaire_diar,
@@ -370,7 +381,8 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
         # L'objet complet (et pas seulement son store) : le flux CR Mistral force une
         # resync et **attend** sa fin avant de proposer une association (docs/42).
         bluemind_synchro=synchro_bluemind,
-        gestionnaire_cr_mistral=gestionnaire_cr_mistral)
+        gestionnaire_cr_mistral=gestionnaire_cr_mistral,
+        verificateur_maj=verificateur_maj)
 
     # Tray
     tray = IconeTray(machine, config, fenetre_principale=fenetre, gestionnaire=gestionnaire_diar,
@@ -383,6 +395,12 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     # docs/43 §9 — l'historique doit aussi surveiller le sous-dossier de la réunion
     # en cours (tranches ajoutées en direct, watcher racine insuffisant).
     orch_reunion.reunion_demarree.connect(fenetre.definir_reunion_active)
+
+    # Badge toolbar + notification tray + clic → procédure de l'OS (docs/53 §3) ;
+    # première vérification 30 s après le démarrage, puis toutes les 24 h.
+    from debrief_meet.ui import maj_actions
+    maj_actions.brancher(fenetre, tray, verificateur_maj, app)
+    verificateur_maj.demarrer()
 
     echecs_raccourcis = reappliquer_raccourcis()
     if echecs_raccourcis:
@@ -434,6 +452,7 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     app.aboutToQuit.connect(gestionnaire_diar.terminer)  # attend le job avant de tuer le moteur
     app.aboutToQuit.connect(gestionnaire_cr_mistral.terminer)  # attend son éventuel job réseau
     app.aboutToQuit.connect(synchro_bluemind.terminer)
+    app.aboutToQuit.connect(verificateur_maj.terminer)
     app.aboutToQuit.connect(planificateur_bluemind.arreter)
     app.aboutToQuit.connect(adaptateurs.micro.terminer)
     app.aboutToQuit.connect(adaptateurs.systeme.terminer)
@@ -456,8 +475,12 @@ def _demarrer_app(app, commande_initiale: str | None) -> None:
     # Relance après changement de mode (docs/45) — APRÈS le retour d'exec() (les
     # aboutToQuit ont tourné, threads joints) et jamais avant : mutex Windows et
     # QLocalServer IPC vivent jusqu'à la mort du process, cf. core/redemarrage.
-    from debrief_meet.core import redemarrage
-    if redemarrage.est_demande():
+    # Même règle pour l'installeur de mise à jour (docs/53) : le script lancé attend
+    # la mort de ce process avant d'agir. Les deux demandes sont exclusives.
+    from debrief_meet.core import mise_a_jour, redemarrage
+    if mise_a_jour.est_demande():
+        mise_a_jour.appliquer()
+    elif redemarrage.est_demande():
         redemarrage.relancer()
     sys.exit(code)
 

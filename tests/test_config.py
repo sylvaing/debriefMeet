@@ -39,6 +39,19 @@ class TestDefauts:
     def test_version_defaut(self, config_tmp):
         assert config_tmp.get("version") == VERSION_COURANTE
 
+    def test_valeurs_defaut_mise_a_jour(self, config_tmp):
+        """Mise à jour automatique (docs/53) — opt-out coché par défaut, mémoire vide."""
+        assert config_tmp.get("maj_verifier_auto") is True
+        assert config_tmp.get("maj_derniere_verification") == ""
+        assert config_tmp.get("maj_version_disponible") == ""
+        assert config_tmp.get("maj_notes_url") == ""
+
+    def test_config_anterieure_sans_cles_maj_recoit_les_defauts(self, config_tmp_avec_fichier):
+        """Clés nouvelles ⇒ pas de migration : le deepcopy des défauts suffit."""
+        cfg = config_tmp_avec_fichier({"version": VERSION_COURANTE, "langue": "fr"})
+        assert cfg.get("maj_verifier_auto") is True
+        assert cfg.get("langue") == "fr"
+
     def test_cle_inconnue_retourne_none(self, config_tmp):
         assert config_tmp.get("cle_inexistante") is None
 

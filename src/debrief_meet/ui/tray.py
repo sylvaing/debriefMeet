@@ -146,6 +146,8 @@ class IconeTray(QSystemTrayIcon):
         # décider quoi faire au clic. Toute notification écrase la précédente.
         self._derniere_notif: tuple[str, object, float] | None = None
         self._evenement_pre_associe = None  # Evenement BlueMind en attente de _sur_reunion_demarree
+        # Mise à jour vue pendant un enregistrement : notifiée au retour en IDLE (docs/53).
+        self._maj_en_attente: tuple[str, str] | None = None
 
         self._construire_menu()
         self._actualiser_icone(EtatVisuel.REPOS)
@@ -239,6 +241,10 @@ class IconeTray(QSystemTrayIcon):
     def _on_mode_change(self, mode: Mode) -> None:
         self._actualiser_libelles(mode)
         logger.debug("Tray: mode → %s", mode.name)
+        if mode is Mode.IDLE and self._maj_en_attente is not None:
+            version, notes_url = self._maj_en_attente
+            self._maj_en_attente = None
+            self.notifier_maj_disponible(version, notes_url)
 
     def definir_etat_visuel(self, etat: EtatVisuel) -> None:
         """Met à jour la couleur de l'icône selon l'état d'activité."""
@@ -353,6 +359,24 @@ class IconeTray(QSystemTrayIcon):
             f"Commence dans {avance} min — cliquez pour enregistrer.",
             icone_wavemark_pour_etat(EtatVisuel.REPOS), 10_000)
 
+    # ── Notification « mise à jour disponible » (docs/53) ────────────────────────
+
+    def notifier_maj_disponible(self, version: str, notes_url: str = "") -> None:
+        """Gardée par `notifications` ; jamais pendant un enregistrement (différée au
+        retour en IDLE — on ne distrait pas en réunion). Le clic ouvre la fenêtre
+        principale, où le badge de la toolbar lance l'installation."""
+        if not self._config.get("notifications"):
+            return
+        if self._machine.est_actif:
+            self._maj_en_attente = (version, notes_url)
+            return
+        self._maj_en_attente = None
+        self._derniere_notif = ("maj", version, time.time() + 3600)
+        self.showMessage(
+            "Mise à jour disponible",
+            f"debriefMeet {version} est prête — cliquez pour ouvrir et installer.",
+            icone_wavemark_pour_etat(EtatVisuel.REPOS), 10_000)
+
     def _sur_reunion_demarree(self, fichier: object) -> None:
         """Câblée sur `OrchestrateurReunion.reunion_demarree` — pré-associe le
         fichier tout juste créé si l'enregistrement vient du clic sur une
@@ -378,6 +402,9 @@ class IconeTray(QSystemTrayIcon):
             type_notif, payload, expire = self._derniere_notif
             if type_notif == "reunion" and time.time() <= expire:
                 self._demarrer_reunion_pre_associee(payload)
+                return
+            if type_notif == "maj":
+                self._afficher_fenetre_principale()
                 return
         # Toute autre notification (ou une notif « reunion » expirée) : comportement
         # historique — cibler le dernier job de diarization/transcription terminé.

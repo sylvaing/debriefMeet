@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from typing import Callable
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -28,12 +28,13 @@ from debrief_meet.core.bluemind.store import StoreCalendrier
 from debrief_meet.core.bluemind.sync import SynchroCalendrier
 from debrief_meet.core.config import Config
 from debrief_meet.core.modes import EtatVisuel, MachineEtats
+from debrief_meet.core.verificateur_maj import VerificateurMaj
 from debrief_meet.platform.interfaces import DemarrageAuto, MoteurTranscription, PressePapiers
 from debrief_meet.ui.dictee_view import DicteeView
 from debrief_meet.ui.etat_icone import icone_wavemark_pour_etat
 from debrief_meet.ui.gestionnaire_diarization import GestionnaireDiarization
 from debrief_meet.ui.generateur_cr_mistral import GestionnaireCRMistral
-from debrief_meet.ui.icones import icone_bascule
+from debrief_meet.ui.icones import icone_bascule, icone_phosphor, icone_svg_teintee
 from debrief_meet.ui.journal_view import JournalView
 from debrief_meet.ui.preferences_view import PreferencesView
 from debrief_meet.ui.recording_controller import RecordingController
@@ -54,6 +55,10 @@ _BORDURE_FENETRE = sys.platform.startswith("linux")
 
 
 class FenetrePrincipale(QMainWindow):
+    # Clic sur le badge « Mise à jour X disponible » de la toolbar (docs/53) — câblé
+    # par `ui/maj_actions.brancher`.
+    maj_cliquee = Signal()
+
     def __init__(
         self,
         machine: MachineEtats,
@@ -70,6 +75,7 @@ class FenetrePrincipale(QMainWindow):
         bluemind_synchro: SynchroCalendrier | None = None,
         gestionnaire_cr_mistral: GestionnaireCRMistral | None = None,
         parent: QWidget | None = None,
+        verificateur_maj: VerificateurMaj | None = None,
     ) -> None:
         super().__init__(parent)
         self._machine = machine
@@ -86,7 +92,8 @@ class FenetrePrincipale(QMainWindow):
             if mode_transcription.avec_dictee_journal() else None
         self._preferences_view = PreferencesView(
             config, demarrage_auto, moteur, reappliquer_raccourcis,
-            bluemind_reinitialiser_sync, bluemind_declencher_sync, self)
+            bluemind_reinitialiser_sync, bluemind_declencher_sync, self,
+            verificateur_maj=verificateur_maj)
 
         self._pages = QStackedWidget(self)
         self._index_pages: dict[int, int] = {}
@@ -164,6 +171,21 @@ class FenetrePrincipale(QMainWindow):
             f"color: {C.INK300}; border: 1px solid {C.BORDER}; border-radius: 5px; padding: 1px 5px;"
             f" font-family: '{MONO}'; font-size: 10.5px;")
         lay.addWidget(version, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._label_version = version
+
+        # Badge « Mise à jour X disponible » (docs/53) — caché tant qu'il n'y a rien ;
+        # texte seul plutôt qu'un QLabel : c'est un bouton, il doit se voir comme tel
+        # (même leçon que les boutons anonymes des assistants, 2026-09-02).
+        self._badge_maj = QToolButton(barre)
+        self._badge_maj.setObjectName("majBadge")
+        self._badge_maj.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._badge_maj.setIcon(icone_svg_teintee(icone_phosphor("arrow-circle-up"), C.ACCENT_INK, 14))
+        self._badge_maj.setIconSize(QSize(14, 14))
+        self._badge_maj.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._badge_maj.setToolTip("Une nouvelle version est disponible — cliquer pour l'installer")
+        self._badge_maj.clicked.connect(self.maj_cliquee)
+        self._badge_maj.hide()
+        lay.addWidget(self._badge_maj, 0, Qt.AlignmentFlag.AlignVCenter)
 
         lay.addSpacing(16)
 
@@ -249,6 +271,26 @@ class FenetrePrincipale(QMainWindow):
         if self._bluemind_sur_ouverture is not None:
             self._bluemind_sur_ouverture()
         super().showEvent(event)
+
+    # ── Mise à jour disponible (badge toolbar, docs/53) ─────────────────────────
+
+    def definir_maj_disponible(self, version: str | None) -> None:
+        """Affiche le badge pour `version`, ou le retire si `None`/vide."""
+        if not version:
+            self._badge_maj.hide()
+            return
+        self._badge_maj.setText(f"Mise à jour {version} disponible")
+        self._badge_maj.setEnabled(True)
+        self._badge_maj.show()
+
+    def definir_maj_progression(self, pct: int) -> None:
+        """Téléchargement en cours : le badge devient une jauge, non cliquable."""
+        self._badge_maj.setText(f"Téléchargement {int(pct)} %")
+        self._badge_maj.setEnabled(False)
+        self._badge_maj.show()
+
+    def maj_badge_visible(self) -> bool:
+        return not self._badge_maj.isHidden()
 
     # ── État visuel (icône toolbar) ──────────────────────────────────────────────
 

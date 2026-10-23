@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "debrief-meet"
-version = "0.3.0"
+version = "0.4.0"
 description = "Transcription vocale locale — dictée, réunion, journal"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,6 +20,18 @@ dependencies = [
     "sounddevice>=0.4",
     "scipy>=1.10",
     "httpx>=0.27",       # interco BlueMind (core/bluemind/client.py) — wheels purs, PyInstaller-friendly
+    # ≥2026.10.19 : incident eMudhra/emSign du 2026-10-20 — httpx vérifie TLS sur le bundle
+    # certifi EMBARQUÉ par PyInstaller (jamais le magasin système), donc tout build fait
+    # avec un certifi antérieur fait confiance à « emSign ECC Root CA - G3 » (clés ECC
+    # faibles). La borne empêche un build local (VM/LXC/Mac) de retomber sur une roue en
+    # cache. 2026.10.18 retirait toutes les racines emSign, 2026.10.19 restaure celles
+    # non touchées et ne retire que la G3.
+    "certifi>=2026.10.19",
+    # Mise à jour automatique (docs/53) : vérification ed25519 du manifeste de release
+    # (wheels sur les 3 OS, hook PyInstaller contrib) et comparaison PEP 440 des versions
+    # (`packaging` n'était embarqué que par transitivité, et pas du tout dans le .deb).
+    "cryptography>=42",
+    "packaging>=23",
     "python-dateutil>=2.8",  # expansion des séries récurrentes BlueMind (core/bluemind/recurrence.py) — pur Python
     # Windows n'a AUCUNE base de fuseaux système : `zoneinfo` y est inerte sans ce
     # paquet. `core/bluemind/sync.py` et `recurrence.py` enveloppent `ZoneInfo(...)`

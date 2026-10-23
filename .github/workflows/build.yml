@@ -61,8 +61,11 @@ jobs:
             echo "::error::__version__ ($init) et pyproject.toml ($pyproj) divergent — aligner les deux avant de tagger"
             exit 1
           fi
-          if [ "$REF_TYPE" = "tag" ] && [ "$REF_NAME" != "v$init" ]; then
-            echo "::error::le tag $REF_NAME ne correspond pas à __version__ = $init (attendu : v$init)"
+          # `v<version>` ou `v<version>-rcN` : une rc produit une PRERELEASE (job release),
+          # ignorée par `releases/latest` — donc invisible des postes installés, mais
+          # testable via DEBRIEFMEET_MAJ_URL (docs/53 §6).
+          if [ "$REF_TYPE" = "tag" ] && ! printf '%s' "$REF_NAME" | grep -qE "^v${init}(-rc[0-9]+)?$"; then
+            echo "::error::le tag $REF_NAME ne correspond pas à __version__ = $init (attendu : v$init ou v$init-rcN)"
             exit 1
           fi
           echo "version=$init" >> "$GITHUB_OUTPUT"
@@ -350,10 +353,25 @@ jobs:
       - name: Signature du bundle produit
         run: codesign -dv --verbose=4 dist/debriefMeet.app 2>&1 | grep -E "Authority|Identifier"
 
+      # Le zip de mise à jour (docs/53) doit se dézipper en un bundle dont le sceau est
+      # intact et signé par la même identité — c'est ce que vérifie le script de
+      # remplacement sur le poste avant d'échanger les bundles.
+      - name: Aller-retour du zip de mise à jour (ditto -x -k + codesign --verify)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          ditto -x -k dist/debriefMeet-*.zip "$d"
+          codesign --verify --deep --strict "$d/debriefMeet.app"
+          # --verbose=4 : sans lui `codesign -dv` ne liste pas les Authority (1er run CI
+          # de docs/53 rouge pour ça) ; pas de `grep -q` sous pipefail (SIGPIPE).
+          codesign -dv --verbose=4 "$d/debriefMeet.app" 2>&1 | grep "Authority=debriefMeet Local"
+
       - uses: actions/upload-artifact@v4
         with:
           name: debriefMeet-dmg-macos
-          path: dist/debriefMeet-*.dmg
+          path: |
+            dist/debriefMeet-*.dmg
+            dist/debriefMeet-*.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -361,7 +379,43 @@ jobs:
         if: always()
         run: security delete-keychain "$DEBRIEFMEET_KEYCHAIN" || true
 
-  # ── 4. Release GitHub (tags seulement) ────────────────────────────────────────
+  # ── 4. Manifeste de mise à jour (docs/53) — dispatch seulement ─────────────────
+  # Rejoue hors tag tout ce que fait le job release sauf l'upload : renommage des
+  # assets, génération + signature + VÉRIFICATION du manifeste avec la clé publique
+  # embarquée dans l'app. Résultat en artefact, pour tester une mise à jour de bout
+  # en bout sans publier (DEBRIEFMEET_MAJ_URL sur un serveur local).
+  manifeste:
+    name: Manifeste de mise à jour (dispatch)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [version, windows, linux, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet cryptography
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+          merge-multiple: true
+      - name: Renommage, manifeste, signature, vérification
+        env:
+          MAJ_CLE_PRIVEE_PEM: ${{ secrets.MAJ_CLE_PRIVEE_PEM }}
+        run: bash packaging/publier_manifeste.sh "$VERSION" "v$VERSION-dispatch" "$GITHUB_REPOSITORY" artefacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debriefMeet-manifeste
+          path: |
+            artefacts/manifest.json
+            artefacts/manifest.sig
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 5. Release GitHub (tags seulement) ────────────────────────────────────────
   release:
     name: Release GitHub
     if: github.ref_type == 'tag'
@@ -370,28 +424,56 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
+      # checkout : packaging/publier_manifeste.sh + generer_manifeste.py + le module
+      # core/mise_a_jour.py de l'app (sa clé publique embarquée juge la signature).
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet cryptography
+
       - uses: actions/download-artifact@v4
         with:
           path: artefacts
           merge-multiple: true
 
+      # Noms publics SANS `+<date>.<hash>` (l'app ne peut pas deviner le hash, et `+`
+      # dans un nom d'asset n'est pas documenté par GitHub) ; VERSION_COMPLETE reste à
+      # l'intérieur des binaires. Puis manifest.json signé par le secret et VÉRIFIÉ
+      # avec la clé publique embarquée : un secret qui ne correspond pas casse la
+      # release ici, jamais les postes. Secret absent ⇒ échec explicite.
+      - name: Renommage des assets, manifeste signé et vérifié
+        env:
+          MAJ_CLE_PRIVEE_PEM: ${{ secrets.MAJ_CLE_PRIVEE_PEM }}
+        run: bash packaging/publier_manifeste.sh "$VERSION" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" artefacts
+
       - name: Binaires à publier
         run: ls -l artefacts
 
+      # Noms EXACTS (plus de globs) : fail_on_unmatched_files refuse une release
+      # incomplète. manifest.* en DERNIER : les uploads suivent cet ordre, un poste qui
+      # lit latest/download/manifest.json pendant la publication ne peut pas tomber
+      # sur un manifeste dont les binaires ne sont pas encore en ligne.
       - uses: softprops/action-gh-release@v2
         with:
           name: debriefMeet ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
           files: |
-            artefacts/debriefMeet-setup-*.exe
-            artefacts/debriefmeet_*_amd64.deb
-            artefacts/debriefMeet-*.dmg
+            artefacts/debriefMeet-setup-${{ needs.version.outputs.version }}.exe
+            artefacts/debriefmeet_${{ needs.version.outputs.version }}_amd64.deb
+            artefacts/debriefMeet-${{ needs.version.outputs.version }}.dmg
+            artefacts/debriefMeet-${{ needs.version.outputs.version }}.zip
+            artefacts/manifest.json
+            artefacts/manifest.sig
           fail_on_unmatched_files: true
           body: |
             debriefMeet ${{ needs.version.outputs.version }} — commit `${{ github.sha }}`.
 
             - **Windows** : `debriefMeet-setup-<version>.exe` (installeur Inno Setup, un seul build — mode distant/local au choix dans les Préférences).
             - **Linux (Ubuntu 26.04, amd64)** : `debriefmeet_<version>_amd64.deb` (`sudo apt install ./debriefmeet_*.deb`).
-            - **macOS (Apple Silicon)** : `debriefMeet-<version>.dmg` (glisser dans Applications ; signature locale stable, pas de notarisation : clic droit › Ouvrir au premier lancement).
+            - **macOS (Apple Silicon)** : `debriefMeet-<version>.dmg` (glisser dans Applications ; signature locale stable, pas de notarisation : clic droit › Ouvrir au premier lancement). Le `.zip` sert à la mise à jour automatique.
 
-            Pas de mise à jour automatique : réinstaller par-dessus l'ancienne version.
+            Mise à jour automatique depuis 0.4.0 : l'application vérifie `manifest.json` (signé) une fois par jour et propose d'installer la nouvelle version (Windows et macOS) ; sur Linux, réinstaller le `.deb`.
