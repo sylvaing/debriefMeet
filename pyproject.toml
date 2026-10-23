@@ -27,6 +27,11 @@ dependencies = [
     # cache. 2026.10.18 retirait toutes les racines emSign, 2026.10.19 restaure celles
     # non touchées et ne retire que la G3.
     "certifi>=2026.10.19",
+    # Mise à jour automatique (docs/53) : vérification ed25519 du manifeste de release
+    # (wheels sur les 3 OS, hook PyInstaller contrib) et comparaison PEP 440 des versions
+    # (`packaging` n'était embarqué que par transitivité, et pas du tout dans le .deb).
+    "cryptography>=42",
+    "packaging>=23",
     "python-dateutil>=2.8",  # expansion des séries récurrentes BlueMind (core/bluemind/recurrence.py) — pur Python
     # Windows n'a AUCUNE base de fuseaux système : `zoneinfo` y est inerte sans ce
     # paquet. `core/bluemind/sync.py` et `recurrence.py` enveloppent `ZoneInfo(...)`
