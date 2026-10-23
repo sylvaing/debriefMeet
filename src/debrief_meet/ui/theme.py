@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 
 from debrief_meet.ui.icones import ICON_DIR
 from debrief_meet.ui.polices import MONO, SANS  # noqa: F401  (ré-exportés)
@@ -14,6 +14,7 @@ _CHECK_WHITE = ICON_DIR / "check-white.svg"
 _CARET_UP = ICON_DIR / "caret-up-ink300.svg"
 _CARET_DOWN = ICON_DIR / "caret-down-ink300.svg"
 _CARET_UP_DOWN = ICON_DIR / "caret-up-down-ink300.svg"
+_PROPRIETE_STYLE = "debriefmeet_style_sans_cadre_focus"
 
 
 class C:  # ----- Couleurs (hex) -----
@@ -64,12 +65,48 @@ class M:  # ----- Métriques (px) -----
     # Espacement (× 4) : 4 8 12 16 20 24 28 32
 
 
+class StyleSansCadreFocus(QProxyStyle):
+    """Style natif de la plateforme, moins le rectangle de focus (`PE_FrameFocusRect`).
+
+    Le style Windows le dessine autour de l'index COURANT d'une vue — (0, 0) dès le
+    chargement, donc un cadre sur l'icône de la 1ʳᵉ réunion sans aucune action au
+    clavier (Qt n'honore pas la convention Windows « caché jusqu'à Alt/Tab »). Fusion
+    (Linux) le dessine aussi ; le style macOS ne dessine rien pour cet élément, d'où
+    un défaut jamais vu sur Mac. La sélection pleine ligne suffit à repérer la ligne
+    courante au clavier.
+    """
+
+    def drawPrimitive(self, element, option, painter, widget=None):  # noqa: N802
+        if element == QStyle.PrimitiveElement.PE_FrameFocusRect:
+            return
+        super().drawPrimitive(element, option, painter, widget)
+
+
+def installer_style(app: QApplication) -> None:
+    """Enveloppe le style courant dans `StyleSansCadreFocus` (idempotent).
+
+    Construit par NOM de style, jamais autour de `app.style()` lui-même : `setStyle`
+    détruit l'ancien style, qui serait alors la base du proxy. Et autour du style
+    courant, pas d'un défaut — sinon Windows basculerait en Fusion.
+
+    Idempotence par propriété de l'application, pas par `isinstance(app.style(), …)` :
+    dès qu'une feuille de style est posée, `app.style()` rend l'enveloppe interne du
+    QSS (nom vide), plus le proxy — le 2ᵉ appel envelopperait alors un style sans nom.
+    """
+    if app.property(_PROPRIETE_STYLE):
+        return
+    app.setStyle(StyleSansCadreFocus(app.style().name()))
+    app.setProperty(_PROPRIETE_STYLE, True)
+
+
 def charger_theme(app: QApplication) -> None:
     """Charge le QSS global (`assets/theme.qss`) — à appeler après `charger_polices()`.
 
     Pas de .qrc (cf. `polices.charger_polices`) : le chemin de l'icône de case
     cochée (dépend de l'installation) est substitué dans le QSS avant application.
+    Le style est posé AVANT la feuille : `setStyle` peut réappliquer la palette.
     """
+    installer_style(app)
     qss = _QSS_PATH.read_text(encoding="utf-8")
     qss = qss.replace("__CHECK_WHITE__", _CHECK_WHITE.as_posix())
     qss = qss.replace("__CARET_UP__", _CARET_UP.as_posix())

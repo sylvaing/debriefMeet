@@ -79,6 +79,10 @@ QHeaderView::section:last { padding-right: 20px; }
 QTableView { background: #fff; border: none; gridline-color: transparent;
   selection-background-color: #EEF1FE; selection-color: #1A1D23; }
 QTableView::item { border: none; border-bottom: 1px solid #F1F2F5; }
+/* Pas de rectangle de focus sur l'index courant des vues (cadre parasite sous
+   Windows) — doublon de `StyleSansCadreFocus`, pour les vues que la feuille de
+   style peint elle-même sans repasser par le style de l'application. */
+QAbstractItemView { outline: 0; }
 
 /* Éditeur de cellule (delegate = QLineEdit enfant de la vue, aucun objectName
    possible) : sans cette règle il hérite du style des champs plus haut
