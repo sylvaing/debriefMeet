@@ -314,11 +314,14 @@ jobs:
 
       # ffmpeg avant la gate : tests/test_build.py interroge le binaire RÉELLEMENT
       # livré (muxer segment, filtres, limite d'imbrication — docs/42 §10.4-10.6, les
-      # trois régressions invisibles à `make test`). Helper Swift compilé en ad hoc
-      # pour le même test (build_app.sh le recompile ensuite, signé).
-      - name: ffmpeg LGPL + helper Swift (pour la gate)
+      # trois régressions invisibles à `make test`). PortAudio 19.7.0 + #1175 pour la
+      # même raison : le test vérifie que la dylib embarquée est la version corrigée
+      # (docs/16 §5.7). Helper Swift compilé en ad hoc pour le même test (build_app.sh
+      # le recompile ensuite, signé).
+      - name: ffmpeg LGPL + PortAudio corrigé + helper Swift (pour la gate)
         run: |
           bash packaging/build_ffmpeg.sh
+          bash packaging/build_portaudio.sh
           bash helpers/macos/sck-audio/build.sh
 
       # Gate bloquante, mêmes exclusions que Windows/Linux, SAUF test_build.py qui

@@ -596,6 +596,32 @@ qu'aucun secret ne fuit par ces logs (token BlueMind, clé Mistral) — ils ne v
 qu'en en-tête et les messages d'erreur des 2 clients ne reprennent que des corps de
 réponse serveur. Les 10 tests ont été validés par **régression simulée**.
 
+Après PortAudio recompilé avec le correctif amont #1175 (docs/16 §5.7, 2026-10-23,
+**validé manuellement** par Sylvain le jour même sur le DMG CI `632e5f9` — pastille
+orange éteinte après la réunion) : **1871 passed, 0 échec** en environnement complet,
++11 tests ; CI verte sur les 3 OS. Terrain : sur le Mac de
+Sylvain (build `445b0b4`), la **pastille orange du micro est restée allumée** après la fin
+d'une réunion, puis l'app s'est figée en quittant. Cause : un **interblocage AB-BA dans
+PortAudio 19.7.0** (la dylib de sounddevice). Le listener `IsRunning` appelle
+`AudioUnitGetProperty` sur le thread d'E/S du HAL pendant que `Pa_StopStream` tient le
+mutex de l'AudioUnit ([PortAudio#1174](https://github.com/PortAudio/portaudio/issues/1174),
+aussi sur macOS 26 : non lié à macOS 27). Correctif fusionné en amont le jour même
+(#1175), **dans aucune release** : `packaging/build_portaudio.sh` compile v19.7.0 + ce
+seul patch (`packaging/patches/`) et le spec **substitue** la dylib du hook sounddevice
+(exactement une substitution exigée, résultat revérifié par `build_app.sh`). ⚠️ **Mesuré
+avant/après** avec le repro de l'issue, plus une variante entrée seule fidèle à notre
+micro : dylib livrée bloquée en **265** (duplex) et **327** (entrée) cycles, témoin compilé
+par nous sans patch bloqué en **299**, version patchée **3 000 et 2 000 cycles sans
+blocage**. Les piles bloquées portaient les **mêmes décalages** que le process figé du
+terrain. ⚠️ Le défaut pouvait figer l'**UI** à la réunion suivante :
+`_attendre_fermeture_differee` rendait la main au bout de 2 s, puis le refresh
+`sd._terminate()` (un `Pa_Terminate`) aurait buté sur le même verrou. Filet ajouté :
+refresh **sauté** si l'ancien flux reste bloqué, et WARNING « Flux micro toujours pas
+fermé » 5 s après l'arrêt (le thread bloqué ne peut rien journaliser lui-même). Tests
+d'effet vérifiés par régression simulée. **macOS seul** (code `pa_mac_core.c`) ; en dev
+(`make run`), la dylib non corrigée de sounddevice tourne toujours. Master amont écarté
+(265 commits, rien d'utile pour nous hors #1175, cf. §5.7).
+
 ## Environnements Python — ne pas confondre
 
 | Venv | Python | Usage |
@@ -655,6 +681,11 @@ L'agent exécute les tests et rapporte la sortie avant toute livraison.
 - **Pas d'auto-update en v1** — MAJ = re-téléchargement manuel du `.dmg`.
 - La config (`platformdirs`) et les transcriptions (`~/Documents/debriefMeet`) vivent hors du bundle → survivent au remplacement.
 - **ffmpeg embarqué (LGPL, `packaging/build_ffmpeg.sh`)** : à compiler une fois avant `build_app.sh` (binaire non versionné, `packaging/vendor/`). Pièges configure : les demuxers/muxers PCM bruts s'activent sous leur nom **interne** (`pcm_f32le`, `pcm_s16le`), pas le nom court de `ffmpeg -demuxers` (`f32le`/`s16le`) ; `--disable-postproc` n'existe plus en ffmpeg 8.1.x ; et **la liste des filtres se périme** — `aselect,asetpts` manquaient (ajoutés le 2026-08-18), donc la compaction des silences Mistral échouait **dans l'app livrée uniquement**, jamais en dev où répond le ffmpeg Homebrew complet. Toute nouvelle invocation de ffmpeg dans le code oblige à revisiter `--enable-*` ; `valider_binaire` exige désormais ces filtres (binaire trop ancien → reconstruit) et le build rejoue les 2 passes de `compacter_piste`. **Même piège une 2ᵉ fois le 2026-09-02** : le **muxer `segment`** manquait → le repli découpage Mistral était cassé dans l'app livrée depuis toujours (jamais déclenché sur macOS avant le repli 5xx de docs/42 §10.1) ; sans lui ffmpeg ne reconnaît même pas `-segment_time` et sort en **8** (« Unrecognized option »), ce qui ne ressemble pas à « composant absent ». macOS seul touché (Windows = build BtbN complet, Linux = ffmpeg système). Muxer ajouté + exigé par `valider_binaire` + commande exacte du repli rejouée dans le build ; et `tests/test_build.py` interroge maintenant le **binaire livré** sur les muxers/filtres utilisés par le code — les 2 régressions étaient invisibles à `make test`. ⚠️ **À ne pas confondre avec la famille voisine** : l'échec de compaction du 2026-09-07 (exit **244**) n'était PAS un composant absent mais la limite d'imbrication de l'évaluateur d'expressions de `libavutil` — il échouait donc aussi en dev, et sur les 3 OS. Le réflexe « ajouter un `--enable-*` » n'aurait rien réparé : docs/42 §10.6.
+- **PortAudio recompilé (`packaging/build_portaudio.sh`, docs/16 §5.7)** : la dylib de
+  sounddevice (v19.7.0) s'interbloque parfois à l'arrêt du micro (PortAudio#1174) ; le
+  bundle embarque v19.7.0 + #1175, substituée par le spec. À retirer quand une release
+  amont **et** sounddevice l'embarqueront. Vérifier dans le bundle : `strings
+  …/_sounddevice_data/portaudio-binaries/libportaudio.dylib | grep PortAudio.CoreAudio.startStop`.
 - **`sys.executable` en app figée n'est pas un interpréteur Python générique** : `multiprocessing` (déclenché en interne par mlx/torch, ex. `resource_tracker`) le relance parfois en `-c "<code>"` pur → `__main__._relais_interprete_figee()` émule `python -c` avant tout autre routage (sinon bruit `unrecognized arguments`, sans casser la transcription).
 - Premier `codesign` réel après création du certificat : peut afficher une popup trousseau **invisible aux API de scripting/accessibilité** (fenêtre sécurisée) — nécessite un clic humain une fois (« Toujours autoriser »), aucun moyen de la détecter ou franchir en automatique.
 

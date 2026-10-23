@@ -474,6 +474,78 @@ class TestFfmpegVendor:
         assert all(s.stat().st_size > 0 for s in segments)
 
 
+@pytest.mark.skipif(not IS_MACOS, reason="PortAudio recompilé : macOS uniquement")
+class TestPortaudioVendor:
+    """PortAudio 19.7.0 + correctif amont #1175 (docs/16 §5.7).
+
+    La dylib que sounddevice embarque peut s'interbloquer dans `stream.stop()` avec le
+    thread d'E/S de CoreAudio : micro resté ouvert après une réunion, app figée à la
+    sortie (terrain du 2026-10-23, reproduit en 265 à 327 cycles sur cette dylib).
+    Comme pour ffmpeg, on vérifie ce qui est RÉELLEMENT livré : une substitution qui
+    cesserait de s'appliquer redonnerait la dylib fautive sans aucun autre symptôme."""
+
+    BUILD_SH = ROOT / "packaging" / "build_portaudio.sh"
+    PATCH = ROOT / "packaging" / "patches" / "portaudio-1175-coreaudio-deadlock.patch"
+    DYLIB = ROOT / "packaging" / "vendor" / "libportaudio.dylib"
+    SPEC = ROOT / "packaging" / "debriefMeet.spec"
+    # Libellé de la file GCD créée par le patch : absent de la dylib d'origine.
+    MARQUEUR = b"PortAudio.CoreAudio.startStop"
+
+    def test_build_portaudio_sh_executable(self):
+        assert os.access(self.BUILD_SH, os.X_OK), (
+            "build_portaudio.sh n'est pas exécutable — chmod +x packaging/build_portaudio.sh"
+        )
+
+    def test_patch_retire_l_appel_fautif_du_listener(self):
+        """Le cœur du correctif : plus d'`AudioUnitGetProperty` dans le listener
+        `IsRunning`, appelé sur le thread d'E/S qui tient le mutex du HAL."""
+        patch = self.PATCH.read_text(encoding="utf-8")
+        assert "-    err = AudioUnitGetProperty( ci, kAudioOutputUnitProperty_IsRunning" in patch
+        assert "+            dispatch_source_merge_data( stream->startStopSource, 1 );" in patch
+
+    def test_spec_substitue_la_dylib_de_sounddevice(self):
+        spec = self.SPEC.read_text(encoding="utf-8")
+        assert '"_sounddevice_data", "portaudio-binaries", "libportaudio.dylib"' in spec
+        # C'est la liste substituée qui part dans le bundle, pas `a.binaries`.
+        assert "    binaires_app,\n" in spec
+        assert "COLLECT(\n    exe,\n    a.binaries," not in spec
+
+    def test_build_app_refuse_un_bundle_sans_le_correctif(self):
+        build_app = (ROOT / "packaging" / "build_app.sh").read_text(encoding="utf-8")
+        assert self.MARQUEUR.decode() in build_app
+
+    def test_dylib_vendor_porte_le_correctif(self):
+        if not self.DYLIB.exists():
+            pytest.skip("PortAudio non compilé — lancer : bash packaging/build_portaudio.sh")
+        assert self.MARQUEUR in self.DYLIB.read_bytes(), (
+            "packaging/vendor/libportaudio.dylib ne contient pas le correctif #1175")
+
+    def test_dylib_d_origine_ne_porte_pas_le_marqueur(self):
+        """Contre-épreuve : sans elle, le test précédent pourrait être vert pour une
+        chaîne présente dans toute dylib PortAudio."""
+        sd = pytest.importorskip("sounddevice")
+        origine = (Path(sd.__file__).parent / "_sounddevice_data" / "portaudio-binaries"
+                   / "libportaudio.dylib")
+        if not origine.exists():
+            pytest.skip("sounddevice sans dylib embarquée (PortAudio système)")
+        assert self.MARQUEUR not in origine.read_bytes()
+
+    def test_dylib_vendor_compatible_avec_celle_qu_elle_remplace(self):
+        if not self.DYLIB.exists():
+            pytest.skip("PortAudio non compilé — lancer : bash packaging/build_portaudio.sh")
+        nom = subprocess.run(["otool", "-D", str(self.DYLIB)],
+                             capture_output=True, text=True, check=True).stdout
+        assert nom.strip().splitlines()[-1] == "@rpath/libportaudio.dylib"
+        archs = subprocess.run(["lipo", "-archs", str(self.DYLIB)],
+                               capture_output=True, text=True, check=True).stdout.split()
+        assert "arm64" in archs
+        deps = subprocess.run(["otool", "-L", str(self.DYLIB)],
+                              capture_output=True, text=True, check=True).stdout
+        for ligne in deps.splitlines():
+            if ligne.startswith(("\t", " ")):
+                assert "/opt/homebrew" not in ligne and "/usr/local" not in ligne, ligne
+
+
 @pytest.mark.skipif(not IS_MACOS, reason="build_app.sh macOS uniquement")
 class TestBuildAppVersion:
     """VERSION_COMPLETE générée côté macOS avec le même outillage que Windows

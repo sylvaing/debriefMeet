@@ -333,6 +333,104 @@ vécu des semaines sans être vu.
   (validation manuelle TCC, ci-dessous) n'a pas été rejouée par Sylvain sur le
   `.dmg` réellement produit — mais tout le travail scriptable est fait.
 
+### 5.7 PortAudio recompilé — interblocage CoreAudio à l'arrêt du micro (2026-10-23)
+
+**Terrain (Mac de Sylvain, build `445b0b4`, macOS 27.0.1).** Après la fin d'une réunion
+(15:29:16) et sa transcription, la **pastille orange du micro restait allumée**. En
+quittant l'app pour l'éteindre, la fenêtre a disparu mais le process est resté vivant,
+à 0 % de CPU. `sample` a montré trois threads figés sur des verrous CoreAudio :
+
+| Thread | Pile (extrait) | Attend |
+|---|---|---|
+| `_fermer_flux` (fermeture différée de `arreter()`) | `FinishStoppingStream+52` → `AudioOutputUnitStop` → `StopIOProc` → `HALB_Mutex::Lock+76` | mutex IOContext du HAL |
+| `com.apple.audio.IOThread.client` | `startStopCallback+64` → `AudioUnitGetProperty+416` → `recursive_mutex::lock` | mutex de l'AudioUnit |
+| principal (sortie) | `atexit` → `Pa_Terminate` → `FinishStoppingStream` → `recursive_mutex::lock` | mutex de l'AudioUnit |
+
+Il s'agit d'un **AB-BA dans PortAudio 19.7.0**, la dylib que fournit `sounddevice`.
+Le listener `kAudioOutputUnitProperty_IsRunning` (`startStopCallback`) appelle
+`AudioUnitGetProperty` sur le thread d'E/S, qui tient déjà le mutex IOContext. Dans le
+même temps, `Pa_StopStream` tient le mutex de l'AudioUnit et attend celui de l'IOContext.
+Le flux n'est jamais fermé, donc le micro reste ouvert jusqu'à la mort du process ; rien
+ne peut le débloquer de l'intérieur. Le défaut est connu en amont
+([PortAudio#1174](https://github.com/PortAudio/portaudio/issues/1174), signalé sur
+macOS 26.4, donc **non lié à macOS 27**). Il est corrigé par
+[#1175](https://github.com/PortAudio/portaudio/pull/1175), fusionnée le 2026-10-23,
+mais **présente dans aucune release** : la dernière reste v19.7.0, d'avril 2021.
+
+⚠️ **Le défaut pouvait coûter plus que la sortie.** Au démarrage de la réunion
+suivante, `demarrer()` attendait 2 s le thread de fermeture, puis rafraîchissait
+PortAudio par `sd._terminate()` (un `Pa_Terminate`, docs/25). Ce `Pa_Terminate` aurait
+buté sur le même verrou depuis le **thread principal**, ce qui fige toute l'UI.
+
+**Mesure avant/après.** Le repro de l'issue (cycles ouverture → démarrage → arrêt →
+fermeture, déphasage balayé de 0 à 40 ms, chien de garde de 10 s) a été compilé trois
+fois, plus une variante **entrée seule** qui correspond à notre micro (1 canal) :
+
+| Dylib | Duplex | Entrée seule |
+|---|---|---|
+| livrée par sounddevice (celle de l'app) | **bloque au cycle 265** | **bloque au cycle 327** |
+| v19.7.0 compilée par nous, sans patch (témoin) | — | **bloque au cycle 299** |
+| v19.7.0 + #1175 | **2 000 cycles, aucun blocage** | **3 000 cycles, aucun blocage** |
+| v19.7.0 + #1175, dylib **du bundle** (archive officielle, amincie arm64, signée) | — | **1 000 cycles, aucun blocage** |
+
+Chaque passe patchée dure environ 13 min. Ces cycles valent ~10 fois le point de
+blocage observé, alors qu'un arrêt de micro par réunion en fait un seul.
+
+À chaque blocage, la pile échantillonnée portait **les mêmes décalages** que le
+process figé du terrain (`startStopCallback+64`, `FinishStoppingStream+52`,
+`AudioUnitGetProperty+416`, `HALB_Mutex::Lock+76`). Le témoin écarte l'hypothèse d'un
+effet de notre chaîne de compilation : c'est bien le patch qui corrige.
+
+**Livré :**
+
+- `packaging/build_portaudio.sh` : archive officielle v19.7.0 (SHA-256 épinglé) +
+  `packaging/patches/portaudio-1175-coreaudio-deadlock.patch` (diff combiné des 2
+  commits de la PR, tel quel). Compilation **universelle, minos 11.0, nom
+  d'installation `@rpath/libportaudio.dylib`**, comme la dylib de sounddevice qu'elle
+  remplace. Le script est idempotent comme `build_ffmpeg.sh`. Sa validation exige le
+  marqueur `PortAudio.CoreAudio.startStop` (libellé de la file GCD introduite par le
+  patch, absent de la dylib d'origine) et refuse toute dépendance non système.
+- `debriefMeet.spec` **substitue** la source de l'entrée
+  `_sounddevice_data/portaudio-binaries/libportaudio.dylib` collectée par le hook
+  sounddevice. Exactement **une** substitution est exigée, sinon le build s'arrête :
+  un changement de layout du hook redonnerait la dylib fautive sans aucun symptôme.
+- `build_app.sh` **vérifie le résultat** dans le bundle (marqueur présent dans
+  `Contents/Frameworks/_sounddevice_data/…`) ; `make build-app` et la CI compilent
+  PortAudio avant la gate.
+- **Filet** dans `CaptureMicroSounddevice` :
+  - un WARNING « Flux micro toujours pas fermé » 5 s après un `arreter()` dont la
+    fermeture n'est pas revenue (un thread bloqué ne peut rien journaliser lui-même) ;
+  - `demarrer()`/`redemarrer()` **sautent le refresh PortAudio** si l'ancien flux est
+    encore bloqué, pour ne pas figer l'UI.
+
+  Les deux comportements sont couverts par des tests d'effet, vérifiés par régression
+  simulée, avec leur contre-épreuve.
+
+**Ce que le patch change d'autre.** Le `streamFinishedCallback` de PortAudio est
+désormais livré hors du contexte verrouillé de CoreAudio. Sans effet pour nous :
+aucun code de `src/` ne passe de `finished_callback` à sounddevice. La détection de
+débranchement (docs/25) repose sur le surveillant de périphériques et le chien de
+garde « tranche muette », pas sur ce rappel.
+
+**Pourquoi pas le master amont** (265 commits d'avance, examinés le 2026-10-23).
+Côté CoreAudio, rien d'utile pour nous en dehors de #1175 : #1188 corrige une écriture
+mal alignée sur un chemin d'erreur, #1172 un arrondi de la latence rapportée, et le
+reste est cosmétique ou ajoute une API inutilisée. Le reste du master porte sur
+d'autres host API. Le prendre obligerait à revalider tout ce qui l'a été sur 19.7.0
+(débranchement à chaud docs/25, taux natifs docs/20, horodatages ADC docs/48), pour
+une branche jamais publiée en release.
+
+**Portée.** Le défaut est propre à `pa_mac_core.c` : **macOS seul**. Windows (WASAPI)
+et Linux (PulseAudio) ne passent pas par ce code. En **dev** (`make run`), c'est la dylib
+non corrigée de sounddevice qui tourne : le défaut y reste possible.
+
+**Validation.** CI verte sur les 3 OS (run 39970435334, commit `632e5f9`). Le DMG de
+ce run a été installé et **validé manuellement** par Sylvain le 2026-10-23 : en fin de
+réunion, la pastille orange du micro s'éteint.
+
+**À retirer** quand une release PortAudio contiendra #1175 **et** que sounddevice
+l'embarquera (comparer avec `git log` de `src/hostapi/coreaudio/pa_mac_core.c` amont).
+
 ---
 
 ## 6. Validation manuelle (utilisateur — TCC non scriptable)

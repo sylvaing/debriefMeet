@@ -32,6 +32,18 @@ if not os.path.exists(FFMPEG):
         "    bash packaging/build_ffmpeg.sh\n"
         "(docs/16-packaging-macos.md §5.5)"
     )
+# PortAudio 19.7.0 + correctif amont #1175 (interblocage CoreAudio à l'arrêt d'un flux,
+# docs/16 §5.7) : REMPLACE la dylib que le hook sounddevice collecte, sans quoi le micro
+# peut rester ouvert après une réunion et l'app se figer à la sortie.
+PORTAUDIO = os.path.join(ROOT, "packaging", "vendor", "libportaudio.dylib")
+PORTAUDIO_LICENSE = os.path.join(ROOT, "packaging", "vendor", "LICENSE-portaudio.md")
+PORTAUDIO_DEST = os.path.join("_sounddevice_data", "portaudio-binaries", "libportaudio.dylib")
+if not os.path.exists(PORTAUDIO):
+    raise SystemExit(
+        "packaging/vendor/libportaudio.dylib introuvable — lancer d'abord :\n"
+        "    bash packaging/build_portaudio.sh\n"
+        "(docs/16-packaging-macos.md §5.7)"
+    )
 
 # ── Ressources embarquées ─────────────────────────────────────────────────────
 # Assets UI : résolus via Path(__file__).parent/"assets" → cible debrief_meet/ui/assets.
@@ -43,6 +55,7 @@ datas = [
     (HELPER, os.path.join("helpers", "macos", "sck-audio")),
     (FFMPEG, "vendor"),
     (FFMPEG_LICENSE, "vendor"),
+    (PORTAUDIO_LICENSE, "vendor"),
 ]
 binaries = []
 hiddenimports = [
@@ -94,6 +107,23 @@ a = Analysis(
     noarchive=False,
 )
 
+# Substitution de la dylib PortAudio (cf. PORTAUDIO ci-dessus) : même chemin de
+# destination, seule la source change. Exactement une entrée attendue — zéro voudrait
+# dire que le hook sounddevice a changé de layout et que l'app livrerait la dylib
+# fautive sans que rien ne le signale.
+binaires_app = []
+substitutions = 0
+for dest, source, type_toc in a.binaries:
+    if os.path.normpath(dest) == PORTAUDIO_DEST:
+        source = PORTAUDIO
+        substitutions += 1
+    binaires_app.append((dest, source, type_toc))
+if substitutions != 1:
+    raise SystemExit(
+        f"[spec] {substitutions} entrée(s) {PORTAUDIO_DEST} dans a.binaries (1 attendue) — "
+        "le hook sounddevice a changé : revoir la substitution PortAudio (docs/16 §5.7)."
+    )
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
@@ -112,7 +142,7 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
-    a.binaries,
+    binaires_app,
     a.datas,
     strip=False,
     upx=False,
