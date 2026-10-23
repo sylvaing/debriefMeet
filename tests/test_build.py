@@ -48,9 +48,11 @@ class TestScripts:
         assert (ROOT / "README.md").exists()
 
     def test_readme_contient_sections_essentielles(self):
-        contenu = (ROOT / "README.md").read_text()
+        # Insensible à la casse : la refonte du README (2026-10-23) a rangé les
+        # permissions TCC sous « macOS — permissions », en minuscule dans le titre.
+        contenu = (ROOT / "README.md").read_text().lower()
         for section in ("Prérequis", "Installation", "make", "Permissions"):
-            assert section in contenu, f"Section manquante dans README.md : {section}"
+            assert section.lower() in contenu, f"Section manquante dans README.md : {section}"
 
 
 # ── pyproject.toml ────────────────────────────────────────────────────────────
