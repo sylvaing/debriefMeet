@@ -596,8 +596,10 @@ qu'aucun secret ne fuit par ces logs (token BlueMind, clé Mistral) — ils ne v
 qu'en en-tête et les messages d'erreur des 2 clients ne reprennent que des corps de
 réponse serveur. Les 10 tests ont été validés par **régression simulée**.
 
-Après PortAudio recompilé avec le correctif amont #1175 (docs/16 §5.7, 2026-10-23) :
-**1871 passed, 0 échec** en environnement complet, +11 tests. Terrain : sur le Mac de
+Après PortAudio recompilé avec le correctif amont #1175 (docs/16 §5.7, 2026-10-23,
+**validé manuellement** par Sylvain le jour même sur le DMG CI `632e5f9` — pastille
+orange éteinte après la réunion) : **1871 passed, 0 échec** en environnement complet,
++11 tests ; CI verte sur les 3 OS. Terrain : sur le Mac de
 Sylvain (build `445b0b4`), la **pastille orange du micro est restée allumée** après la fin
 d'une réunion, puis l'app s'est figée en quittant. Cause : un **interblocage AB-BA dans
 PortAudio 19.7.0** (la dylib de sounddevice). Le listener `IsRunning` appelle

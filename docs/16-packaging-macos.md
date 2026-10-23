@@ -424,6 +424,10 @@ une branche jamais publiée en release.
 et Linux (PulseAudio) ne passent pas par ce code. En **dev** (`make run`), c'est la dylib
 non corrigée de sounddevice qui tourne : le défaut y reste possible.
 
+**Validation.** CI verte sur les 3 OS (run 39970435334, commit `632e5f9`). Le DMG de
+ce run a été installé et **validé manuellement** par Sylvain le 2026-10-23 : en fin de
+réunion, la pastille orange du micro s'éteint.
+
 **À retirer** quand une release PortAudio contiendra #1175 **et** que sounddevice
 l'embarquera (comparer avec `git log` de `src/hostapi/coreaudio/pa_mac_core.c` amont).
 
