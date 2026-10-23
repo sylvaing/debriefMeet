@@ -25,6 +25,7 @@ PYINSTALLER="$VENV_BUILD/bin/pyinstaller"
 APP="$ROOT/dist/debriefMeet.app"
 HELPER_IN_APP="$APP/Contents/Resources/helpers/macos/sck-audio/SCKAudioCapture"
 FFMPEG_IN_APP="$APP/Contents/Resources/vendor/ffmpeg"
+PORTAUDIO_IN_APP="$APP/Contents/Frameworks/_sounddevice_data/portaudio-binaries/libportaudio.dylib"
 
 info() { echo "==> $*"; }
 err()  { echo "✗ $*" >&2; exit 1; }
@@ -37,6 +38,10 @@ err()  { echo "✗ $*" >&2; exit 1; }
 [[ -x "$ROOT/packaging/vendor/ffmpeg" ]] || err "packaging/vendor/ffmpeg introuvable. Lancer d'abord :
     bash packaging/build_ffmpeg.sh
 (docs/16-packaging-macos.md §5.5)"
+
+[[ -f "$ROOT/packaging/vendor/libportaudio.dylib" ]] || err "packaging/vendor/libportaudio.dylib introuvable. Lancer d'abord :
+    bash packaging/build_portaudio.sh
+(docs/16-packaging-macos.md §5.7)"
 
 # ── 1. Identité de signature stable ─────────────────────────────────────────────
 info "identité de signature stable…"
@@ -64,6 +69,11 @@ rm -rf "$APP"
 "$PYINSTALLER" "$ROOT/packaging/debriefMeet.spec" --noconfirm \
     --distpath "$ROOT/dist" --workpath "$ROOT/build/work"
 [[ -d "$APP" ]] || err "PyInstaller n'a pas produit $APP."
+# La dylib PortAudio du bundle doit être la version corrigée (#1175), pas celle de
+# sounddevice : le spec la substitue, on vérifie le RÉSULTAT (docs/16 §5.7).
+[[ -f "$PORTAUDIO_IN_APP" ]] || err "PortAudio introuvable dans le bundle : $PORTAUDIO_IN_APP"
+strings "$PORTAUDIO_IN_APP" | grep -q "PortAudio.CoreAudio.startStop" \
+    || err "le bundle embarque la dylib PortAudio NON corrigée (#1175 absent) : $PORTAUDIO_IN_APP"
 
 # ── 5. Signature de l'app ────────────────────────────────────────────────────────
 info "signature de l'app (identité : $IDENTITY)…"

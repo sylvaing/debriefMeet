@@ -57,6 +57,7 @@ run: $(VENV)/bin/activate
 
 build-app:
 	@bash packaging/build_ffmpeg.sh
+	@bash packaging/build_portaudio.sh
 	@bash packaging/build_app.sh
 
 dmg: build-app
