@@ -1,4 +1,4 @@
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 APP_NAME = "debriefMeet"
 
 # `_version.py` est généré par le script de build (docs/31 §3.2, docs/32) — absent en
