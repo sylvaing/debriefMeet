@@ -1040,6 +1040,68 @@ hériter la classe de `ErreurQuotaMistral` fait tomber les deux tests.
 `"mistral_modele_cr": "ministral-14b-latest"` dans `config.json` — la valeur est lue
 telle quelle, et la migration v6 la conservera.
 
+### 10.8 Le 429 de l'envoi entier : deux causes, et aucune trace (2026-10-27, journalisation corrigée)
+
+**Constat (log du Mac de Sylvain).** Depuis le 2026-09-01, **47 transcriptions sur 66
+(71 %)** sont passées par le repli découpage. Le déclencheur est presque toujours un
+**429 sur l'envoi entier de la première piste**, qui la fait découper sans réessai, puis
+la seconde est découpée d'office (`precedente_entiere=False`). Le log ne disait jamais
+**pourquoi** : `ErreurQuotaMistral` portait bien le corps de la réponse, mais
+`transcription.py` journalisait la bascule sans l'exception. ⚠️ C'est le même angle mort
+que le stderr de ffmpeg (§10.6) et que le corps du 429 sur les CR (§10.7) : l'information
+existe au moment des faits et n'est pas écrite.
+
+**Mesures sur l'API réelle (2026-10-27, `voxtral-mini-latest`, aucune reprise).**
+
+- **Deux causes derrière le même statut 429**, distinguées par le corps seul :
+  - `rate_limited` (code **1300**) : notre quota ;
+  - `backend_out_of_capacity` (code **3505**), « Not enough capacity available for this
+    request » : un manque de capacité **côté Mistral**.
+- **Quota de transcription** (en-têtes d'une réponse 200) :
+  `x-ratelimit-limit-audio-seconds-minute: 3600`, `x-ratelimit-limit-req-minute: 60`,
+  et `x-ratelimit-audio-seconds-query-cost` = la durée du fichier. Soit au plus **60 min
+  d'audio par minute glissante**.
+- **Le refus de capacité dépend de la durée envoyée.** Extraits d'une même piste réelle,
+  envoyés entiers et espacés de 70 s :
+
+  | Durée | 5 min | 20 min | 30 min | 40 min | 50 min | 60 min | 75 min | 112 min |
+  |---|---|---|---|---|---|---|---|---|
+  | Réussis | 6/6 | 1/2 | 3/3 | 0/2 | 0/2 | 0/2 | 0/1 | 0/1 |
+
+  Tous les échecs sont des **3505**, rendus après 12 à 54 s de traitement, sans en-tête
+  de quota. Le log du poste confirme la tendance sur la première piste : 4 échecs sur
+  21 entre 10 et 20 min envoyées, 6 sur 10 entre 30 et 50 min, 2 sur 2 au-delà de 60 min.
+  **Hypothèse** (non prouvée, cohérente avec toutes les mesures) : Mistral découpe lui-même
+  l'audio en tranches d'environ 1 min (`request_count: 33` pour 30 min), et la requête
+  échoue dès qu'une tranche manque de capacité. Le risque croît donc avec la longueur.
+  La capacité varie aussi dans le temps (le 2026-10-23 au soir, 3 envois de 30 min sur 3
+  sont passés).
+- **Réunions enchaînées.** Le 2026-10-19, une transcription se termine à 11:21:36 et la
+  suivante prend son 429 à 11:21:55, dans la même minute glissante de 3 600 s. Ce cas-là
+  est un vrai quota (`rate_limited`), qu'une attente de fin de fenêtre suffirait à passer.
+
+Les « 3 h par requête » annoncées pour Transcribe 2 (docs/47 §2) ne tiennent pas en
+pratique : au-delà de 35 à 40 min, l'envoi entier échoue presque toujours au moment de
+la mesure.
+
+**Livré : la journalisation seule** (décision de Sylvain : comprendre avant de changer la
+stratégie). `client.detail_429(reponse)` résume un 429 en une ligne :
+`type (code N) : message`, plus les en-têtes `x-ratelimit-*` et `Retry-After` présents.
+Il est utilisé dans les 2 messages d'`ErreurQuotaMistral` et dans le WARNING de chaque
+attente de reprise, et `transcription.py` joint ce motif aux 3 WARNING de bascule
+(découpage sans retry, attente de fenêtre, 429 persistant). Tests d'effet sur le log et
+le message, vérifiés par régression simulée.
+
+**Pistes ouvertes, non engagées :**
+- découper **d'avance** au-delà d'un seuil de durée envoyée (vers 25 min), plutôt que de
+  payer un envoi entier quasi condamné ;
+- sur un `backend_out_of_capacity` d'une piste **courte**, faire un nouvel essai entier
+  après une courte attente ;
+- sur un `rate_limited`, **attendre la fin de la fenêtre** au lieu de découper.
+
+À trancher avec les motifs que le log va désormais livrer. Conséquence pour la
+diarization : docs/47 §6.3.
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle

@@ -15,6 +15,7 @@ from debrief_meet.core.mistral.client import (
     ErreurQuotaMistral,
     ErreurReseauMistral,
     ErreurServeurMistral,
+    detail_429,
     valider_url,
 )
 
@@ -289,6 +290,65 @@ def test_429_retries_conserves_par_defaut_sur_transcription():
                                     "a.opus", b"x", "audio/ogg")
     assert r.json() == {"text": "ok"}
     assert route.call_count == 2
+
+
+# ── Motif du 429 journalisé (docs/42 §10.8, mesuré le 2026-10-27) ─────────────────
+# Le même 429 recouvre notre quota (rate_limited, 1300) et un manque de capacité côté
+# Mistral (backend_out_of_capacity, 3505) ; seuls le corps et les en-têtes les
+# distinguent. Corps et en-têtes tels que relevés sur l'API réelle.
+
+_CORPS_CAPACITE = ('{"object":"error","message":"Not enough capacity available for this '
+                   'request, please retry later.","type":"backend_out_of_capacity",'
+                   '"param":null,"code":"3505","raw_status_code":429}')
+_CORPS_QUOTA = ('{"object":"error","message":"Rate limit exceeded","type":"rate_limited",'
+                '"param":null,"code":"1300","raw_status_code":429}')
+_ENTETES_QUOTA = {"x-ratelimit-limit-audio-seconds-minute": "3600",
+                  "x-ratelimit-remaining-audio-seconds-minute": "0",
+                  "x-ratelimit-audio-seconds-query-cost": "1787"}
+
+
+def test_detail_429_capacite():
+    d = detail_429(httpx.Response(429, text=_CORPS_CAPACITE))
+    assert d.startswith("backend_out_of_capacity (code 3505) : Not enough capacity")
+
+
+def test_detail_429_quota_avec_ses_en_tetes():
+    d = detail_429(httpx.Response(429, text=_CORPS_QUOTA, headers=_ENTETES_QUOTA))
+    assert d.startswith("rate_limited (code 1300) : Rate limit exceeded")
+    assert "remaining-audio-seconds-minute=0" in d
+    assert "audio-seconds-query-cost=1787" in d
+
+
+@pytest.mark.parametrize("corps, attendu", [("pas du json", "pas du json"), ("", "corps vide")])
+def test_detail_429_corps_illisible_rendu_tel_quel(corps, attendu):
+    assert detail_429(httpx.Response(429, text=corps)) == attendu
+
+
+@respx.mock
+def test_erreur_quota_sans_retry_porte_le_motif():
+    """L'envoi entier (retries_429=False) : c'est ce message que transcription.py
+    journalise au moment de basculer en découpage."""
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(429, text=_CORPS_CAPACITE))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurQuotaMistral, match=r"backend_out_of_capacity \(code 3505\)"):
+        client.poster_transcription("v1/audio/transcriptions", {"model": "m"},
+                                    "a.opus", b"x", "audio/ogg", retries_429=False)
+
+
+@respx.mock
+def test_attente_429_journalise_le_motif_et_les_quotas(caplog):
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [httpx.Response(429, text=_CORPS_QUOTA, headers=_ENTETES_QUOTA),
+                         httpx.Response(200, json={"text": "ok"})]
+    client = ClientMistral(URL, "cle-secrete-xyz")
+    with caplog.at_level("WARNING", logger="debrief_meet.core.mistral.client"):
+        client.poster_transcription("v1/audio/transcriptions", {"model": "m"},
+                                    "a.opus", b"x", "audio/ogg")
+    texte = caplog.text
+    assert "rate_limited (code 1300)" in texte
+    assert "remaining-audio-seconds-minute=0" in texte
+    assert "cle-secrete-xyz" not in texte
 
 
 # ── 429 à plafond nul : le modèle n'est pas servi (terrain 2026-09-08, §10.7) ────

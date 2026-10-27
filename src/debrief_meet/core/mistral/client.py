@@ -114,6 +114,35 @@ def _refuser_si_plafond_nul(reponse: httpx.Response, chemin: str, kwargs: dict) 
         f"Réponse : {reponse.text[:200]}")
 
 
+def detail_429(reponse: httpx.Response) -> str:
+    """Pourquoi ce 429, en une ligne : `type (code N) : message` du corps, puis les
+    en-têtes de quota que la réponse porte (`x-ratelimit-*`, `Retry-After`).
+
+    Le même statut 429 recouvre deux causes sans rapport (mesuré le 2026-10-27,
+    docs/42 §10.8) : `rate_limited` (1300) = notre quota, 3 600 s d'audio par minute
+    glissante pour Voxtral ; `backend_out_of_capacity` (3505) = Mistral manque de
+    capacité, d'autant plus souvent que l'audio envoyé est long. Seuls le corps et les
+    en-têtes les distinguent, et rien ne les écrivait : 71 % des transcriptions du
+    poste de Sylvain avaient basculé en découpage sur un 429 sans qu'on puisse dire
+    lequel. Corps de réponse serveur et en-têtes uniquement : la clé n'y figure jamais."""
+    try:
+        corps = reponse.json()
+    except ValueError:
+        corps = None
+    if isinstance(corps, dict) and (corps.get("type") or corps.get("code")):
+        detail = f"{corps.get('type') or '?'} (code {corps.get('code') or '?'})"
+        if corps.get("message"):
+            detail += f" : {str(corps['message'])[:150]}"
+    else:
+        detail = reponse.text[:200] or "corps vide"
+    quotas = [f"{nom.removeprefix('x-ratelimit-')}={valeur}"
+              for nom, valeur in sorted(reponse.headers.items())
+              if nom.lower().startswith("x-ratelimit-") or nom.lower() == "retry-after"]
+    if quotas:
+        detail += f" [{', '.join(quotas)}]"
+    return detail
+
+
 def _delai_retry_after(reponse: httpx.Response) -> float | None:
     valeur = reponse.headers.get("Retry-After")
     if not valeur:
@@ -226,7 +255,7 @@ class ClientMistral:
             _refuser_si_plafond_nul(reponse, chemin, kwargs)
             if not retries_429:
                 raise ErreurQuotaMistral(
-                    f"Quota dépassé (429) sur {chemin} : {reponse.text[:300]}")
+                    f"Quota dépassé (429) sur {chemin} : {detail_429(reponse)}")
             for tentative in range(1, _TENTATIVES_429 + 1):
                 attente = _delai_retry_after(reponse)
                 if attente is None:
@@ -238,7 +267,7 @@ class ClientMistral:
                     attente = 20.0 * tentative
                 logger.warning("429 Mistral sur %s — attente %.1fs (tentative %d/%d) : %s",
                                chemin, attente, tentative, _TENTATIVES_429,
-                               reponse.text[:200])
+                               detail_429(reponse))
                 _dormir(attente)
                 reponse = self._client.request(methode, chemin, **kwargs)
                 if reponse.status_code != 429:
@@ -246,7 +275,7 @@ class ClientMistral:
                 _refuser_si_plafond_nul(reponse, chemin, kwargs)
             else:
                 raise ErreurQuotaMistral(
-                    f"Quota dépassé (429) sur {chemin} : {reponse.text[:300]}")
+                    f"Quota dépassé (429) sur {chemin} : {detail_429(reponse)}")
         if reponse.status_code in (401, 403):
             # Le corps porte la vraie cause — cas réel du 2026-08-31 : 403
             # tier_not_allowed (mistral-large restreint à un tier supérieur), que le

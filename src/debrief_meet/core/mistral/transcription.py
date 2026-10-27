@@ -248,19 +248,23 @@ def _transcrire_avec_replis(client: ClientMistral, chemin: Path, modele: str,
     except ErreurServeurMistral:
         logger.warning("Erreur serveur persistante pour %s — repli découpage", chemin.name)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
-    except ErreurQuotaMistral:
+    except ErreurQuotaMistral as exc:
+        # Le motif du 429 (`exc`, cf. `client.detail_429`) est journalisé à chaque
+        # bascule : quota (rate_limited) et manque de capacité côté Mistral
+        # (backend_out_of_capacity) ne se soignent pas pareil (docs/42 §10.8).
         if precedente_entiere:
             logger.warning(
                 "Quota Mistral (429) pour %s — fenêtre remplie par la piste précédente, "
-                "nouvel essai entier dans %.0f s", chemin.name, _ATTENTE_FENETRE_S)
+                "nouvel essai entier dans %.0f s — %s", chemin.name, _ATTENTE_FENETRE_S, exc)
             _dormir(_ATTENTE_FENETRE_S)
             try:
                 return _transcrire_entier(client, chemin, modele, langue, context_bias)
-            except ErreurQuotaMistral:
-                logger.warning("Quota Mistral (429) persistant pour %s — repli découpage",
-                               chemin.name)
+            except ErreurQuotaMistral as exc_bis:
+                logger.warning("Quota Mistral (429) persistant pour %s — repli découpage — %s",
+                               chemin.name, exc_bis)
         else:
-            logger.warning("Quota Mistral (429) pour %s — repli découpage sans retry", chemin.name)
+            logger.warning("Quota Mistral (429) pour %s — repli découpage sans retry — %s",
+                           chemin.name, exc)
         return _transcrire_decoupe(client, chemin, modele, langue, context_bias)
 
 

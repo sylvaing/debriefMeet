@@ -597,3 +597,53 @@ def test_cumuler_usage_ne_somme_que_les_nombres():
     assert total["tier"] == "premier", "dernier segment gagne pour les non-nombres"
     assert total["flag"] is False, "un booléen n'est pas un compteur"
     assert total["vide"] is None
+
+
+# ── Motif du 429 journalisé à la bascule en découpage (docs/42 §10.8) ────────────
+# 71 % des transcriptions d'un poste passaient par le découpage sur un 429 dont le log
+# ne disait pas la nature : quota (attendre suffirait) ou capacité côté Mistral.
+
+_CORPS_CAPACITE = ('{"object":"error","message":"Not enough capacity available for this '
+                   'request, please retry later.","type":"backend_out_of_capacity",'
+                   '"code":"3505"}')
+
+
+def _segments_factices(tmp_path, monkeypatch):
+    seg = tmp_path / "seg1.opus"
+    seg.write_bytes(b"x")
+    monkeypatch.setattr(t, "decouper_piste", lambda chemin, dossier: [seg])
+
+
+@respx.mock
+def test_bascule_en_decoupage_journalise_le_motif_du_429(tmp_path, monkeypatch, caplog):
+    chemin = tmp_path / "moi.opus"
+    chemin.write_bytes(b"faux-opus-long")
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [httpx.Response(429, text=_CORPS_CAPACITE),
+                         httpx.Response(200, json={"text": "segment"})]
+    _segments_factices(tmp_path, monkeypatch)
+
+    with caplog.at_level("WARNING", logger="debrief_meet.core.mistral.transcription"):
+        t.transcrire_fichier(ClientMistral(URL, "cle"), chemin, "voxtral-mini-latest")
+
+    ligne = next(r.getMessage() for r in caplog.records if "repli découpage sans retry" in r.getMessage())
+    assert "backend_out_of_capacity (code 3505)" in ligne
+
+
+@respx.mock
+def test_429_persistant_apres_attente_journalise_aussi_le_motif(tmp_path, monkeypatch, caplog):
+    chemin = tmp_path / "systeme.opus"
+    chemin.write_bytes(b"faux-opus-long")
+    route = respx.post(f"{URL}/v1/audio/transcriptions")
+    route.side_effect = [httpx.Response(429, text=_CORPS_CAPACITE),
+                         httpx.Response(429, text=_CORPS_CAPACITE),
+                         httpx.Response(200, json={"text": "segment"})]
+    _segments_factices(tmp_path, monkeypatch)
+
+    with caplog.at_level("WARNING", logger="debrief_meet.core.mistral.transcription"):
+        t.transcrire_fichier(ClientMistral(URL, "cle"), chemin, "voxtral-mini-latest",
+                             precedente_entiere=True)
+
+    lignes = [r.getMessage() for r in caplog.records if "Quota Mistral (429)" in r.getMessage()]
+    assert len(lignes) == 2
+    assert all("backend_out_of_capacity (code 3505)" in l for l in lignes)
