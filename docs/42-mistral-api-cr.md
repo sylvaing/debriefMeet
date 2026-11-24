@@ -1102,6 +1102,52 @@ le message, vérifiés par régression simulée.
 À trancher avec les motifs que le log va désormais livrer. Conséquence pour la
 diarization : docs/47 §6.3.
 
+### 10.9 Un 402 pris pour une erreur serveur, puis un `transcription.md` verrouillé qui jetait le CR (2026-11-24, corrigé)
+
+**Constat (diagnostic de Bastien, build `f77f407`, Windows).** Une seule réunion bloquée,
+celle du 2026-11-20 (102 min), par deux pannes successives :
+
+1. **2026-11-20, 402 sur `v1/audio/transcriptions`.** « Payment Required » : le compte
+   Mistral de la clé n'avait plus de crédit ou de moyen de paiement à ce moment-là. Le log
+   n'en disait rien d'exploitable : le client classait tout 4xx non mappé en
+   `ErreurServeurMistral` (« Erreur serveur (402) ») **en jetant le corps**, et comme
+   `transcription.py` découpe sur `ErreurServeurMistral`, le 402 a traversé toute la
+   cascade (piste compactée → « Compaction des silences impossible … envoi intégral » →
+   découpage) avant de remonter. Le WARNING accusait donc la compaction. Résolu côté compte
+   le 2026-11-23 : les appels repassent.
+2. **2026-11-23, `PermissionError: [Errno 13]` sur `transcription.md`.** 4 tentatives
+   (CR et transcription seule, avant et après un passage en mode local) : chacune transcrit
+   les 102 min chez Voxtral, puis la réécriture du placeholder échoue, et **le CR n'est
+   jamais rédigé** alors que le transcript est en mémoire. Le fichier se **lisait** (titre
+   et durée lus juste avant) mais refusait l'écriture, et le refus a survécu à un
+   redémarrage de l'app : verrou d'une autre application (copier le fichier puis l'ouvrir
+   ailleurs), attribut lecture seule ou accès contrôlé aux dossiers de Defender. Le log ne
+   permet pas de trancher entre les trois.
+
+**Livré :**
+- `ErreurPaiementMistral` (402), corps de réponse joint, **sœur** de
+  `ErreurServeurMistral` et surtout pas une sous-classe (même raisonnement que
+  `ErreurModeleIndisponibleMistral`, §10.7) ; le message renvoie vers la console Mistral.
+  Le corps est aussi joint au message générique `ErreurServeurMistral` (même angle mort
+  que §10.6-10.8).
+- `transcription._REFUS_DEFINITIFS` (auth, paiement, modèle non servi) : relevés tels
+  quels par le `except Exception` de la compaction — aucun repli ne peut les lever, et le
+  log ne doit plus accuser la compaction.
+- `generer_cr_reunion` : une `PermissionError` sur la réécriture de `transcription.md`
+  devient un WARNING (« Transcription Voxtral non enregistrée, CR rédigé quand même ») et
+  le CR est rédigé sur le transcript en mémoire. `transcrire_reunion`, dont l'écriture est
+  la tâche même, et l'écriture de `CR.md` lèvent une `ErreurMistral` qui dit quoi faire
+  (fermer le fichier, lecture seule, redémarrer) au lieu d'un `[Errno 13]` brut.
+  ⚠️ **`PermissionError` seulement** : un dossier supprimé pendant le job
+  (`FileNotFoundError`) doit continuer d'échouer tel quel (docs/43 §16) — un premier jet
+  en `except OSError` l'avalait, `test_dossier_supprime_pendant_le_job_echoue_comme_avant`
+  l'a refusé.
+
+⚠️ Tests : le verrou est simulé en remplaçant `Path.write_text` pour le seul fichier visé,
+**pas** par `chmod` — le conteneur Linux de la CI tourne en root, qui écrit dans un
+fichier en lecture seule. Les 3 garde-fous ont été vérifiés par régression simulée
+(re-raise retiré, 402 non mappé, écriture du transcript rendue bloquante).
+
 ## 11. Observabilité — RÈGLE : aucune notion de coût dans l'app
 
 > **Règle : l'application ne mentionne JAMAIS de coût, prix, tarif, montant (€, $) — nulle

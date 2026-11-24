@@ -24,7 +24,10 @@ from pathlib import Path
 from debrief_meet.core.audio import decoder_audio_16k, preparer_asr
 from debrief_meet.core.mistral.client import (
     ClientMistral,
+    ErreurAuthMistral,
     ErreurFormatMistral,
+    ErreurModeleIndisponibleMistral,
+    ErreurPaiementMistral,
     ErreurQuotaMistral,
     ErreurReseauMistral,
     ErreurServeurMistral,
@@ -33,6 +36,10 @@ from debrief_meet.core.mistral.decoupage import LIMITE_SEGMENT_S, decouper_piste
 from debrief_meet.core.mistral.silences import PlanCompaction, compacter_piste, plan_compaction
 
 logger = logging.getLogger(__name__)
+
+# Refus qui ne dépendent pas de ce qu'on envoie : aucun repli (envoi intégral,
+# transcodage, découpage) ne peut les lever, chacun ne ferait que les répéter.
+_REFUS_DEFINITIFS = (ErreurAuthMistral, ErreurPaiementMistral, ErreurModeleIndisponibleMistral)
 
 _MIME_PAR_EXT = {
     ".opus": "audio/ogg", ".ogg": "audio/ogg", ".wav": "audio/wav",
@@ -186,6 +193,11 @@ def transcrire_fichier(client: ClientMistral, chemin: Path, modele: str,
                 res = _transcrire_avec_replis(client, compacte, modele, langue,
                                               context_bias or [], precedente_entiere)
             return _remettre_horodatages(res, plan)
+        except _REFUS_DEFINITIFS:
+            # Pas un échec de compaction : le compte ou le modèle est refusé, l'envoi
+            # intégral essuierait le même refus — et le log accusait la compaction
+            # (terrain 2026-11-20, 402).
+            raise
         except Exception as exc:  # noqa: BLE001 — jamais au prix du CR (cf. docstring)
             logger.warning("Compaction des silences impossible pour %s (%s) — envoi intégral",
                            chemin.name, exc)

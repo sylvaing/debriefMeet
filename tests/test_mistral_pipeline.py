@@ -2,6 +2,9 @@
 local par défaut, repli Voxtral si absent, forçage possible. Aucun réseau réel (respx)."""
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 import httpx
 import numpy as np
 import pytest
@@ -686,3 +689,74 @@ def test_transcrire_reunion_ecrit_dans_le_dossier_renomme_pendant_le_job(tmp_pat
     assert sortie == nouveau["md"]
     assert "texte apres renommage" in nouveau["md"].read_text(encoding="utf-8")
     assert not md.exists()                          # rien écrit à l'ancien chemin
+
+
+# ── fichier verrouillé en écriture (terrain 2026-11-23, docs/42 §10.9) ──────────
+
+def _verrouiller_en_ecriture(monkeypatch, *cibles):
+    """Simule un fichier ouvert ailleurs sous Windows : il se LIT (titre et durée sont
+    lus avant la réécriture) mais refuse l'écriture avec `[Errno 13]`. Pas de chmod :
+    en CI le conteneur Linux tourne en root, qui écrit dans un fichier en lecture seule."""
+    ecrire = Path.write_text
+    noms = {c.name for c in cibles}
+
+    def _write_text(self, *a, **k):
+        if self.name in noms:
+            raise PermissionError(13, "Permission denied", str(self))
+        return ecrire(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", _write_text)
+
+
+@respx.mock
+def test_cr_redige_meme_si_transcription_md_verrouille(tmp_path, config_tmp, monkeypatch,
+                                                      caplog):
+    """Terrain : 4 transcriptions de 102 min facturées puis jetées, CR jamais rédigé,
+    parce que `transcription.md` refusait la réécriture. Le transcript est en mémoire :
+    le CR ne doit pas en dépendre sur disque."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    route_transcription = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "propos de la réunion"}))
+    route_cr = respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+    _verrouiller_en_ecriture(monkeypatch, md)
+
+    with caplog.at_level(logging.WARNING, logger="debrief_meet.core.mistral.pipeline"):
+        chemin_cr = pipeline.generer_cr_reunion(md, config_tmp)
+
+    assert chemin_cr.read_text(encoding="utf-8").startswith("# CR généré")
+    assert route_transcription.call_count == 1
+    assert b"propos de la r" in route_cr.calls.last.request.content
+    assert MARQUEUR_EN_ATTENTE in md.read_text(encoding="utf-8"), "le .md n'a pas bougé"
+    assert any("non enregistrée" in r.getMessage() and "Fermez-le" in r.getMessage()
+               for r in caplog.records)
+
+
+@respx.mock
+def test_transcrire_reunion_verrouille_donne_un_message_actionnable(tmp_path, config_tmp,
+                                                                   monkeypatch):
+    """Transcription seule : l'écriture EST la tâche, l'échec est inévitable — mais en
+    `ErreurMistral` lisible, pas en `[Errno 13]` brut accompagné d'une trace."""
+    md = _md_placeholder(tmp_path)
+    _piste(tmp_path, "moi")
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "texte voxtral"}))
+    _verrouiller_en_ecriture(monkeypatch, md)
+
+    with pytest.raises(ErreurMistral, match="ouvert dans une autre application") as exc:
+        pipeline.transcrire_reunion(md, config_tmp)
+    assert md.name in str(exc.value)
+    assert isinstance(exc.value.__cause__, PermissionError)
+
+
+@respx.mock
+def test_cr_md_verrouille_donne_un_message_actionnable(tmp_path, config_tmp, monkeypatch):
+    md = _md_avec_transcript(tmp_path)
+    _configurer(config_tmp)
+    respx.post(f"{URL}/v1/chat/completions").mock(return_value=_REP_CR)
+    _verrouiller_en_ecriture(monkeypatch, chemin_cr_mistral(md))
+
+    with pytest.raises(ErreurMistral, match="CR.md .*lecture seule"):
+        pipeline.generer_cr_reunion(md, config_tmp)

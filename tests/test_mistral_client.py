@@ -12,6 +12,7 @@ from debrief_meet.core.mistral.client import (
     ErreurFormatMistral,
     ErreurMistral,
     ErreurModeleIndisponibleMistral,
+    ErreurPaiementMistral,
     ErreurQuotaMistral,
     ErreurReseauMistral,
     ErreurServeurMistral,
@@ -143,6 +144,38 @@ def test_erreur_serveur():
     client = ClientMistral(URL, "cle")
     with pytest.raises(ErreurServeurMistral):
         client.get("v1/models")
+
+
+@respx.mock
+def test_erreur_serveur_porte_le_corps_de_la_reponse():
+    respx.get(f"{URL}/v1/models").mock(return_value=httpx.Response(404, text="route inconnue"))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurServeurMistral, match="route inconnue"):
+        client.get("v1/models")
+
+
+# ── 402 : paiement requis (terrain 2026-11-20, docs/42 §10.9) ──────────────────────
+
+_CORPS_402 = '{"object":"error","message":"Payment required","type":"payment_required"}'
+
+
+@respx.mock
+def test_402_est_un_refus_de_paiement_qui_porte_le_corps():
+    """Affiché « Erreur serveur (402) » et corps jeté sur le terrain : rien ne disait
+    que c'était la facturation du compte qui bloquait."""
+    route = respx.post(f"{URL}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(402, text=_CORPS_402))
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(ErreurPaiementMistral, match="payment_required") as exc:
+        client.poster_transcription("v1/audio/transcriptions", {"model": "m"}, "a.opus",
+                                    b"x", "audio/ogg")
+    assert "Paiement requis (402)" in str(exc.value)
+    assert route.call_count == 1, "un 402 ne se résorbe pas en réessayant"
+
+
+def test_402_n_est_pas_une_erreur_serveur():
+    """`transcription.py` découpe sur `ErreurServeurMistral` : le 402 doit y échapper."""
+    assert not issubclass(ErreurPaiementMistral, ErreurServeurMistral)
 
 
 # ── reprise sur 5xx (terrain 2026-08-31 : 503 sur un envoi de 139 min) ──────────────

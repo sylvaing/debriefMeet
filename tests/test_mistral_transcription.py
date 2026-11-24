@@ -528,6 +528,32 @@ def test_echec_de_compaction_retombe_sur_l_envoi_integral(tmp_path, monkeypatch)
     assert "systeme.wav" in envoyes[0]
 
 
+@pytest.mark.parametrize("reponse", [
+    httpx.Response(402, text='{"type":"payment_required"}'),
+    httpx.Response(401, text='{"message":"Unauthorized"}'),
+    httpx.Response(429, headers={"x-ratelimit-limit-req-minute": "0"}, text="{}"),
+], ids=["paiement-402", "auth-401", "plafond-nul-429"])
+@respx.mock
+def test_refus_definitif_ne_passe_ni_par_l_envoi_integral_ni_par_le_decoupage(
+        tmp_path, monkeypatch, reponse):
+    """Terrain 2026-11-20 : le 402 de la piste compactée est passé pour un « échec de
+    compaction », a déclenché l'envoi intégral puis le découpage, et le log accusait la
+    compaction. Un refus du compte ou du modèle ne dépend pas de ce qu'on envoie : il
+    doit remonter dès le premier appel (docs/42 §10.9). Test d'EFFET : retirer le
+    `except _REFUS_DEFINITIFS` de `transcrire_fichier` le fait échouer."""
+    chemin = _wav_audible(tmp_path, "moi.wav")
+    compacte = _wav_audible(tmp_path, "moi_compacte.opus")
+    monkeypatch.setattr(t, "compacter_piste", lambda src, dossier, plan: compacte)
+    monkeypatch.setattr(t, "decouper_piste",
+                        lambda *a, **k: pytest.fail("découpage tenté sur un refus définitif"))
+    route = respx.post(f"{URL}/v1/audio/transcriptions").mock(return_value=reponse)
+
+    client = ClientMistral(URL, "cle")
+    with pytest.raises(t._REFUS_DEFINITIFS):
+        t.transcrire_fichier(client, chemin, "voxtral-mini-latest", plan=_plan_utile())
+    assert route.call_count == 1, "ni envoi intégral ni segment après le refus"
+
+
 def test_analyser_piste_fournit_le_plan(tmp_path):
     analyse = t.analyser_piste(_wav_audible(tmp_path, secondes=3.0))
     assert analyse.plan is not None

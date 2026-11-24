@@ -221,6 +221,20 @@ def _ecrire_transcript_local(chemin_md: Path, res: _ResultatVoxtral) -> None:
         definir_duree(chemin_md, duree)
 
 
+def _message_ecriture_impossible(chemin_md: Path, exc: PermissionError) -> str:
+    """Ce que l'utilisateur peut faire quand `transcription.md` refuse l'écriture.
+
+    Terrain 2026-11-23 (Windows) : `[Errno 13] Permission denied` sur un fichier qui se
+    lisait encore — verrou d'une autre application, attribut lecture seule ou accès
+    contrôlé aux dossiers. Le message brut ne disait rien de tout ça (docs/42 §10.9).
+
+    `PermissionError` seulement : un dossier supprimé pendant le job (`FileNotFoundError`)
+    doit continuer d'échouer tel quel, et ce message le décrirait à tort (docs/43 §16)."""
+    return (f"Impossible d'écrire {chemin_md.name} ({exc.strerror or exc}) — le fichier "
+            "est sans doute ouvert dans une autre application ou en lecture seule. "
+            "Fermez-le (ou redémarrez l'ordinateur), puis relancez.")
+
+
 def transcrire_reunion(chemin_md: Path, config: "Config") -> Path:
     """Transcription distante **seule** — réécrit `transcription.md`, ne produit aucun CR.
 
@@ -250,7 +264,11 @@ def transcrire_reunion(chemin_md: Path, config: "Config") -> Path:
         res = _transcrire_via_voxtral(chemin_md, client, config, context_bias)
 
     chemin_md = resoudre_chemin_reunion(chemin_md)   # l'upload a duré des minutes
-    _ecrire_transcript_local(chemin_md, res)
+    try:
+        _ecrire_transcript_local(chemin_md, res)
+    except PermissionError as exc:
+        # Ici l'écriture EST la tâche : on ne peut qu'échouer, mais en disant quoi faire.
+        raise ErreurMistral(_message_ecriture_impossible(chemin_md, exc)) from exc
     _reinserer_bloc_invites(chemin_md)               # la réécriture a effacé le cartouche
     # `locuteurs.md` décrit la transcription qu'on vient de REMPLACER. Le garder serait
     # pire que le supprimer : `_lire_transcript_local` lui donne la priorité, donc le
@@ -311,8 +329,16 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
                 # les lectures ci-dessus (cas réel du 2026-08-26 16:19, échec à 347 ms
                 # de la fin de l'upload).
                 chemin_md = resoudre_chemin_reunion(chemin_md)
-                _ecrire_transcript_local(chemin_md, res)      # récupère la transcription en local
-                _reinserer_bloc_invites(chemin_md)            # la réécriture a effacé le cartouche
+                try:
+                    _ecrire_transcript_local(chemin_md, res)  # récupère la transcription en local
+                    _reinserer_bloc_invites(chemin_md)        # la réécriture a effacé le cartouche
+                except PermissionError as exc:
+                    # Le transcript est en mémoire et déjà facturé : le CR n'en a pas
+                    # besoin sur disque. Terrain 2026-11-23 : 4 transcriptions de 102 min
+                    # payées puis jetées, CR jamais rédigé, faute de pouvoir réécrire un
+                    # transcription.md verrouillé (docs/42 §10.9).
+                    logger.warning("Transcription Voxtral non enregistrée, CR rédigé quand "
+                                   "même — %s", _message_ecriture_impossible(chemin_md, exc))
         cr_markdown, _usage_cr = generer_cr(
             client, transcript, prompt, config.get("mistral_modele_cr"),
             sujet=sujet, participants=infos.participants, date=_date_lisible(infos, chemin_md))
@@ -321,7 +347,10 @@ def generer_cr_reunion(chemin_md: Path, config: "Config", prompt: str | None = N
     # lecture passée, écriture du CR.md dans un dossier déjà renommé).
     chemin_md = resoudre_chemin_reunion(chemin_md)
     chemin_cr = chemin_cr_mistral(chemin_md)
-    chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")
+    try:
+        chemin_cr.write_text(cr_markdown.strip() + "\n", encoding="utf-8")
+    except PermissionError as exc:
+        raise ErreurMistral(_message_ecriture_impossible(chemin_cr, exc)) from exc
     logger.info("CR Mistral généré (source=%s, %d invité(s)) : %s",
                 source, len(infos.participants), chemin_cr)
     return chemin_cr

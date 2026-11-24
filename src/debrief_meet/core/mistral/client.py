@@ -23,6 +23,16 @@ class ErreurAuthMistral(ErreurMistral):
     """401/403 — clé API invalide ou insuffisante."""
 
 
+class ErreurPaiementMistral(ErreurMistral):
+    """402 — le compte Mistral n'a plus de crédit ou de moyen de paiement valide.
+
+    Refus **définitif** tant que la facturation n'est pas réglée : surtout pas une
+    `ErreurServeurMistral`, que `transcription.py` rattrape pour découper — découper
+    multiplierait le même refus par le nombre de segments. Terrain 2026-11-20 : un 402
+    affiché « Erreur serveur (402) », corps jeté, passé par la compaction puis le
+    découpage avant de remonter (docs/42 §10.9)."""
+
+
 class ErreurQuotaMistral(ErreurMistral):
     """429 — quota/rate-limit dépassé malgré les reprises."""
 
@@ -284,9 +294,16 @@ class ClientMistral:
             raise ErreurAuthMistral(
                 f"Authentification refusée ({reponse.status_code}) sur {chemin} : "
                 f"{reponse.text[:300]}")
+        if reponse.status_code == 402:
+            raise ErreurPaiementMistral(
+                f"Paiement requis (402) sur {chemin} — crédit ou moyen de paiement du "
+                f"compte Mistral à régulariser sur console.mistral.ai : {reponse.text[:300]}")
         if reponse.status_code in (400, 415, 422):
             raise ErreurFormatMistral(
                 f"Requête refusée ({reponse.status_code}) sur {chemin} : {reponse.text[:300]}")
         if reponse.status_code >= 400:
-            raise ErreurServeurMistral(f"Erreur serveur ({reponse.status_code}) sur {chemin}")
+            # Corps joint comme pour 401/403/4xx : un statut nu oblige à rejouer l'appel
+            # à la main pour en connaître la cause (même angle mort que §10.7).
+            raise ErreurServeurMistral(
+                f"Erreur serveur ({reponse.status_code}) sur {chemin} : {reponse.text[:300]}")
         return reponse
