@@ -91,6 +91,8 @@ d'avant) :
   retéléchargera au prochain build (c'est son chemin nominal). ⚠️ Le prochain setup
   Windows embarque donc un ffmpeg 8.1.3 au lieu de 8.1.2 — à passer par la fumée
   `scripts/fumee_setup_vm.sh` comme n'importe quel build.
+  **Ré-épinglé une 2ᵉ fois le 2026-11-24** sur `autobuild-2026-11-23-12-43`
+  (`ffmpeg-n8.1.3-39-g660b5aa7db`, SHA256 `f0ca6f38…`) : cf. § run v0.4.2 au journal.
 
 - `packaging/creer_certificat.sh` : `DEBRIEFMEET_KEYCHAIN` (défaut : le trousseau de
   session), pour que l'identité éphémère de CI aille dans le trousseau temporaire du
@@ -328,3 +330,15 @@ rapide.
   l'empreinte qu'il faut comparer. Un DMG de la CI est donc désormais **installable
   sur un poste sans redemander Micro / Enregistrement de l'écran**, et un build sur
   tag passera le garde-fou du job macOS.
+
+- **2026-11-24, run v0.4.2** (45381184025) : `windows` ❌ en `[2/6]` — cache absent
+  (`actions/cache` vide depuis la v0.4.1), **release miroir `outils-build` introuvable**
+  (« release not found » : la release avait disparu, le **tag** subsistait), et l'URL
+  BtbN du 2026-10-20 en **404**. Les deux parades du §5 sont donc tombées ensemble, ce
+  que le §5 ne prévoyait pas : le miroir n'est pas éternel non plus. Cause de la
+  disparition non établie. Réparé en ré-épinglant sur le dernier autobuild 8.1 (zip
+  SHA256 vérifié contre le digest GitHub de l'asset BtbN) et en **recréant la release
+  `outils-build`** (pré-release, sur le tag existant) avec ce zip ; le tag `v0.4.2` a
+  été déplacé sur le commit de ré-épinglage — possible parce qu'aucune Release n'avait
+  été créée (les jobs `release`/`manifeste` dépendent des 3 builds). La VM, éteinte ce
+  jour-là, retéléchargera au prochain build natif (SHA changé).

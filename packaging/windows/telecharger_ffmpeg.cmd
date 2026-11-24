@@ -14,9 +14,10 @@ REM docs/52 §9 ; la VM ne s'en apercevait pas, elle a le zip en cache). Le meme
 REM renomme %ZIP_NAME%, est donc MIROITE dans la release GitHub `outils-build` du depot
 REM debriefMeet : la CI le depose dans le cache avant d'appeler ce script, qui ne
 REM retombe sur l'URL BtbN qu'en l'absence du zip. Re-epingler = mettre a jour l'URL,
-REM le SHA256 ET l'asset de la release miroir (docs/52 §5).
-set FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-20-13-08/ffmpeg-n8.1.3-18-g46d899d7a0-win64-lgpl-8.1.zip
-set FFMPEG_SHA256=26634a5e06429c4f51ed08ba518923f928c5e4a49ed0ee62f701e035227b91a7
+REM le SHA256 ET l'asset de la release miroir (docs/52 §5). Le miroir lui-meme a
+REM disparu une fois (constate le 2026-11-24, run v0.4.2) : verifier qu'il existe.
+set FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-23-12-43/ffmpeg-n8.1.3-39-g660b5aa7db-win64-lgpl-8.1.zip
+set FFMPEG_SHA256=f0ca6f38361a853baaa010df76e62444e862437c29fbf09b13b008040641d10c
 
 REM FFMPEG_CACHE_DIR (optionnel) : emplacement du zip en cache — sur GitHub Actions
 REM c'est un dossier restaure par actions/cache (docs/52), sur la VM le defaut.
