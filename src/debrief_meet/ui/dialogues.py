@@ -28,6 +28,7 @@ un événement BlueMind à ~34 invités :
 """
 from __future__ import annotations
 
+import re
 from enum import Enum, auto
 from typing import Callable
 
@@ -81,6 +82,28 @@ def _centrer_sur_ecran(widget: QWidget) -> None:
     widget.move(geo.center() - widget.rect().center())
 
 
+#: Au-delà de cette longueur, un mot sans espace risque de dépasser la colonne de texte.
+_LONGUEUR_MOT_MAX = 24
+_CESURE = "\u200b"  # espace de largeur nulle : point de coupure invisible
+_APRES_PONCTUATION = re.compile(r"([,:;/_=&?.\-])(?=.)")
+_SUITE_SANS_COUPURE = re.compile(rf"[^{_CESURE}]{{{_LONGUEUR_MOT_MAX}}}(?=[^{_CESURE}])")
+
+
+def rendre_cesurable(texte: str) -> str:
+    """Ajoute des points de coupure invisibles dans les mots trop longs.
+
+    Qt ne coupe une ligne qu'aux espaces : un bloc compact (le corps JSON d'une erreur
+    d'API, un chemin, une URL) sortait de la carte et sa fin était perdue. On autorise
+    la coupure après la ponctuation, puis — pour un mot qui n'en contient pas — tous
+    les `_LONGUEUR_MOT_MAX` caractères. Les mots courts ne sont pas touchés."""
+    def _couper(mot: re.Match[str]) -> str:
+        if len(mot.group()) <= _LONGUEUR_MOT_MAX:
+            return mot.group()
+        decoupe = _APRES_PONCTUATION.sub(rf"\1{_CESURE}", mot.group())
+        return _SUITE_SANS_COUPURE.sub(rf"\g<0>{_CESURE}", decoupe)
+    return re.sub(r"\S+", _couper, texte)
+
+
 class _ZoneDefilante(QScrollArea):
     """`QScrollArea` qui **ne rétrécit pas** les dialogues courts.
 
@@ -115,6 +138,55 @@ class _ZoneDefilante(QScrollArea):
         `confirmer()` gagnait 70 px de blanc entre sa description et ses boutons — et
         empêchait le layout de comprimer le corps autant que nécessaire."""
         return QSize(0, 0)
+
+
+class _DescriptionDefilante(_ZoneDefilante):
+    """Description d'en-tête, toujours lisible **en entier**.
+
+    Un `QLabel` à retour à la ligne annonce un `sizeHint` calculé pour une largeur
+    qu'il choisit lui-même, plus grande que la colonne où il est posé — et la carte,
+    centrée par `AlignCenter`, ne propage pas la hauteur-pour-largeur. Un message
+    long (corps d'une erreur d'API, p. ex.) recevait donc moins de lignes qu'il n'en
+    occupe : texte rogné en haut **et** en bas, sans aucun moyen de le lire.
+
+    La hauteur est ici dérivée de la largeur **réelle** de la colonne, connue à la
+    construction (la carte est de largeur fixe). Et si la fenêtre est trop courte
+    pour tout montrer, la description défile au lieu d'être rognée — sans jamais
+    descendre sous `HAUTEUR_MIN`, pour qu'un corps volumineux (liste d'invités) ne
+    l'écrase pas."""
+
+    #: Plancher de compression d'une description longue (~6 lignes).
+    HAUTEUR_MIN = 110
+
+    def __init__(self, label: QLabel, largeur: int) -> None:
+        super().__init__(label)
+        self._label = label
+        # Plancher explicite : sans lui, `QScrollArea` retient le `minimumSizeHint` du
+        # label — calculé pour une largeur arbitraire, donc parfois plus haut que le
+        # texte réellement mis en page — et fait défiler une description qui tient.
+        label.setMinimumSize(1, 1)
+        self.setFixedWidth(largeur)
+
+    def _hauteur_texte(self) -> int:
+        return self._label.heightForWidth(self.width())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — override Qt
+        """La barre de défilement n'existe que si le texte ne tient **vraiment** pas.
+
+        En `AsNeeded`, une barre apparue pendant la mise en page initiale ne repart
+        plus : elle rétrécit le texte, qui gagne une ligne, ce qui la justifie après
+        coup. On tranche donc sur la hauteur du cadre, indépendante de la barre."""
+        tient = self.height() >= self._hauteur_texte()
+        self.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff if tient
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        super().resizeEvent(event)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 — override Qt
+        return QSize(self.width(), self._hauteur_texte())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 — override Qt
+        return QSize(self.width(), min(self._hauteur_texte(), self.HAUTEUR_MIN))
 
 
 class CarteFlottante(QDialog):
@@ -277,11 +349,18 @@ class DialogueGabarit(CarteFlottante):
         lab_titre.setStyleSheet(f"color: {C.INK900};")
         lab_titre.setWordWrap(True)
         colonne.addWidget(lab_titre)
-        lab_desc = QLabel(description)
+        lab_desc = QLabel(rendre_cesurable(description))
         lab_desc.setFont(QFont(SANS, 13))
         lab_desc.setStyleSheet(f"color: {C.INK500};")
         lab_desc.setWordWrap(True)
-        colonne.addWidget(lab_desc)
+        # Sélectionnable : un message d'erreur doit pouvoir être copié tel quel.
+        lab_desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._lab_description = lab_desc
+        marges = self.corps.contentsMargins()
+        largeur_texte = (largeur_carte - marges.left() - marges.right()
+                         - tuile.width() - entete.spacing())
+        self._defilement_description = _DescriptionDefilante(lab_desc, largeur_texte)
+        colonne.addWidget(self._defilement_description)
         entete.addLayout(colonne, 1)
         self.corps.addLayout(entete)
 

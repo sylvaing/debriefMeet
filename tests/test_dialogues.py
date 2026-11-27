@@ -9,7 +9,12 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QDialog, QLabel, QWidget
 
-from debrief_meet.ui.dialogues import CarteFlottante, DialogueGabarit, Intention
+from debrief_meet.ui.dialogues import (
+    CarteFlottante,
+    DialogueGabarit,
+    Intention,
+    rendre_cesurable,
+)
 
 
 def _hote(qapp, largeur: int = 900, hauteur: int = 420) -> QWidget:
@@ -162,3 +167,77 @@ def test_fermeture_depose_le_filtre_sur_la_fenetre(qapp):
     fenetre.resize(500, 260)
     qapp.processEvents()
     assert dlg.geometry() == geo_avant
+
+
+# ── Description longue : lisible en entier (terrain 2026-11-27, erreur 402 Mistral) ──
+
+_ERREUR_402 = (
+    "La transcription a échoué :\n"
+    "Paiement requis (402) sur v1/audio/transcriptions — crédit ou moyen de paiement du "
+    "compte Mistral à régulariser sur console.mistral.ai : "
+    '{"object":"error","message":"You need a subscription to access this API.",'
+    '"type":"billing_no_api_budget_configured","param":null,"code":"2314",'
+    '"raw_status_code":402}')
+
+
+def _dialogue_erreur(parent: QWidget) -> DialogueGabarit:
+    dlg = DialogueGabarit(parent, titre="Transcription Mistral — échec",
+                          description=_ERREUR_402, icone="warning-circle",
+                          intention=Intention.DESTRUCTIF)
+    dlg.masquer_annuler()
+    dlg.definir_action("Fermer")
+    return dlg
+
+
+def test_description_longue_n_est_pas_rognee(qapp):
+    """Le défaut d'origine : la description recevait moins de hauteur que son texte n'en
+    occupe, et s'affichait rognée en haut et en bas — message d'erreur illisible."""
+    hote = _hote(qapp, hauteur=700)
+    dlg = _dialogue_erreur(hote)
+    dlg.show()
+    qapp.processEvents()
+
+    label, zone = dlg._lab_description, dlg._defilement_description
+    assert label.height() >= label.heightForWidth(label.width())
+    assert zone.viewport().height() >= label.height()  # tout est visible, sans défiler
+    assert zone.verticalScrollBar().maximum() == 0
+    dlg.reject()
+
+
+def test_description_longue_ne_deborde_pas_a_droite(qapp):
+    """Un bloc sans espace (corps JSON de l'erreur) ne doit pas élargir le texte au-delà
+    de sa colonne : la fin de chaque ligne serait perdue hors de la carte."""
+    hote = _hote(qapp, hauteur=700)
+    dlg = _dialogue_erreur(hote)
+    dlg.show()
+    qapp.processEvents()
+
+    assert dlg._lab_description.width() <= dlg._defilement_description.viewport().width()
+    dlg.reject()
+
+
+def test_description_longue_defile_quand_la_fenetre_est_trop_courte(qapp):
+    """Fenêtre trop courte : la description défile, le bouton reste atteignable."""
+    hote = _hote(qapp, hauteur=250)
+    dlg = _dialogue_erreur(hote)
+    dlg.show()
+    qapp.processEvents()
+
+    assert dlg._defilement_description.verticalScrollBar().maximum() > 0
+    bouton = dlg.bouton_action()
+    bas_bouton = bouton.mapTo(dlg, bouton.rect().bottomLeft()).y()
+    assert bas_bouton <= _bas_de_carte(dlg) <= hote.height()
+    dlg.reject()
+
+
+def test_cesure_ne_touche_que_les_mots_trop_longs():
+    court = "Un événement du calendrier BlueMind correspond à cette réunion."
+    assert rendre_cesurable(court) == court
+
+    cesure = rendre_cesurable(_ERREUR_402)
+    assert cesure.replace("​", "") == _ERREUR_402  # rien d'autre n'est modifié
+    assert max(len(m) for m in cesure.replace("​", " ").split()) <= 24
+
+
+def test_cesure_coupe_un_mot_sans_ponctuation():
+    assert max(len(m) for m in rendre_cesurable("a" * 100).split("​")) <= 24
